@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+*.sh text eol=lf
+
+internal/gen/** linguist-generated=true
+*_bpfel.go linguist-generated=true
+*_bpfeb.go linguist-generated=true
+*_bpfel.o binary linguist-generated=true
+*_bpfeb.o binary linguist-generated=true

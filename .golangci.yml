@@ -1,0 +1,198 @@
+version: "2"
+
+run:
+  go: "1.27"
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    # --- context correctness (the doctrine's "context — закон", deterministic) ---
+    - contextcheck    # a function must propagate the parent ctx, not break the chain
+    - containedctx    # no context.Context stored inside a struct field
+    - fatcontext      # no context created/derived inside a loop body (leak + perf)
+    - noctx           # no HTTP/SQL call without a ctx-carrying variant
+    # govet below includes `lostcancel`: WithCancel/WithTimeout whose cancel() is never called
+
+    # --- resource & goroutine leaks ---
+    - bodyclose       # http.Response.Body always closed
+    - rowserrcheck    # sql.Rows.Err() checked
+    - sqlclosecheck   # sql.Rows/Stmt closed
+    - makezero        # append to a make([]T, n) slice (silent zero-value bug)
+    # goroutine leaks are NOT a linter — enforce with goleak.VerifyTestMain in tests
+    # (see CLAUDE.md TESTING). No static linter catches a leaked goroutine.
+
+    # --- error discipline (stdlib errors, %w, sentinel) ---
+    - errcheck        # no ignored errors
+    - errorlint       # %w wrapping, errors.Is/As over == / type assertion
+    - nilerr          # `if err != nil { return nil }` — swallowed error
+    - err113          # dynamic errors via errors.New at call site (allow-list %w wraps)
+
+    # --- correctness / dead code / perf ---
+    - govet           # includes lostcancel, copylocks, loopclosure, printf, ...
+    - staticcheck
+    - ineffassign
+    - unused
+    - unparam
+    - wastedassign
+    - prealloc
+    - unconvert
+    - copyloopvar
+    - gocritic
+
+    # --- complexity budgets (CLAUDE.md: cognitive/cyclomatic <= 10) ---
+    - gocyclo
+    - gocognit
+
+    # --- security & hygiene ---
+    - gosec
+    - forbidigo       # ban fmt.Print*/log.* — structured logging only
+    - depguard        # ban archived/forbidden deps
+    - misspell
+
+  settings:
+    gocyclo:
+      min-complexity: 10
+    gocognit:
+      min-complexity: 10
+    depguard:
+      rules:
+        main:
+          deny:
+            - pkg: github.com/pkg/errors
+              desc: archived since 2021 — use stdlib errors
+            - pkg: github.com/stretchr/testify
+              desc: stdlib testing + go-cmp only
+            - pkg: github.com/onsi/ginkgo
+              desc: stdlib testing only
+            - pkg: github.com/onsi/gomega
+              desc: stdlib testing only
+        # Layer rules (NFR-MAINT-002, CLAUDE.md "Правила зависимостей").
+        layer-domain:
+          files:
+            - "**/internal/domain/**"
+          deny:
+            - pkg: github.com/DmytroLysenko1/faultline/internal/application
+              desc: domain imports nothing from other layers
+            - pkg: github.com/DmytroLysenko1/faultline/internal/infrastructure
+              desc: domain imports nothing from other layers
+            - pkg: github.com/DmytroLysenko1/faultline/internal/interfaces
+              desc: domain imports nothing from other layers
+            - pkg: github.com/DmytroLysenko1/faultline/internal/gen
+              desc: wire types stay in interfaces
+            - pkg: github.com/DmytroLysenko1/faultline/internal/cli
+              desc: domain imports nothing from other layers
+            - pkg: google.golang.org/grpc
+              desc: transport stays in interfaces
+            - pkg: google.golang.org/protobuf
+              desc: wire types stay in interfaces
+            - pkg: connectrpc.com
+              desc: transport stays in interfaces
+            - pkg: go.opentelemetry.io
+              desc: OTLP/pdata types stay in interfaces; self-tracing is wired in application/cmd
+        layer-application:
+          files:
+            - "**/internal/application/**"
+          deny:
+            - pkg: github.com/DmytroLysenko1/faultline/internal/infrastructure
+              desc: application depends on consumer-side ports, not adapters
+            - pkg: github.com/DmytroLysenko1/faultline/internal/interfaces
+              desc: application never calls driving adapters
+            - pkg: github.com/DmytroLysenko1/faultline/internal/gen
+              desc: wire types stay in interfaces
+            - pkg: github.com/DmytroLysenko1/faultline/internal/cli
+              desc: application never calls driving adapters
+            - pkg: google.golang.org/grpc
+              desc: transport stays in interfaces
+            - pkg: google.golang.org/protobuf
+              desc: wire types stay in interfaces
+            - pkg: connectrpc.com
+              desc: transport stays in interfaces
+            - pkg: go.opentelemetry.io/collector
+              desc: pdata stays in interfaces/otlp
+        layer-infrastructure:
+          files:
+            - "**/internal/infrastructure/**"
+          deny:
+            - pkg: github.com/DmytroLysenko1/faultline/internal/interfaces
+              desc: adapters do not call driving adapters
+            - pkg: github.com/DmytroLysenko1/faultline/internal/cli
+              desc: adapters do not call driving adapters
+        layer-interfaces:
+          files:
+            - "**/internal/interfaces/**"
+          deny:
+            - pkg: github.com/DmytroLysenko1/faultline/internal/infrastructure
+              desc: driving adapters call application only; wiring lives in cmd/
+        # faultctl is a network client of the API: it sees only generated wire types.
+        layer-cli:
+          files:
+            - "**/internal/cli/**"
+          deny:
+            - pkg: github.com/DmytroLysenko1/faultline/internal/domain
+              desc: CLI talks to the server over the API, not to the domain
+            - pkg: github.com/DmytroLysenko1/faultline/internal/application
+              desc: CLI talks to the server over the API, not to use cases
+            - pkg: github.com/DmytroLysenko1/faultline/internal/infrastructure
+              desc: CLI talks to the server over the API, not to adapters
+            - pkg: github.com/DmytroLysenko1/faultline/internal/interfaces
+              desc: CLI is a separate binary; server adapters are not its dependency
+        # Use cases do not import each other: shared rules belong in domain.
+        usecase-ingest:
+          files:
+            - "**/internal/application/ingest/**"
+          deny:
+            - pkg: github.com/DmytroLysenko1/faultline/internal/application/processing
+              desc: use cases do not import each other — move shared code to domain
+            - pkg: github.com/DmytroLysenko1/faultline/internal/application/query
+              desc: use cases do not import each other — move shared code to domain
+        usecase-processing:
+          files:
+            - "**/internal/application/processing/**"
+          deny:
+            - pkg: github.com/DmytroLysenko1/faultline/internal/application/ingest
+              desc: use cases do not import each other — move shared code to domain
+            - pkg: github.com/DmytroLysenko1/faultline/internal/application/query
+              desc: use cases do not import each other — move shared code to domain
+        usecase-query:
+          files:
+            - "**/internal/application/query/**"
+          deny:
+            - pkg: github.com/DmytroLysenko1/faultline/internal/application/ingest
+              desc: use cases do not import each other — move shared code to domain
+            - pkg: github.com/DmytroLysenko1/faultline/internal/application/processing
+              desc: use cases do not import each other — move shared code to domain
+    forbidigo:
+      forbid:
+        - pattern: ^fmt\.Print(|f|ln)$
+          msg: no stdout printing — use slog/zap (observability doctrine)
+        - pattern: ^log\.(Print|Fatal|Panic)(|f|ln)$
+          msg: no stdlib log — errors flow up as values; log only at the final boundary
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+
+  exclusions:
+    generated: strict
+    paths:
+      - internal/gen
+      - web
+    rules:
+      # Tests build large table literals and helper closures; relax complexity/sec there.
+      - path: _test\.go
+        linters:
+          - gocognit
+          - gocyclo
+          - prealloc
+          - gosec
+          - err113
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/DmytroLysenko1/faultline

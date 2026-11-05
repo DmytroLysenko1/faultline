@@ -1,0 +1,67 @@
+# --- Build output ---
+/bin/
+/dist/
+*.exe
+*.test
+*.prof
+__debug_bin*
+
+# --- Test & coverage artifacts ---
+*.out
+coverage.*
+*.coverprofile
+/test/experiments/results/
+/test/experiments/**/*.pcap
+testdata/fuzz/**/corpus-local/
+
+# --- eBPF: raw clang objects (bpf2go outputs *_bpfel.go / *_bpfel.o ARE committed) ---
+/bpf/**/*.o
+/bpf/**/*.ll
+vmlinux.h.tmp
+
+# --- Go workspace (local multi-module experiments) ---
+go.work
+go.work.sum
+
+# --- Web UI ---
+/web/node_modules/
+/web/dist/
+/web/.vite/
+/web/coverage/
+/web/playwright-report/
+/web/test-results/
+*.tsbuildinfo
+npm-debug.log*
+
+# --- Secrets & local environment: never commit ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+kubeconfig
+*.kubeconfig
+values-local.yaml
+values-*.local.yaml
+deploy/helm/**/charts/*.tgz
+secrets/
+
+# --- IDE / editor / OS ---
+.idea/
+.vscode/
+*.iml
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# --- Misc ---
+*.log
+/tmp/
+.claude/settings.local.json
+
+# --- Local documentation (not published) ---
+/docs/
