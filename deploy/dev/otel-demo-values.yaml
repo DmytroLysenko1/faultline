@@ -1,0 +1,65 @@
+# OTel Demo profile for faultline demos. Chart: open-telemetry/opentelemetry-demo, version in
+# hack/versions.env (OTEL_DEMO_CHART_VERSION). Install into the namespace OTEL_DEMO_NAMESPACE:
+# the namespace is part of every node id, and the reference edges in test/demo/otel-demo/ assume it.
+#
+# What differs from the chart defaults, and why:
+# - the observability stack (Jaeger, Prometheus, Grafana, OpenSearch) is off: faultline is the
+#   consumer of the traces, and the stack costs several GiB of the Docker VM;
+# - browser traffic of the load generator is off: Playwright needs up to 1.5 GiB, and its random
+#   page flows make the set of observed edges less repeatable;
+# - the LLM components (chatbot, agent, mcp) stay on: the load generator calls the agent directly
+#   (task ask_agent), so switching them off would turn into a stream of failed client calls.
+#   They answer from recorded VCR cassettes and need no network access.
+# - the collector pipelines export only to `debug`; overlays add the real destinations.
+
+jaeger:
+  enabled: false
+prometheus:
+  enabled: false
+grafana:
+  enabled: false
+opensearch:
+  enabled: false
+
+components:
+  load-generator:
+    envOverrides:
+      - name: LOCUST_BROWSER_TRAFFIC_ENABLED
+        value: "false"
+
+opentelemetry-collector:
+  config:
+    processors:
+      # The chart associates resources with pods by container.id first. The .NET (cart,
+      # accounting) and PHP (quote) SDKs report the pod sandbox id there, not the app container
+      # id, so the lookup misses, no other rule is tried, and those services lose every k8s.*
+      # attribute and service.namespace (observed in the slice 0 capture). The pod uid, the pod
+      # IP and the connection go first. container.id stays in the list only as the last rule:
+      # the chart prepends it when it is missing (profiles pipeline), and the connection rule
+      # always matches before it is reached.
+      k8s_attributes:
+        pod_association:
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.uid
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.ip
+          - sources:
+              - from: connection
+          - sources:
+              - from: resource_attribute
+                name: container.id
+    # The default exporters (jaeger, prometheus, opensearch) and the span_metrics connector stay
+    # declared but are not referenced by any pipeline, so the collector does not start them.
+    # Setting them to null does not remove keys from a subchart: it renders a literal `null`,
+    # which fails the collector config validation.
+    service:
+      pipelines:
+        traces:
+          exporters: [debug]
+        metrics:
+          receivers: [otlp, kafkametrics, prometheus/ad]
+          exporters: [debug]
+        logs:
+          exporters: [debug]

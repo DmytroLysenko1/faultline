@@ -141,6 +141,14 @@ kind-up: ## Create local kind cluster (profile L)
 kind-down: ## Delete local kind cluster
 	kind delete cluster --name $(KIND_CLUSTER)
 
+.PHONY: demo-capture
+demo-capture: ## Step 1 slice 0: record OTel Demo traces in kind (CAPTURE_DURATION=600)
+	./hack/demo-capture.sh
+
+.PHONY: demo-down
+demo-down: ## Delete the demo kind cluster
+	kind delete cluster --name faultline-demo
+
 .PHONY: btf-check
 btf-check: ## Check that the Linux VM kernel supports eBPF CO-RE (BTF, cgroup v2)
 	./hack/check-btf.sh

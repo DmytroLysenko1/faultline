@@ -1,0 +1,24 @@
+# Reference edges that every `make demo-1` run must show (design step 1, «Формат файлов эталона»).
+# OTel Demo chart 0.42.6 (app 3.1.0), namespace otel-demo, profile deploy/dev/otel-demo-values.yaml.
+# Captured 2026-11-05: two 10-minute windows of load-generator traffic (tmp/capture-1, tmp/capture).
+# Candidates come only from the servicegraph connector (independent judge); our code took no part.
+# Kept here: edges seen in both windows at least 20 times, i.e. ≥ 10 expected in a 5-minute poll.
+# cart -> flagd is required although other flagd edges are optional: cart resolves its flags on
+# every request (ResolveBoolean, ResolveFloat), the other services cache flag values.
+# Out of scope for step 1: edges through Kafka (PRODUCER/CONSUMER, step 10), edges to databases,
+# caches and virtual nodes (connection_type set by the judge).
+svc:otel-demo/cart svc:otel-demo/flagd
+svc:otel-demo/checkout svc:otel-demo/cart
+svc:otel-demo/checkout svc:otel-demo/currency
+svc:otel-demo/checkout svc:otel-demo/email
+svc:otel-demo/checkout svc:otel-demo/payment
+svc:otel-demo/checkout svc:otel-demo/product-catalog
+svc:otel-demo/checkout svc:otel-demo/shipping
+svc:otel-demo/frontend svc:otel-demo/ad
+svc:otel-demo/frontend svc:otel-demo/cart
+svc:otel-demo/frontend svc:otel-demo/checkout
+svc:otel-demo/frontend svc:otel-demo/product-catalog
+svc:otel-demo/frontend svc:otel-demo/recommendation
+svc:otel-demo/frontend-proxy svc:otel-demo/frontend
+svc:otel-demo/recommendation svc:otel-demo/product-catalog
+svc:otel-demo/shipping svc:otel-demo/quote

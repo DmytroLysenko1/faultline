@@ -1,0 +1,9 @@
+# Demo profile: a single node for OTel Demo and faultline (design step 1, open question 1).
+# One node keeps the OTel Collector daemonset to one pod, so a capture is one file.
+# The node image is pinned by digest; keep it in sync with hack/versions.env.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: faultline-demo
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5

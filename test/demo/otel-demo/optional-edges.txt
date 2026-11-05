@@ -1,0 +1,8 @@
+# Edges that are real but may be absent from a 5-minute poll (design step 1, «Формат файлов эталона»).
+# Same capture as required-edges.txt. Every line carries the reason after " # "; a line without it
+# is a parse error in hack/demo-check.sh. Counts are pairs per 10-minute window (capture-1, capture).
+svc:otel-demo/ad svc:otel-demo/flagd # flag values are cached by the provider: EventStream at start or reconnect plus rare Resolve* (3, 1)
+svc:otel-demo/fraud-detection svc:otel-demo/flagd # flag values are cached by the provider: EventStream at start or reconnect plus rare Resolve* (1, 1)
+svc:otel-demo/payment svc:otel-demo/flagd # flag values are cached by the provider: EventStream at start or reconnect plus rare Resolve* (0, 2)
+svc:otel-demo/recommendation svc:otel-demo/flagd # flag values are cached by the provider: EventStream at start or reconnect plus rare Resolve* (1, 1)
+svc:otel-demo/frontend svc:otel-demo/currency # GetSupportedCurrencies is cached by frontend (6, 7): ~3 expected in a 5-minute poll, absent with ~5% probability

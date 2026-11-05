@@ -1,0 +1,51 @@
+# Overlay for step 1, slice 0: record the real OTLP traffic of OTel Demo and build an
+# independent reference graph. Apply on top of otel-demo-values.yaml (hack/demo-capture.sh).
+#
+# - file/traces writes every trace export as one JSON line (ptrace JSON), so the dump keeps
+#   the batch boundaries the collector produced;
+# - the servicegraph connector is the independent judge for the reference edges: it pairs
+#   client and server spans by the same rule as faultline step 1, and its edges are the only
+#   source of candidate edges (our own code never produces the reference);
+# - both files land on the kind node (hostPath) and are copied out with `docker cp`, because
+#   the collector image has no shell or tar. The container runs as root only in this overlay,
+#   to write into the hostPath directory.
+
+opentelemetry-collector:
+  securityContext:
+    runAsUser: 0
+    runAsGroup: 0
+  extraVolumes:
+    - name: capture
+      hostPath:
+        path: /var/lib/faultline-capture
+        type: DirectoryOrCreate
+  extraVolumeMounts:
+    - name: capture
+      mountPath: /capture
+  resources:
+    limits:
+      memory: 600Mi
+  config:
+    exporters:
+      file/traces:
+        path: /capture/traces.jsonl
+        format: json
+        flush_interval: 1s
+      file/servicegraph:
+        path: /capture/servicegraph.jsonl
+        format: json
+        flush_interval: 1s
+    connectors:
+      servicegraph:
+        # Same pairing window as faultline (FAULTLINE_PAIRING_TTL, max pending halves).
+        store:
+          ttl: 10s
+          max_items: 100000
+        metrics_flush_interval: 30s
+    service:
+      pipelines:
+        traces:
+          exporters: [debug, file/traces, servicegraph]
+        metrics/servicegraph:
+          receivers: [servicegraph]
+          exporters: [file/servicegraph]

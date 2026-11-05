@@ -7,3 +7,5 @@ internal/gen/** linguist-generated=true
 *_bpfeb.go linguist-generated=true
 *_bpfel.o binary linguist-generated=true
 *_bpfeb.o binary linguist-generated=true
+
+*.gz binary
