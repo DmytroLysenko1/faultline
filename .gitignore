@@ -63,5 +63,3 @@ Thumbs.db
 /tmp/
 .claude/settings.local.json
 
-# --- Local documentation (not published) ---
-/docs/
