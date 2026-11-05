@@ -1,0 +1,10 @@
+# Profile L (requirements.md, section 5.0): 1 control-plane + 3 workers.
+# All kind nodes share one VM kernel — agent overhead is measured on profile L1, not here.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: faultline
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker
+  - role: worker
