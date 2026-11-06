@@ -1,12 +1,17 @@
 package ids
 
-type TraceID [16]byte
+const (
+	TraceIDBytes = 16
+	SpanIDBytes  = 8
+)
+
+type TraceID [TraceIDBytes]byte
 
 func (id TraceID) IsZero() bool {
 	return id == TraceID{}
 }
 
-type SpanID [8]byte
+type SpanID [SpanIDBytes]byte
 
 func (id SpanID) IsZero() bool {
 	return id == SpanID{}

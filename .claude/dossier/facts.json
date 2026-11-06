@@ -1,27 +1,34 @@
 {
  "root": "/Users/useer/GolandProjects/faultline",
- "scanned_at": 1793925688,
- "head": "90d895129d7f209826c5604586e0596c6dbad7ed",
+ "scanned_at": 1793929628,
+ "head": "323dcb2fdd4fcdab21f97321bb6fa15fc39f6984",
  "counts": {
-  "struct_decl": 33,
-  "errorf_wrap": 23,
+  "struct_decl": 38,
+  "errorf_wrap": 28,
   "errors_join": 1,
+  "iface_decl": 2,
+  "recv_ptr": 44,
+  "ctx_first": 5,
   "recv_val": 25,
-  "errors_new_pkg": 7,
+  "errors_new_pkg": 10,
   "errors_is__test": 10,
   "err_ignored__test": 6,
   "table_test__test": 24,
   "struct_decl__test": 8,
-  "recv_ptr": 36
+  "atomic_use": 1,
+  "errors_is": 2,
+  "time_now": 1,
+  "ctx_withtimeout": 1
  },
  "by_ext": {
-  ".go": 40,
+  ".go": 47,
   ".yaml": 6,
+  ".md": 5,
   "<none>": 4,
-  ".md": 4,
   ".sh": 4,
   ".yml": 3,
   ".txt": 2,
+  ".json": 1,
   ".mod": 1,
   ".sum": 1,
   ".env": 1,
@@ -29,19 +36,22 @@
  },
  "loc_by_ext": {
   "<none>": 261,
-  ".yml": 279,
+  ".yml": 281,
   ".yaml": 168,
-  ".mod": 31,
-  ".go": 5886
+  ".mod": 33,
+  ".go": 6287
  },
  "imports": {
-  "slog": 1,
-  "samber_lo": 8
+  "slog": 4,
+  "samber_lo": 9
  },
- "iface_by_role": {},
+ "iface_by_role": {
+  "consumer": 1,
+  "ports": 1
+ },
  "iface_names": {
   "exported": 0,
-  "unexported": 0
+  "unexported": 2
  },
  "concurrency_sites": [],
  "risk_sites": [],
@@ -61,10 +71,17 @@
   "internal/domain/topology/clock": 2,
   "internal/domain/topology/role": 2,
   "hack/trimdump": 1,
+  "internal/application/query": 1,
   "internal/domain/telemetry/telemetrytest": 1,
-  "internal/domain/topology/topologytest": 1
+  "internal/domain/topology/topologytest": 1,
+  "internal/infrastructure/memgraph": 1,
+  "internal/interfaces/connectapi": 1,
+  "internal/interfaces/connectapi/graphmap": 1,
+  "internal/interfaces/connectapi/graphservice": 1,
+  "internal/interfaces/connectapi/limit": 1,
+  "internal/interfaces/connectapi/timeout": 1
  },
- "files_scanned": 40,
+ "files_scanned": 47,
  "files_skipped_generated": 0,
  "truncated": false,
  "configs": {

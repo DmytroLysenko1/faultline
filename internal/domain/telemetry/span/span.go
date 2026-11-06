@@ -12,6 +12,8 @@ import (
 
 var ErrInvalid = errors.New("invalid span")
 
+const IdentityStringCount = 2
+
 type Fields struct {
 	TraceID      ids.TraceID
 	SpanID       ids.SpanID
@@ -49,8 +51,8 @@ func New(source resource.Resource, fields Fields) (Span, error) {
 	}, nil
 }
 
-func (s Span) IdentityStrings() [2]string {
-	return [2]string{
+func (s Span) IdentityStrings() [IdentityStringCount]string {
+	return [IdentityStringCount]string{
 		s.Service.Namespace,
 		s.Service.Name,
 	}

@@ -1,0 +1,74 @@
+package graphmap
+
+import (
+	"errors"
+	"fmt"
+
+	"github.com/samber/lo"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology/graph"
+	faultlinev1 "github.com/DmytroLysenko1/faultline/internal/gen/proto/faultline/v1"
+)
+
+var (
+	ErrDanglingEdge = errors.New("edge points to a missing node")
+	ErrNilSnapshot  = errors.New("nil snapshot")
+)
+
+func Graph(snapshot *topology.Snapshot) (*faultlinev1.Graph, error) {
+	if snapshot == nil {
+		return nil, ErrNilSnapshot
+	}
+	mapped, err := edges(snapshot.Edges, indexByID(snapshot.Nodes))
+	if err != nil {
+		return nil, err
+	}
+	return &faultlinev1.Graph{
+		Revision:    snapshot.Revision,
+		GeneratedAt: timestamppb.New(snapshot.GeneratedAt),
+		Nodes:       lo.Map(snapshot.Nodes, node),
+		Edges:       mapped,
+	}, nil
+}
+
+func indexByID(nodes []graph.Node) map[string]uint32 {
+	positions := make(map[string]uint32, len(nodes))
+	var position uint32
+	for _, current := range nodes {
+		positions[current.ID] = position
+		position++
+	}
+	return positions
+}
+
+func node(source graph.Node, _ int) *faultlinev1.Node {
+	return &faultlinev1.Node{
+		Id: source.ID,
+		Service: &faultlinev1.ServiceRef{
+			Namespace: source.Service.Namespace,
+			Name:      source.Service.Name,
+		},
+		UnansweredCalls:       source.UnansweredCalls,
+		UnansweredFailedCalls: source.UnansweredFailedCalls,
+	}
+}
+
+func edges(source []graph.Edge, positions map[string]uint32) ([]*faultlinev1.Edge, error) {
+	mapped := make([]*faultlinev1.Edge, 0, len(source))
+	for _, edge := range source {
+		caller, callerFound := positions[edge.Source]
+		callee, calleeFound := positions[edge.Target]
+		if !callerFound || !calleeFound {
+			return nil, fmt.Errorf("%w: %s → %s", ErrDanglingEdge, edge.Source, edge.Target)
+		}
+		mapped = append(mapped, &faultlinev1.Edge{
+			SourceIndex: caller,
+			TargetIndex: callee,
+			Calls:       edge.Calls,
+			FailedCalls: edge.FailedCalls,
+		})
+	}
+	return mapped, nil
+}

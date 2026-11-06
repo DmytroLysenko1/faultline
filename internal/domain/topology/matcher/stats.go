@@ -2,6 +2,8 @@ package matcher
 
 import "github.com/DmytroLysenko1/faultline/internal/domain/topology/role"
 
+const SpansPerCall = 2
+
 type Stats struct {
 	Observed         uint64
 	Matched          uint64
@@ -61,5 +63,5 @@ func (s *Stats) RecordTombstoneEviction() {
 }
 
 func (s *Stats) Balanced() bool {
-	return s.Observed == 2*s.Matched+s.Duplicate+s.Unpairable+s.Evicted+s.Expired+s.Pending
+	return s.Observed == SpansPerCall*s.Matched+s.Duplicate+s.Unpairable+s.Evicted+s.Expired+s.Pending
 }

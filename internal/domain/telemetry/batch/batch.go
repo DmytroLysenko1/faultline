@@ -36,7 +36,7 @@ func (b Batch) Footprint() int64 {
 	return total
 }
 
-func unseenBytes(distinct map[string]struct{}, identities [2]string) (added int64) {
+func unseenBytes(distinct map[string]struct{}, identities [span.IdentityStringCount]string) (added int64) {
 	for _, identity := range identities {
 		if _, seen := distinct[identity]; seen {
 			continue

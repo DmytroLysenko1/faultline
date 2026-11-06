@@ -9,7 +9,10 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/role"
 )
 
-const minCapacity = 16
+const (
+	minCapacity  = 16
+	growthFactor = 2
+)
 
 var ErrInvalidLimit = errors.New("invalid tombstone limit")
 
@@ -90,7 +93,7 @@ func (s *Set) grow() {
 	if s.Size < len(s.Ring) {
 		return
 	}
-	capacity := min(max(2*len(s.Ring), minCapacity), s.Limit)
+	capacity := min(max(growthFactor*len(s.Ring), minCapacity), s.Limit)
 	ring := make([]Entry, capacity)
 	for i := range s.Size {
 		ring[i] = s.Ring[(s.Head+i)%len(s.Ring)]

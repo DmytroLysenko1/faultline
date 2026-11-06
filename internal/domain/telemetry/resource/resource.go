@@ -15,6 +15,7 @@ const (
 	maxServiceNamespaceBytes = 255
 	maxK8sNamespaceBytes     = 63
 	maxK8sPodNameBytes       = 253
+	identityFieldCount       = 4
 
 	asciiLastControl = 0x1F
 	asciiDelete      = 0x7F
@@ -57,7 +58,7 @@ func (r Resource) ServiceRef() ServiceRef {
 	}
 }
 
-func (r Resource) identities() [4]identity {
+func (r Resource) identities() [identityFieldCount]identity {
 	return [...]identity{
 		{
 			Field:    "service.name",

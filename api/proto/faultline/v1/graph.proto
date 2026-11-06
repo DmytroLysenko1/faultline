@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package faultline.v1;
+
+import "google/protobuf/timestamp.proto";
+
+service GraphService {
+  rpc GetGraph(GetGraphRequest) returns (GetGraphResponse);
+}
+
+message GetGraphRequest {}
+
+message GetGraphResponse {
+  Graph graph = 1;
+}
+
+message Graph {
+  uint64 revision = 1;
+  google.protobuf.Timestamp generated_at = 2;
+  repeated Node nodes = 3;
+  repeated Edge edges = 4;
+}
+
+message Node {
+  string id = 1;
+  ServiceRef service = 2;
+  uint64 unanswered_calls = 3;
+  uint64 unanswered_failed_calls = 4;
+}
+
+message ServiceRef {
+  string namespace = 1;
+  string name = 2;
+}
+
+message Edge {
+  uint32 source_index = 1;
+  uint32 target_index = 2;
+  uint64 calls = 3;
+  uint64 failed_calls = 4;
+}

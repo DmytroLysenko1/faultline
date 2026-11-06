@@ -293,7 +293,7 @@ func TestNewSpanAccepts(t *testing.T) {
 
 func TestSpanIdentityStrings(t *testing.T) {
 	got := telemetrytest.MustSpan(t, telemetrytest.ValidResource(), telemetrytest.ValidFields()).IdentityStrings()
-	if diff := cmp.Diff([2]string{
+	if diff := cmp.Diff([span.IdentityStringCount]string{
 		"otel-demo",
 		"checkout",
 	}, got); diff != "" {

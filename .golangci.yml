@@ -51,6 +51,7 @@ linters:
     - forbidigo       # ban fmt.Print*/log.* — structured logging only
     - depguard        # ban archived/forbidden deps
     - misspell
+    - mnd             # no magic numbers in production code
 
   settings:
     funlen:
@@ -212,6 +213,7 @@ linters:
           - prealloc
           - gosec
           - err113
+          - mnd
 
 formatters:
   enable:
