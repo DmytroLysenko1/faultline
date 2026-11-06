@@ -29,13 +29,13 @@
 
 ```
 interfaces/otlp.TraceReceiver ──► application/ingest.AcceptBatch ──► [spanJournal] ◄── infrastructure/memjournal
-   (pdata → []ingest.SpanInput)       (telemetry.NewSpan, ReceivedAt = clock.Now())              │
+   (pdata → []ingest.SpanInput)       (span.New, ReceivedAt = clock.Now())              │
                                                                                                  ▼
 application/processing.Pipeline ◄── [spanFeed] ── []Delivery{Batch, Release} ◄────────── memjournal.Journal
    │  (до 64 доступных пакетов за итерацию → один снимок)
    │  topology.Builder.Apply(batch)  — доменный фасад, владеет порядком:
-   │     ├ topology.callMatcher  (половинки → Call, tombstones, истёкшие caller-половинки, учёт I1)
-   │     └ topology.graph        (Call + узлы + вызовы без ответа → ревизия)
+   │     ├ matcher.Matcher      (половинки → Call, tombstones, истёкшие caller-половинки, учёт I1)
+   │     └ graph.Graph          (Call + узлы + вызовы без ответа → ревизия)
    │  topology.Builder.Snapshot()   → Snapshot{граф, PairingStats, ревизия}
    ▼
 [graphPublisher] ──► infrastructure/memgraph.Store (atomic.Pointer[topology.Snapshot]) ──► [graphReader]
@@ -54,8 +54,19 @@ cmd/faultctl → internal/cli: graph export -o dot|json
 
 | Пакет | Содержит | Импортирует (энфорсится depguard) |
 |---|---|---|
-| `internal/domain/telemetry` | `ServiceRef` (VO), `SpanKind`, `Span` (VO) + `NewSpan` с валидацией, `Batch` (VO: спаны + `ReceivedAt`), `CallKey`, `ErrInvalidSpan` | stdlib |
-| `internal/domain/topology` | экспортируемые: `Builder` (фасад), `Snapshot`, `Node`, `Edge`, `PairingStats`, `GraphStats` (VO); внутренние: `callMatcher`, `graph` (агрегат), `call`, `expiredCaller` | `telemetry` |
+| `internal/domain/telemetry/ids` | `TraceID`, `SpanID`, `CallKey` | stdlib |
+| `internal/domain/telemetry/kind` | `Kind` (вид спана по OTLP, `Normalized`) | stdlib |
+| `internal/domain/telemetry/resource` | `Resource` (валидация строк идентичности), `ServiceRef` (VO), `ErrInvalid` | stdlib |
+| `internal/domain/telemetry/response` | `Attributes`: признак ошибки по коду ответа, вызов внешней системы | stdlib |
+| `internal/domain/telemetry/span` | `Span` (VO) + `New` с валидацией, `Fields`, `ErrInvalid` | `ids`, `kind`, `resource`, `response` |
+| `internal/domain/telemetry/batch` | `Batch` (VO: спаны + `ReceivedAt`) + `New`, `Footprint`, `ErrEmpty` | `span` |
+| `internal/domain/topology` | `Builder` (фасад), `Snapshot`, `Limits`, `ErrInvalidLimits` | `telemetry/*`, `topology/*` |
+| `internal/domain/topology/role` | `Role` (caller/callee/unpairable/ignored), `Of` | `telemetry/*` |
+| `internal/domain/topology/call` | `Party`, `Call` (`Between`), `Unanswered` | `resource` |
+| `internal/domain/topology/clock` | `Monotonic`: время, которое не идёт назад | stdlib |
+| `internal/domain/topology/tombstone` | `Set` (ring + map), `Scope` | `ids`, `role` |
+| `internal/domain/topology/matcher` | `Matcher` (буфер ожидания), `Stats` (I1), `Limits` | `telemetry/*`, `call`, `clock`, `role`, `tombstone` |
+| `internal/domain/topology/graph` | `Graph` (агрегат), `Change`, `View`, `Node`, `Edge`, `Stats` | `resource`, `call`, `clock` |
 | `internal/application/ingest` | `AcceptBatch`; команда `SpanInput`, результат `AcceptResult`; порты `spanJournal`, `clock`; `ErrOverloaded`, `ErrBatchTooLarge`, `ErrUnavailable` | `telemetry` |
 | `internal/application/processing` | `Pipeline`; порты `spanFeed`, `graphPublisher`; `Delivery`; `ErrFeedClosed` | `telemetry`, `topology` |
 | `internal/application/query` | `GetGraph`, порт `graphReader` | `topology` |
@@ -80,9 +91,9 @@ depguard дополнительно запрещает импорт одного
 
 ### Роль спана: факты — в `telemetry`, политика — в `topology`
 
-`telemetry.Span` отдаёт только факты о себе: `Kind()`, `TraceID()`, `SpanID()`, `ParentSpanID()`, `CallsExternalSystem() bool` (есть `db.system.name`, устаревший `db.system` или `messaging.system`). Решение «участвует ли спан в сопоставлении и какой стороной» — политика графа, она живёт в `topology` (неэкспортируемая `roleOf(span) (CallKey, Side, bool)`). В шаге 10 внешние узлы (FR-TOP-003) меняют только эту функцию, `telemetry` не трогается.
+`span.Span` хранит только факты о себе в публичных полях: `Kind`, `TraceID`, `SpanID`, `ParentSpanID`, `Failed`, `CallsExternalSystem` (есть `db.system.name`, устаревший `db.system` или `messaging.system`). Решение «участвует ли спан в сопоставлении и какой стороной» — политика графа, она живёт в `topology` (`role.Of(span) (ids.CallKey, role.Role)`). В шаге 10 внешние узлы (FR-TOP-003) меняют только эту функцию, `telemetry` не трогается.
 
-| Спан | Результат `roleOf` |
+| Спан | Результат `role.Of` |
 |---|---|
 | `CLIENT` без внешней системы | `CallKey{trace, span_id}`, сторона caller |
 | `SERVER` с ненулевым `parent_span_id` | `CallKey{trace, parent_span_id}`, сторона callee |
@@ -90,23 +101,23 @@ depguard дополнительно запрещает импорт одного
 | `SERVER` без родителя (корень трейса, вход извне) | `false`, учитывается как `unpairable` |
 | `INTERNAL`, `PRODUCER`, `CONSUMER`, `UNSPECIFIED` | не участвуют в сопоставлении и не входят в `observed` |
 
-### `callMatcher` — контракт
+### `matcher.Matcher` — контракт
 
 Время для TTL — это `Batch.ReceivedAt`: его ставит `AcceptBatch` при приёме, и он хранится в записи журнала. Время обработки не используется. Поэтому повторный прогон того же журнала (replay в шаге 5) даёт тот же результат. В шаге 2 источником времени станет watermark по событийному времени, а сигнатура `Match(span, now)` не изменится. Пакеты от параллельных хэндлеров могут встать в журнал чуть не по порядку, поэтому матчер приводит время к монотонному: `now = max(now, lastNow)`. Известное ограничение: прыжок стенных часов вперёд на Δ сдвигает `lastNow`, и истечение «замирает» на Δ (половинки живут дольше `ttl`, учёт I1 не нарушается). В шаге 1 `ReceivedAt` несёт монотонное показание Go и прыжков не видит; после сериализации (шаг 3) показание теряется, но в шаге 2 источником времени уже станет watermark.
 
-`callMatcher.Match(span, now) (call, bool)` — проверки идут строго в этом порядке:
+`matcher.Matcher.Match(span, now) (call.Call, bool)` — проверки идут строго в этом порядке:
 1. Ключ есть в **tombstones** (пара уже сопоставлена не раньше чем `tombstoneTTL` назад) → `duplicate`. Это защищает от повтора батча, в котором лежат обе половинки (Collector склеивает спаны разных сервисов в один Export).
 2. Ожидает та же сторона того же ключа → `duplicate`. «Та же половинка» — это совпадение `(CallKey, Side)`, а не `span_id`. Второй server-спан с тем же родителем тоже `duplicate`.
 3. Ожидает противоположная сторона → пара удаляется из буфера, ключ уходит в tombstones, возвращается `call{caller, callee, failed}`.
 4. Иначе половинка встаёт в ожидание до `now + ttl`. Если буфер полон, сначала **вытесняется старейшая** ожидающая половинка (`evicted`). Вытеснение старейших, а не отбрасывание новых, выбрано сознательно: при насыщении буфер забит половинками, у которых шанс найти пару ниже всего.
 
-`callMatcher.Expire(now) []expiredCaller` вычищает просроченные половинки (`expired`, из них caller-половинки — ещё и в `expired_caller`) и tombstones и возвращает истёкшие caller-половинки (сервис и `failed`) для учёта на узле. `Builder` вызывает его в начале каждого пакета, тикера нет. Без трафика половинки остаются в `pending`, I1 при этом выполняется. Это принятое упрощение: `pending` в простое не уменьшается.
+`matcher.Matcher.Expire(now) []call.Unanswered` вычищает просроченные половинки (`expired`, из них caller-половинки — ещё и в `expired_caller`) и tombstones и возвращает истёкшие caller-половинки (сервис и `failed`) для учёта на узле. `Builder` вызывает его в начале каждого пакета, тикера нет. Без трафика половинки остаются в `pending`, I1 при этом выполняется. Это принятое упрощение: `pending` в простое не уменьшается.
 
 **Структура данных.** `map[CallKey]*list.Element` плюс `container/list` в порядке истечения. TTL одинаковый, а `now` монотонно, поэтому порядок вставки совпадает с порядком истечения. При совпадении элемент удаляется из списка за O(1). Ленивого удаления нет, поэтому длина списка не превышает `maxPending`. Вставка в map и в список делается одной функцией без промежуточных выходов, и запись не может оказаться только в одном из них.
 
 **Tombstones — своё окно и свой лимит.** Их задача — поймать повтор OTLP-запроса, который уже был принят (клиент не дождался ответа и прислал запрос снова). Такой повтор приходит не раньше «таймаут экспортёра Collector (5 s) + backoff (`initial_interval` 5 s ± 50 %)», то есть через 7,5–12,5 s и позже, а при включённом `retry_on_failure` Collector продолжает попытки до `max_elapsed_time` (300 s по умолчанию). Поэтому окно tombstones не может быть равно `ttl` буфера ожидания (10 s):
 - `tombstoneTTL = 60 s` по умолчанию: покрывает первые 3–4 попытки, на которые приходится подавляющее большинство повторов;
-- лимит `maxTombstones = 1 000 000`: правило размера `maxTombstones ≥ rate_matched × tombstoneTTL` при меньшем лимите ломается уже на 17k вызовов/с. Структура легче буфера ожидания: ring-буфер ключей в порядке истечения плюс `map[CallKey]int64` (дедлайн в наносекундах), без `container/list` и без значения половинки. Оценка ≈ 70 B на запись (≈ 67 MiB), точное число — бенчмарк «heap на элемент» в срезах 1–2;
+- лимит `maxTombstones = 1 000 000`: правило размера `maxTombstones ≥ rate_matched × tombstoneTTL` при меньшем лимите ломается уже на 17k вызовов/с. Структура легче буфера ожидания: ring-буфер `[]tombstone.Entry{Key, Deadline}` в порядке истечения плюс индекс `map[ids.CallKey]tombstone.Scope`, без `container/list` и без значения половинки. Бенчмарк «heap на элемент»: ≈ 88 B на запись (≈ 84 MiB);
 - tombstone ставится и на **истёкший caller-ключ** и гасит только повтор той же caller-стороны. Иначе повтор OTLP-запроса с одной caller-половинкой, пришедший после её истечения (повтор через 7,5–12,5 s при `ttl` 10 s — обычный случай), посчитал бы один вызов без ответа дважды. Опоздавшая server-половинка этим tombstone не гасится и сама истекает как `expired`;
 - при переполнении вытесняется старейший tombstone и растёт `tombstone_evicted` (не корзина I1: спаны не теряются, страдает только точность дедупликации).
 
@@ -118,7 +129,7 @@ depguard дополнительно запрещает импорт одного
 
 Если смотреть только на callee, в обоих случаях ребро «зеленеет» ровно тогда, когда зависимость сломана. Поэтому `Call.failed = caller.Failed() || callee.Failed()`, как в servicegraph-коннекторе Collector и в Tempo.
 
-Опасение, что client-спан помечается ошибкой на 4xx и `NOT_FOUND`, снимается тем, что решение принимается **по коду ответа, а не по статусу спана**. Правило `Span.Failed()` одинаково для обеих сторон, первое найденное побеждает:
+Опасение, что client-спан помечается ошибкой на 4xx и `NOT_FOUND`, снимается тем, что решение принимается **по коду ответа, а не по статусу спана**. Правило `span.New` для поля `Span.Failed` одинаково для обеих сторон, первое найденное побеждает:
 1. `rpc.response.status_code` (строка с именем кода, semconv ≥ v1.39, проверено по `go.opentelemetry.io/otel@v1.47.0/semconv/v1.39.0`) или устаревший `rpc.grpc.status_code` (число, semconv ≤ v1.38) → ошибка, если код не входит в {`OK`, `NOT_FOUND`, `ALREADY_EXISTS`, `CANCELLED`};
 2. `http.response.status_code` или устаревший `http.status_code` → ошибка, если код ≥ 500; строковое значение разбирается как число, нечисловое игнорируется;
 3. только если кода ответа нет вообще (ни п. 1, ни п. 2): есть `error.type` (например, `connection refused`, `timeout`) → ошибка. Если код есть, `error.type` игнорируется: новый SDK кладёт в `error.type` и имя кода (`NOT_FOUND`), и без этого правила п. 1 обходился бы;
@@ -128,7 +139,7 @@ depguard дополнительно запрещает импорт одного
 
 Имена кодов сравниваются с каноническими именами gRPC (`CANCELLED` с двумя L; в FR-TOP-002 исправлено).
 
-**Вызовы без ответа.** Caller-половинка, у которой пара не нашлась за `ttl`, — это не мусор, а сигнал. Причин три, и по одному спану они неразличимы: callee не ответил (упал, недоступен), callee не инструментирован, или server-спан callee опоздал больше чем на `ttl`. Поэтому поле называется честно — «без ответа в пределах `ttl`», а не «callee упал». `callMatcher.Expire(now)` возвращает истёкшие caller-половинки, и `graph` учитывает их **на узле вызывающего**: `unanswered_calls` и `unanswered_failed_calls` (по `caller.Failed()`). Отличить причины помогает второй сигнал: `unanswered_failed_calls` (у caller был код ошибки — скорее отказ) против `unanswered_calls` без ошибки (скорее опоздание или отсутствие инструментации), плюс `expired` callee-половинок в `pipeline.stats` (растёт при опозданиях). Фантомное ребро не рисуется: куда шёл вызов, без server-спана достоверно не известно. В шаге 10 такие вызовы станут рёбрами к виртуальному узлу по `server.address` / `peer.service` (FR-TOP-003). Истёкшие callee-половинки только считаются в `expired`.
+**Вызовы без ответа.** Caller-половинка, у которой пара не нашлась за `ttl`, — это не мусор, а сигнал. Причин три, и по одному спану они неразличимы: callee не ответил (упал, недоступен), callee не инструментирован, или server-спан callee опоздал больше чем на `ttl`. Поэтому поле называется честно — «без ответа в пределах `ttl`», а не «callee упал». `matcher.Matcher.Expire(now)` возвращает истёкшие caller-половинки, и `graph` учитывает их **на узле вызывающего**: `unanswered_calls` и `unanswered_failed_calls` (по `caller.Failed()`). Отличить причины помогает второй сигнал: `unanswered_failed_calls` (у caller был код ошибки — скорее отказ) против `unanswered_calls` без ошибки (скорее опоздание или отсутствие инструментации), плюс `expired` callee-половинок в `pipeline.stats` (растёт при опозданиях). Фантомное ребро не рисуется: куда шёл вызов, без server-спана достоверно не известно. В шаге 10 такие вызовы станут рёбрами к виртуальному узлу по `server.address` / `peer.service` (FR-TOP-003). Истёкшие callee-половинки только считаются в `expired`.
 
 Известное занижение: **вытесненные** при переполнении буфера caller-половинки (`evicted_caller`) в `unanswered_calls` не попадают — вытеснение говорит о нехватке памяти, а не о поведении callee. При насыщении сигнал «без ответа» занижен; это видно по росту `evicted_caller`.
 
@@ -136,7 +147,7 @@ depguard дополнительно запрещает импорт одного
 
 Параметры по умолчанию: `ttl = 10 s`, `maxPending = 100 000` половинок, `tombstoneTTL = 60 s`, `maxTombstones = 1 000 000`.
 
-### `PairingStats` — счётчики I1
+### `matcher.Stats` (`Snapshot.PairingStats`) — счётчики I1
 
 `PairingStats` (VO): `observed`, `matched`, `duplicate`, `unpairable`, `evicted`, `expired`, `pending` (корзины I1), а также `expired_caller` (часть `expired`, вход I3 для вызовов без ответа), `evicted_caller` (часть `evicted`) и `tombstone_evicted` (вне формулы).
 
@@ -149,22 +160,22 @@ depguard дополнительно запрещает импорт одного
 Порядок `Expire → Match → graph.apply` — доменное правило: на нём держатся I1 и I3, и при панике между шагами они ломаются вместе. Поэтому порядок живёт не в `Pipeline` (слой application), а в доменном фасаде `topology.Builder`:
 
 ```go
-func (b *Builder) Apply(batch telemetry.Batch)  // Expire(batch.ReceivedAt) → match каждого спана → graph.apply(calls, expiredCallers, services)
-func (b *Builder) Snapshot() Snapshot          // граф + PairingStats + GraphStats + ревизия; пересборка графа только если он изменился
+func (b *Builder) Apply(received batch.Batch) // Expire(received.ReceivedAt) → Match каждого спана → Graph.Apply(&graph.Change{…})
+func (b *Builder) Snapshot() *Snapshot // граф + PairingStats + GraphStats + ревизия; view пересобирается, только если граф изменился
 ```
 
 `generated_at` снимка — `ReceivedAt` последнего пакета, изменившего граф, а не часы процесса. Так replay того же журнала (тест сейчас, шаг 5 потом) даёт тот же `generated_at`, и отдельный порт `clock` в `processing` не нужен.
 
-`Snapshot` отдаёт узлы итератором в порядке id, а рёбра — с **id** узлов (`Edge.Source()`, `Edge.Target()` возвращают id). Индексы — оптимизация формата передачи, их строит `connectapi` при маппинге (позиция узла в `Nodes()`); домен про индексы не знает.
+`Snapshot.Nodes` отсортированы по id, рёбра несут **id** узлов (поля `Edge.Source`, `Edge.Target`). Индексы — оптимизация формата передачи, их строит `connectapi` при маппинге (позиция узла в `Snapshot.Nodes`); домен про индексы не знает.
 
-`callMatcher` и `graph` **не сливаются**: у них разные данные и разный срок жизни (короткоживущие половинки по трейсам против долгоживущих рёбер), и склеенный тип к шагу 10 стал бы «богом». Так же устроены servicegraph-коннектор и Tempo: хранилище сопоставления с TTL отдельно, агрегация отдельно, склеивает их один процессор.
+`matcher.Matcher` и `graph.Graph` **не сливаются**: у них разные данные и разный срок жизни (короткоживущие половинки по трейсам против долгоживущих рёбер), и склеенный тип к шагу 10 стал бы «богом». Так же устроены servicegraph-коннектор и Tempo: хранилище сопоставления с TTL отдельно, агрегация отдельно, склеивает их один процессор.
 
 Что это даёт дальше по плану:
 - шаг 2: watermark становится источником `now` для `Builder`, сигнатуры матчера не меняются;
 - шаг 5: чекпоинт должен сохранить половинки и граф **согласованно** — это `Builder.Checkpoint()` у единственного владельца обоих;
 - шаг 10: рёбра через брокер наблюдаемого приложения (PRODUCER/CONSUMER через span links) — второй матчер (Strategy), который кормит тот же `graph`.
 
-Тесты I1, I3, оракул пар и таблицы сопоставления идут через `Builder` как чёрный ящик: на вход пакеты, на выход снимок со статистикой, без фейка журнала. `callMatcher` и `graph` **неэкспортируемые**: экспорт позволил бы `Pipeline` или коду шага 10 позвать сопоставление и применение в обход порядка, на котором держатся I1 и I3. Структурные проверки, не видимые через снимок (`len(list) ≤ maxPending`, порядок истечения), — внутренние тесты в Go-пакете `topology`.
+Тесты I1, I3, оракул пар и таблицы сопоставления идут через `Builder` как чёрный ящик: на вход пакеты, на выход снимок со статистикой, без фейка журнала. `matcher` и `graph` — отдельные доменные Go-пакеты внутри `topology` с публичными полями. Обход порядка «истечь → сопоставить → применить» не закрыт видимостью, его сторожат два линтера: depguard запрещает `application` импортировать `topology/matcher`, `graph`, `tombstone`, `clock`, а forbidigo (`analyze-types`) запрещает вне `topology` обращаться к полям `Builder.Matcher` и `Builder.Graph`. Структурные проверки, не видимые через снимок (`len(Ring) == Limit`, порядок истечения), — тесты этих Go-пакетов.
 
 ---
 
@@ -177,7 +188,7 @@ func (b *Builder) Snapshot() Snapshot          // граф + PairingStats + Grap
 - **I1 — учёт каждого спана.** Каждый принятый CLIENT/SERVER-спан попадает ровно в одну корзину:
   `observed = 2·matched + duplicate + unpairable + evicted + expired + pending`.
   Ни один спан не пропадает молча. Проверка — property-based тест со случайным порядком, дубликатами, повторами целых пакетов и временем прихода.
-- **I2 — атомарность снимка.** Читатель видит граф либо до пакета, либо после, но никогда не видит пакет применённым частично. Единица атомарности — итерация Pipeline (до 64 пакетов): все её пакеты видны вместе или не видны совсем. `Snapshot` неизменяем (поля неэкспортируемые, коллекции отдаются итераторами `iter.Seq`, внутренние срезы наружу не выходят). Ревизия строго монотонна и растёт **только если итерация изменила граф**. «Изменила граф» = появился узел или ребро **или изменился любой счётчик узла или ребра** (`calls`, `failed_calls`, `unanswered_calls`, `unanswered_failed_calls`). Поэтому одна ревизия всегда означает одни и те же данные графа. `PairingStats` и `GraphStats` в снимке обновляются каждую итерацию и ревизию не двигают: это диагностика конвейера, а не данные графа.
+- **I2 — атомарность снимка.** Читатель видит граф либо до пакета, либо после, но никогда не видит пакет применённым частично. Единица атомарности — итерация Pipeline (до 64 пакетов): все её пакеты видны вместе или не видны совсем. Поля `Snapshot` публичные (стиль проекта), но срезы `Nodes` и `Edges` — собственная копия каждого снимка (`slices.Clone` в `Builder.Snapshot`): читатель, изменивший свой снимок, не портит граф и следующие снимки. Ревизия строго монотонна и растёт **только если итерация изменила граф**. «Изменила граф» = появился узел или ребро **или изменился любой счётчик узла или ребра** (`calls`, `failed_calls`, `unanswered_calls`, `unanswered_failed_calls`). Поэтому одна ревизия всегда означает одни и те же данные графа. `PairingStats` и `GraphStats` в снимке обновляются каждую итерацию и ревизию не двигают: это диагностика конвейера, а не данные графа.
 - **I3 — согласованность ребра.** Σ `edge.calls` = `matched − graph_overflow`, где `graph_overflow` — вызовы, не вошедшие в граф из-за лимита узлов или рёбер (I5). `edge.failedCalls ≤ edge.calls`. Вызовы без ответа: Σ `node.unanswered_calls` = `expired_caller − unanswered_overflow` (caller-узел не создан из-за `maxNodes`), `node.unansweredFailedCalls ≤ node.unansweredCalls`. Узлы сверх `maxNodes` считаются в `node_overflow` (спан учтён в I1, узел не создан).
 - **I4 — нет тихой потери после ответа.** Успешный ответ OTLP ⇒ все валидные спаны запроса поставлены в журнал, и при штатной остановке они будут обработаны до выхода, **если дренаж уложился в 3 s**; иначе недочитанное явно фиксируется Error-логом `lifecycle.drain_incomplete` с числом спанов (см. «Жизненный цикл»). Перегрузка ⇒ `RESOURCE_EXHAUSTED` **с `RetryInfo`**, и из запроса ничего не поставлено (всё или ничего). Ограничение шага 1: при **падении** процесса теряются журнал, ожидающие половинки и граф. Durability появляется в шаге 3 (NATS R3) и становится полной с чекпоинтами в шаге 5.
 - **I5 — ограниченная память** (в байтах, а не в пакетах). Каждая структура ограничена, итог задан формулой в разделе «Бюджет памяти»:
@@ -191,7 +202,7 @@ func (b *Builder) Snapshot() Snapshot          // граф + PairingStats + Grap
 
 | Состояние | Единственный писатель | Как исключаются конкуренты |
 |---|---|---|
-| `topology.Builder` и всё внутри него: буфер `callMatcher` (pending, tombstones, списки), `topology.graph` (узлы, рёбра, ревизия) | горутина `Pipeline.Run` | single-writer: `Builder` не покидает горутину, мьютекс не нужен; ревизию назначает сам `graph`, поэтому немонотонная ревизия невозможна по построению |
+| `topology.Builder` и всё внутри него: буфер `matcher.Matcher` (pending, tombstones, списки), `graph.Graph` (узлы, рёбра, ревизия) | горутина `Pipeline.Run` | single-writer: `Builder` не покидает горутину, мьютекс не нужен; ревизию назначает сам `graph`, поэтому немонотонная ревизия невозможна по построению |
 | последний `Snapshot` | `Pipeline` через `graphPublisher.Publish` | `atomic.Pointer` на неизменяемый снимок: писатель подменяет указатель, читатели (API, лог `pipeline.stats`) читают без блокировок |
 | очередь пакетов и кредит байтов | `memjournal.Journal` — владелец канала и семафора | писатели (OTLP-хэндлеры) под `RLock` проверяют `closed`, берут кредит `semaphore.Weighted.TryAcquire(batch.Footprint())` и делают неблокирующую отправку. `Close()` под `Lock` ставит `closed` и закрывает канал **один раз**, только владелец. Читатель (`Pipeline`) возвращает кредит через `Delivery.Release` |
 | состояние жизненного цикла | горутина `run` в `cmd/faultline` | автомат Starting → Serving → Draining/Aborting → Stopped (см. «Жизненный цикл»), переходы делает только `run` |
@@ -206,7 +217,7 @@ func (b *Builder) Snapshot() Snapshot          // граф + PairingStats + Grap
 | `clock` (ingest) | `Now() time.Time` | Источник `Batch.ReceivedAt`; в тестах фейковые часы |
 | `spanFeed` (processing) | `Receive(ctx, max int) ([]Delivery, error)` | Блокируется, пока не появится хотя бы один пакет, затем **без ожидания** забирает ещё уже готовые, всего не больше `max`. Так Pipeline строит один снимок на несколько пакетов: под нагрузкой пачки крупнее, в простое задержка видимости — один пакет. Когда журнал закрыт и пуст, возвращает `ErrFeedClosed`: это штатный конец дренажа |
 | `Delivery` (processing) | `Batch() telemetry.Batch`; `Release()` | **Освобождение кредита памяти**, а не подтверждение доставки. Pipeline вызывает `Release` после `Publish` снимка, в который вошёл пакет, — так очередь не принимает новое, пока старое не видно читателям. Durability-подтверждение в шаге 3 так не сделать: после `Publish` половинки пакета могут ещё ждать пару в памяти, и ack «по доставке» потерял бы их при падении. Правильная граница — ack по позиции журнала вместе с чекпоинтом состояния матчера и графа (шаг 5); тогда порт расширится методом позиции, а `Release` останется для кредита |
-| `graphPublisher` (processing) | `Publish(ctx, topology.Snapshot) error` | Публикует неизменяемый снимок. Проверки ревизии нет: монотонность гарантирует `graph` |
+| `graphPublisher` (processing) | `Publish(ctx, *topology.Snapshot) error` | Публикует неизменяемый снимок. Проверки ревизии нет: монотонность гарантирует `graph` |
 | `graphReader` (query) | `Latest(ctx) (topology.Snapshot, error)` | Всегда возвращает снимок; до первого изменения графа — пустой с ревизией 0 и `generated_at` момента старта |
 
 Ownership-scope и тенанты в шаге 1 не применимы: один тенант, аутентификации нет (FR-SEC-* позже). Узлы уже несут namespace, чтобы шаг 18 (FR-SEC-003) не менял идентичность узла.
@@ -215,7 +226,7 @@ Ownership-scope и тенанты в шаге 1 не применимы: оди�
 
 Разделение обязанностей между адаптером и use case:
 - **Адаптер** (`interfaces/otlp`) только переводит формат: pdata → `[]ingest.SpanInput` (плоская команда из примитивов, без решений), `AcceptResult` → `partial_success`, ошибки → gRPC-коды. Синтаксис (protobuf, размер 4 МиБ) проверяет gRPC.
-- **`AcceptBatch(ctx, []SpanInput) (AcceptResult, error)`** вызывает доменный конструктор `telemetry.NewSpan(...) (Span, error)` для каждого спана, собирает отказы (`ErrInvalidSpan` с причиной) в `AcceptResult{Accepted, Rejected, Reasons}` и ставит валидные спаны в журнал.
+- **`AcceptBatch(ctx, []SpanInput) (AcceptResult, error)`** вызывает доменный конструктор `span.New(resource, fields) (span.Span, error)` для каждого спана, собирает отказы (`span.ErrInvalid` с причиной) в `AcceptResult{Accepted, Rejected, Reasons}` и ставит валидные спаны в журнал.
 
 Зачем так: OTLP/HTTP (FR-ING-001) и приём от агента (шаг 8) — ещё два адаптера. Каждый из них только маппит свой формат в `SpanInput`, а правила отказа и подсчёт `rejected` живут в одном месте. Цена — одна копия плоской структуры на спан (входит в бенчмарк A4). Use case никогда не принимает pdata или proto.
 
@@ -231,6 +242,7 @@ Ownership-scope и тенанты в шаге 1 не применимы: оди�
 | `service.name = unknown_service:*` (фолбэк SDK) | accept как есть: узел `unknown_service:…` виден оператору как проблема конфигурации |
 | `SERVER` без `parent_span_id` | accept, `unpairable` (корень) |
 | вид `INTERNAL`/`PRODUCER`/`CONSUMER`/`UNSPECIFIED` | accept, в журнал попадает, в сопоставлении не участвует |
+| неизвестный вид (> 5, вне OTLP) | accept как `UNSPECIFIED`: в журнал попадает, в сопоставлении не участвует |
 
 Отклонённые спаны (`AcceptResult.Rejected`) → `partial_success{rejected_spans: N, error_message: "<первая причина>; …"}`, код ответа OK (так требует спецификация OTLP partial success). Причины — **без сырых значений** из запроса (`service.name: invalid UTF-8`, `service.name: 300 bytes > 255`, но не само имя): невалидный UTF-8 в `error_message` сломал бы маршалинг ответа `Export`, а длинное значение раздуло бы ответ и логи. Сообщение ограничено 1 KiB.
 
@@ -238,7 +250,7 @@ Ownership-scope и тенанты в шаге 1 не применимы: оди�
 - `name` = `service.name`;
 - `namespace` = `k8s.namespace.name`, иначе `service.namespace`, иначе `""`. Сначала `k8s.namespace.name`, потому что это граница тенанта (FR-SEC-003).
 
-`k8s.pod.name` хранится в `Span.instance`, но в идентичность узла не входит: уровни workload и pod (FR-TOP-001) появятся в шаге 10 как отдельный уровень с собственным id узла.
+`k8s.pod.name` в шаге 1 только валидируется и в `span.Span` не хранится; в идентичность узла он не входит: уровни workload и pod (FR-TOP-001) появятся в шаге 10 как отдельный уровень с собственным id узла.
 
 ### Внешний контракт — `api/proto/faultline/v1/graph.proto`
 
@@ -355,7 +367,7 @@ Circuit breaker не нужен: исходящих зависимостей н�
 
 | Что | Как |
 |---|---|
-| I1 (учёт каждого спана) | Property-based: ручной генератор на `math/rand/v2` с фиксированным seed, ≥ 10⁴ сценариев. Перестановки, дубликаты, **повтор целого пакета с обеими половинками** (в пределах и за пределами `tombstoneTTL`), сдвиги времени больше и меньше `ttl`, насыщение буфера и tombstones. Проверка формулы по `PairingStats` из `Snapshot`, построенного `Builder`; `len(list) ≤ maxPending` — внутренний тест Go-пакета `topology` |
+| I1 (учёт каждого спана) | Property-based: ручной генератор на `math/rand/v2` с фиксированным seed, ≥ 10⁴ сценариев. Перестановки, дубликаты, **повтор целого пакета с обеими половинками** (в пределах и за пределами `tombstoneTTL`), сдвиги времени больше и меньше `ttl`, насыщение буфера и tombstones. Проверка формулы по `PairingStats` из `Snapshot`, построенного `Builder`; `Pending.Len() ≤ MaxPending` — property-тест Go-пакета `topology/matcher` |
 | Правильность пар (оракул) | Тот же генератор знает истинные пары вызовов. Свойство: без вытеснения и истечения итоговый граф **совпадает с эталоном генератора** (`cmp.Diff` по рёбрам и счётчикам `calls`/`failed_calls`) при любой перестановке и любом числе повторов пакетов в пределах `tombstoneTTL`. Формула I1 сходится и при неверно спаренных половинках — этот тест ловит именно такую ошибку |
 | Реальная форма данных (replay) | Дамп OTLP из OTel Demo `test/demo/otel-demo/traces.otlp.json.gz` (срез 0) → маппинг `ptrace` → `AcceptBatch` → `Builder`. Тест живёт в `test/replay` (не в `domain`: `layer-domain` запрещает `go.opentelemetry.io` и в тестах) и появляется в срезе 4b, когда есть весь конвейер. Модель времени: одна строка дампа = один Export-пакет (границы сохраняются), `ReceivedAt` = максимальный `end_time` спанов строки, приведённый к монотонному. Проверка **точная**: replay детерминирован, поэтому рёбра, `calls`, `failed_calls` и `unanswered_*` сравниваются с golden `test/demo/otel-demo/replay.golden.json` через `cmp.Diff`. Отдельно: множество рёбер replay ⊆ `required ∪ optional` и ⊇ `required` — связь с эталоном демо. Гоняется в `make verify` |
 | Сопоставление | Таблица: client→server, server→client, дубликат той же стороны, второй server-спан с тем же родителем, повтор после сопоставления (tombstone), истечение TTL, вытеснение старейшей при полном буфере, вторая половинка при полном буфере **сопоставляется**, server без родителя, client с `db.system`, internal-спан, self-loop, немонотонный `now` |
@@ -371,7 +383,7 @@ Circuit breaker не нужен: исходящих зависимостей н�
 | Маппинг OTLP | Запрос через `ptrace` → `[]SpanInput`: виды спанов, атрибуты статуса, `service.name`, `k8s.namespace.name` против `service.namespace`; `AcceptResult` → `partial_success`; fuzz-тест маппинга (NFR-SEC-004): любой принятый спан проходит до `GetGraph`, и ответ маршалится в proto и protojson без ошибки |
 | Id узла | Таблица коллизий: `{a/b, c}` и `{a, b/c}`, `%` в имени, пустой namespace — id различаются и обратимы |
 | Паника в хэндлере | Паникующий фейк `spanJournal` → `INTERNAL`, процесс и следующий запрос живы |
-| I5, память | Бенчмарк декодирования запроса 4 МиБ: прирост heap ≤ 3 × wire (проверяет допущение A4); тест `spanFixedBytes` (`unsafe.Sizeof(telemetry.Span)`) ≤ 256 B; тест `Batch.Footprint()`: фиксированная часть × N + длины **различных** строк идентичности (строки ресурса общие для всех спанов ресурса и считаются один раз); бенчмарк-вывод нижней границы `journalMaxBytes` из запроса 4 МиБ минимальных спанов |
+| I5, память | Бенчмарк декодирования запроса 4 МиБ: прирост heap ≤ 3 × wire (проверяет допущение A4); тест `spanFixedBytes` (`unsafe.Sizeof(span.Span)`) ≤ 256 B; тест `Batch.Footprint()`: фиксированная часть × N + длины **различных** строк идентичности (строки ресурса общие для всех спанов ресурса и считаются один раз); бенчмарк-вывод нижней границы `journalMaxBytes` из запроса 4 МиБ минимальных спанов |
 | Жизненный цикл | `goleak.VerifyTestMain` в `processing`, `memjournal`, `cmd/faultline`. e2e `run` на `:0` (адреса из листенеров): OTLP-пара → `GetGraph` видит ребро A→B → отмена → выход ≤ 10 s. Сигнал **не** отменяет ctx Pipeline (тест: сигнал при непустом журнале → все пакеты дочитаны). Неожиданный выход Pipeline (`nil` до сигнала) → журнал закрыт **до** остановки OTLP, следующий `Export` получает `UNAVAILABLE`, процесс завершается с кодом 1 без ожидания дренажа. Занятый порт → ошибка до старта компонентов, в сообщении адрес. Невалидный env → табличный тест сообщений |
 | API | `GetGraph` через gRPC и Connect-JSON даёт семантически одинаковый ответ (`cmp.Diff` после unmarshal); интерсептор → `DEADLINE_EXCEEDED` |
 | Рендеринг CLI | Golden-тесты DOT и JSON (JSON: protojson → `json.Indent` для стабильного вида); DOT разбирается `gonum`; golden-кейс со «злыми» именами (`"`, `\`, перевод строки, `]; x [URL=…`): число узлов совпадает, инъекции нет |
@@ -440,16 +452,16 @@ stateDiagram-v2
 |---|---|---|---|---|
 | журнал | `journalMaxBytes` = 64 MiB по `Batch.Footprint()` | учёт точный: фиксированная часть спана ≤ 256 B (тест) + различные строки | 64 MiB | 64 MiB |
 | буфер ожидания | 100 000 половинок | ≈ 180 B + строки (≤ 826 B, если у каждой половинки уникальный сервис) | ≈ 17 MiB | ≈ 96 MiB |
-| tombstones | 1 000 000 ключей | ≈ 70 B (ring-буфер + `map[CallKey]int64`) | ≈ 67 MiB | ≈ 67 MiB |
-| граф | 10 000 узлов, 50 000 рёбер | узел ≤ 200 B + строки и id ≤ 2 KiB; ребро ≤ 64 B (ссылки на узлы, не строки) | ≈ 5 MiB | ≈ 25 MiB |
+| tombstones | 1 000 000 ключей | ≈ 88 B, измерено бенчмарком (ring-буфер + `map[CallKey]Scope`) | ≈ 84 MiB | ≈ 84 MiB |
+| граф | 10 000 узлов, 50 000 рёбер | ≈ 247 B на ребро вместе с его узлами и view, измерено бенчмарком; плюс строки и id узла ≤ 2 KiB | ≈ 12 MiB | ≈ 30 MiB |
 | снимки | ≤ 6 одновременно живых: опубликованный, строящийся и по одному у каждого из ≤ 4 одновременных `GetGraph` | ≈ 5 MiB на снимок: строки общие с графом, копируются только структуры | ≈ 30 MiB | ≈ 30 MiB |
 | маршалинг ответов API | ≤ 4 одновременных `GetGraph` × размер ответа (protojson до 2× proto) | | ≈ 8 MiB | ≈ 170 MiB |
 | декодирование в полёте | 2 соединения × 16 потоков × 4 MiB wire × 3 (A4) | | ≈ 384 MiB | ≈ 384 MiB |
-| **итого** | | | **≈ 575 MiB** | **≈ 840 MiB** |
+| **итого** | | | **≈ 599 MiB** | **≈ 862 MiB** |
 
 Нижняя граница `journalMaxBytes` = 48 MiB: запрос 4 МиБ вмещает около 140 000 минимальных спанов (~30 B на проводе), это ≈ 35 MiB фиксированной части плюс ≤ 4 MiB строк. Поэтому при валидированном конфиге любой одиночный запрос помещается в пустой журнал, и `ErrBatchTooLarge` недостижим. Граница подтверждается бенчмарком в срезе 4a (строка «I5, память» в таблице тестов).
 
-В манифесте: `GOMEMLIMIT=1GiB`, limits 2 GiB / 2 CPU (как в NFR-PERF-001). Худший случай при конфиге по умолчанию (≈ 840 MiB) ниже `GOMEMLIMIT`.
+В манифесте: `GOMEMLIMIT=1280MiB`, limits 2 GiB / 2 CPU (как в NFR-PERF-001). Худший случай при конфиге по умолчанию (≈ 862 MiB) ниже порога валидатора 0,85 × `GOMEMLIMIT` (≈ 1088 MiB) с запасом ≈ 226 MiB. При `GOMEMLIMIT=1GiB` запас был бы ≈ 8 MiB, а измеренные tombstones и граф оказались тяжелее оценок, поэтому лимит поднят. Между `GOMEMLIMIT` и лимитом пода остаётся 768 MiB на перерасход GC, стеки горутин и память вне кучи.
 
 **Конфиг не может выйти за бюджет.** Валидатор конфига (`cmd/faultline`, этап Starting) считает по формуле этой таблицы худший случай памяти и худший размер ответа `GetGraph` для заданных лимитов и отказывается стартовать (exit 2 с перечнем вкладов), если память > 0,85 × `GOMEMLIMIT` или ответ > 48 MiB (`SendMaxBytes`). Поэтому поднять `FAULTLINE_GRAPH_MAX_NODES` так, что `GetGraph` навсегда перестанет помещаться в ответ, нельзя: процесс просто не запустится с понятным сообщением. Перегрузка проявляется как `RESOURCE_EXHAUSTED`, а не как OOMKill (FR-ING-005). Соединения сверх 2 ждут в backlog листенера. В шаге 1 единственный клиент — Collector OTel Demo (одно соединение).
 
@@ -506,7 +518,7 @@ stateDiagram-v2
 `make demo-1` — одна команда, идемпотентная:
 1. `kind-up` (профиль `deploy/kind/kind-config.yaml`; если OTel Demo не помещается в Docker VM, то однонодовый `deploy/kind/kind-config-demo.yaml`, Открытый вопрос 1). Образ kind-ноды закреплён по digest в обоих профилях; если существующий кластер создан с другим профилем, `kind-up` пересоздаёт его, а не переиспользует молча.
 2. `make image`: многостадийный `Dockerfile`, `CGO_ENABLED=0`, `gcr.io/distroless/static-debian12:nonroot`, тег `faultline:dev`; `kind load docker-image`.
-3. `kubectl apply -k deploy/dev/skeleton`: Namespace `faultline`, Deployment `faultline all` (`runAsNonRoot`, `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`, `seccompProfile: RuntimeDefault`, limits 2Gi/2CPU, `GOMEMLIMIT=1GiB`, readiness `GET /healthz`), Service с портами 4317/8080.
+3. `kubectl apply -k deploy/dev/skeleton`: Namespace `faultline`, Deployment `faultline all` (`runAsNonRoot`, `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`, `seccompProfile: RuntimeDefault`, limits 2Gi/2CPU, `GOMEMLIMIT=1280MiB`, readiness `GET /healthz`), Service с портами 4317/8080.
 4. `helm upgrade --install -n otel-demo --create-namespace` OTel Demo **зафиксированной версии чарта** с `deploy/dev/otel-demo-values.yaml`:
    - выключены Jaeger, Grafana, Prometheus, OpenSearch;
    - в Collector добавлен экспортер `otlp/faultline`: `endpoint: faultline.faultline.svc:4317`, `tls.insecure: true`, `timeout: 5s` (явно, чтобы окно повторов было известно, см. «Tombstones»), `retry_on_failure.enabled: true`, `sending_queue.enabled: true`;
@@ -546,7 +558,7 @@ stateDiagram-v2
 |---|---|---|
 | A1 | otel-go и Collector повторяют `RESOURCE_EXHAUSTED` только с `RetryInfo` | **проверено**: `otlptracegrpc@v1.43.0/client.go:294-296` |
 | A2 | Collector склеивает спаны разных сервисов в один Export | **опровергнуто** (срез 0, 2 × 10 min): 0 из 2523 экспортов. Tombstones остаются: они защищают от повтора OTLP-запроса, а не только от склейки |
-| A3 | Спаны выставляют код ответа (`rpc.response.status_code` / `rpc.grpc.status_code` / `http.response.status_code`) | **подтверждено с поправкой** (срез 0): в одном демо одновременно встречаются старые и новые имена — `rpc.grpc.status_code` (числом) и `rpc.response.status_code` (строкой), `http.status_code` и `http.response.status_code`. Правило `Span.Failed()` читает обе формы. Живой пример OR сторон: `recommendation → flagd`, client `DEADLINE_EXCEEDED`, server `OK` |
+| A3 | Спаны выставляют код ответа (`rpc.response.status_code` / `rpc.grpc.status_code` / `http.response.status_code`) | **подтверждено с поправкой** (срез 0): в одном демо одновременно встречаются старые и новые имена — `rpc.grpc.status_code` (числом) и `rpc.response.status_code` (строкой), `http.status_code` и `http.response.status_code`. Правило поля `Span.Failed` читает обе формы. Живой пример OR сторон: `recommendation → flagd`, client `DEADLINE_EXCEEDED`, server `OK` |
 | A4 | Декодирование запроса 4 МиБ даёт прирост heap ≤ 3 × wire | проверяется бенчмарком в срезе 4b; при провале пересчитать бюджет памяти |
 | A5 | OTel Demo без observability-стека помещается в Docker VM вместе с faultline | **подтверждено** (срез 0): профиль `deploy/dev/otel-demo-values.yaml` (без Jaeger/Prometheus/Grafana/OpenSearch и браузерного трафика) работает в однонодовом kind; Docker VM 16 GiB (сумма limits демо ≈ 6.9 GiB + нода + faultline 2 GiB) |
 | A6 | `telemetrygen traces` кладёт client- и server-спан в один `service.name` | не проверено; на результат не влияет (self-loop допустим) |
@@ -598,7 +610,7 @@ stateDiagram-v2
 - `failed` — OR обеих сторон по коду ответа; вызовы без пары учитываются на узле caller (`unanswered_*`);
 - `GetGraph` — чтение снимка вне курсорной пагинации FR-API-007, рёбра по индексам узлов;
 - входные данные тестов — в `test/demo/`, `docs/` остаётся локальной документацией;
-- `callMatcher` и `graph` не сливаются, порядком владеет доменный фасад `Builder`.
+- `matcher.Matcher` и `graph.Graph` не сливаются, порядком владеет доменный фасад `Builder`.
 
 **Известные упрощения шага 1, которые решаются позже:**
 - корневые server-спаны (вход извне) — `unpairable`; в шаге 10 они станут рёбрами от виртуального узла `user`, как в Tempo и servicegraph-коннекторе (признак виртуального узла — новое поле `Node`).
@@ -610,8 +622,8 @@ stateDiagram-v2
 | # | Срез | Проверка |
 |---|---|---|
 | 0 ✔ 05.11 | **Спайк на реальных данных:** OTel Demo в kind (`-n otel-demo`, Collector с `file`-экспортером), дамп ≥ 10 min трафика; кандидат эталона от servicegraph-коннектора, ручная разметка `required`/`optional` с обоснованиями, урезание целыми трейсами | A2, A3, A5, A7, A8 и имена атрибутов закрыты фактами; дамп и списки в `test/demo/otel-demo/`. Код faultline не нужен и в эталоне не участвует. Можно начать до 9.11 |
-| 1 | `telemetry` (`Span`, `NewSpan` с лимитами строк и UTF-8, `ServiceRef`, `Batch.Footprint`) + `topology.callMatcher` с tombstones и вытеснением | I1 property, таблица сопоставления, `failed` обеих сторон |
-| 2 | `topology.graph`, `Builder`, `Snapshot` (неэкспортируемые поля, итераторы, id в рёбрах), `GraphStats`, ревизия, лимиты, `unanswered_*` | I3, оракул пар, ревизия при изменении любого счётчика, бенчмарк heap на элемент |
+| 1 | `telemetry` (`Span`, `NewSpan` с лимитами строк и UTF-8, `ServiceRef`, `Batch.Footprint`) + `matcher.Matcher` с tombstones и вытеснением | I1 property, таблица сопоставления, `failed` обеих сторон |
+| 2 | `graph.Graph`, `Builder`, `Snapshot` (публичные поля, id в рёбрах), `GraphStats`, ревизия, лимиты, `unanswered_*` | I3, оракул пар, ревизия при изменении любого счётчика, бенчмарк heap на элемент |
 | 3 | `graph.proto` + buf + `connectapi.GetGraph` + `memgraph` + grpcreflect | `buf lint`; gRPC и Connect-JSON дают одинаковый ответ; размер ответа на лимитах |
 | 4a | `ingest.AcceptBatch` + `memjournal` (кредит байтов, `Receive(max)`, `Release`) | валидация, I4 «всё или ничего» на уровне use case, `ErrBatchTooLarge`, бенчмарк нижней границы журнала |
 | 4b | `otlp.TraceReceiver`: маппинг pdata, карта ошибок, recovery, параметры gRPC-сервера; **replay-тест дампа** в `test/replay` | I4 с `RetryInfo`, `INVALID_ARGUMENT`, fuzz до маршалинга ответа, бенчмарк A4, replay = golden |

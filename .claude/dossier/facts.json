@@ -1,0 +1,103 @@
+{
+ "root": "/Users/useer/GolandProjects/faultline",
+ "scanned_at": 1793925688,
+ "head": "90d895129d7f209826c5604586e0596c6dbad7ed",
+ "counts": {
+  "struct_decl": 33,
+  "errorf_wrap": 23,
+  "errors_join": 1,
+  "recv_val": 25,
+  "errors_new_pkg": 7,
+  "errors_is__test": 10,
+  "err_ignored__test": 6,
+  "table_test__test": 24,
+  "struct_decl__test": 8,
+  "recv_ptr": 36
+ },
+ "by_ext": {
+  ".go": 40,
+  ".yaml": 6,
+  "<none>": 4,
+  ".md": 4,
+  ".sh": 4,
+  ".yml": 3,
+  ".txt": 2,
+  ".mod": 1,
+  ".sum": 1,
+  ".env": 1,
+  ".gz": 1
+ },
+ "loc_by_ext": {
+  "<none>": 261,
+  ".yml": 279,
+  ".yaml": 168,
+  ".mod": 31,
+  ".go": 5886
+ },
+ "imports": {
+  "slog": 1,
+  "samber_lo": 8
+ },
+ "iface_by_role": {},
+ "iface_names": {
+  "exported": 0,
+  "unexported": 0
+ },
+ "concurrency_sites": [],
+ "risk_sites": [],
+ "external_edges": [],
+ "top_packages": {
+  "internal/domain/topology/matcher": 6,
+  "internal/domain/topology": 5,
+  "internal/domain/topology/graph": 5,
+  "internal/domain/topology/tombstone": 3,
+  "internal/domain/telemetry/batch": 2,
+  "internal/domain/telemetry/ids": 2,
+  "internal/domain/telemetry/kind": 2,
+  "internal/domain/telemetry/resource": 2,
+  "internal/domain/telemetry/response": 2,
+  "internal/domain/telemetry/span": 2,
+  "internal/domain/topology/call": 2,
+  "internal/domain/topology/clock": 2,
+  "internal/domain/topology/role": 2,
+  "hack/trimdump": 1,
+  "internal/domain/telemetry/telemetrytest": 1,
+  "internal/domain/topology/topologytest": 1
+ },
+ "files_scanned": 40,
+ "files_skipped_generated": 0,
+ "truncated": false,
+ "configs": {
+  ".golangci.yml": true,
+  "Makefile": true,
+  "go.mod": true,
+  "ci_workflows": [
+   "ci.yml"
+  ],
+  "go_version": "1.27.0",
+  "module": "github.com/DmytroLysenko1/faultline",
+  "make_targets": [
+   "btf-check",
+   "clean",
+   "cover-check",
+   "demo-capture",
+   "demo-down",
+   "fmt",
+   "gen-check",
+   "generate",
+   "help",
+   "kind-down",
+   "kind-up",
+   "lint",
+   "mod-check",
+   "proto-breaking",
+   "proto-lint",
+   "test",
+   "test-race",
+   "tools",
+   "verify",
+   "vuln"
+  ],
+  "race_in_ci": true
+ }
+}

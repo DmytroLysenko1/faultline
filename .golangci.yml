@@ -40,9 +40,11 @@ linters:
     - copyloopvar
     - gocritic
 
-    # --- complexity budgets (CLAUDE.md: cognitive/cyclomatic <= 10) ---
+    # --- function budgets: at most 30 lines, complexity at most 5, lines at most 128 characters ---
+    - funlen
     - gocyclo
     - gocognit
+    - lll
 
     # --- security & hygiene ---
     - gosec
@@ -51,10 +53,16 @@ linters:
     - misspell
 
   settings:
+    funlen:
+      lines: 30
+      statements: -1
     gocyclo:
-      min-complexity: 10
+      min-complexity: 5
     gocognit:
-      min-complexity: 10
+      min-complexity: 5
+    lll:
+      line-length: 128
+      tab-width: 4
     depguard:
       rules:
         main:
@@ -110,6 +118,14 @@ linters:
               desc: transport stays in interfaces
             - pkg: go.opentelemetry.io/collector
               desc: pdata stays in interfaces/otlp
+            - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/matcher
+              desc: only topology.Builder keeps the expire → match → apply order (I1, I3)
+            - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/graph
+              desc: only topology.Builder keeps the expire → match → apply order (I1, I3)
+            - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/tombstone
+              desc: only topology.Builder keeps the expire → match → apply order (I1, I3)
+            - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/clock
+              desc: only topology.Builder keeps the expire → match → apply order (I1, I3)
         layer-infrastructure:
           files:
             - "**/internal/infrastructure/**"
@@ -163,7 +179,11 @@ linters:
             - pkg: github.com/DmytroLysenko1/faultline/internal/application/processing
               desc: use cases do not import each other — move shared code to domain
     forbidigo:
+      analyze-types: true
       forbid:
+        - pattern: ^topology\.Builder\.(Matcher|Graph)$
+          pkg: ^github\.com/DmytroLysenko1/faultline/internal/domain/topology$
+          msg: only topology.Builder keeps the expire → match → apply order (I1, I3)
         - pattern: ^fmt\.Print(|f|ln)$
           msg: no stdout printing — use slog/zap (observability doctrine)
         - pattern: ^log\.(Print|Fatal|Panic)(|f|ln)$
@@ -179,9 +199,14 @@ linters:
       - internal/gen
       - web
     rules:
-      # Tests build large table literals and helper closures; relax complexity/sec there.
+      - path: internal/domain/topology/
+        linters:
+          - forbidigo
+        text: only topology.Builder keeps the expire
+      # Tests build large table literals and helper closures; relax size/complexity/sec there.
       - path: _test\.go
         linters:
+          - funlen
           - gocognit
           - gocyclo
           - prealloc

@@ -2,7 +2,7 @@
 # Per-package line-coverage gate (NFR-MAINT-001).
 # Usage: hack/cover-check.sh <coverage.out>
 # Thresholds: STRICT_PACKAGES >= COVER_STRICT_MIN, every other package >= COVER_MIN.
-# Excluded: cmd/ and generated code (internal/gen).
+# Excluded: cmd/, generated code (internal/gen) and test-support packages (*test, like net/http/httptest).
 set -euo pipefail
 
 profile="${1:?usage: cover-check.sh <coverage.out>}"
@@ -34,6 +34,7 @@ NR == 1 { next }
 	if (file ~ /^cmd\// || file ~ /^internal\/gen\//) next
 	package = file
 	sub(/\/[^\/]+$/, "", package)
+	if (package ~ /test$/) next
 	if (!(block in seen)) {
 		seen[block] = 1
 		total[package] += statements

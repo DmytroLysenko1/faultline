@@ -1,24 +1,5 @@
 //go:build ignore
 
-// Command trimdump cuts an OTel Demo trace dump (collector file exporter, one OTLP/JSON
-// export per line) down to a small fixture for the step 1 replay test.
-//
-// Rules (design step 1, «Откуда эталон», item 4):
-//   - only whole traces are kept: a trace is either complete in the output or absent,
-//     otherwise pairs would lose a half;
-//   - export boundaries and their order are kept: an output line is an input line with the
-//     spans of dropped traces removed; lines left without spans are dropped;
-//   - every edge in -edges keeps at least -per-edge traces with a full client/server pair,
-//     and the run fails if an edge has none.
-//
-// Usage:
-//
-//	go run hack/trimdump/main.go -in tmp/capture/traces.jsonl -edges edges.txt \
-//	    -per-edge 3 -extra 40 -out test/demo/otel-demo/traces.otlp.json
-//
-// Node ids are built from the resource attributes by the faultline rule (k8s.namespace.name,
-// else service.namespace, else empty), so a service that lost its k8s enrichment gets a
-// different id than the edges file and the run fails loudly instead of hiding it.
 package main
 
 import (
@@ -28,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"math/rand/v2"
@@ -49,30 +31,30 @@ var (
 )
 
 type spanRef struct {
-	traceID string
-	spanID  string
+	TraceID string
+	SpanID  string
 }
 
 type spanInfo struct {
-	node   string
-	kind   int
-	parent string
+	Node   string
+	Kind   int
+	Parent string
 }
 
 type options struct {
-	in, edges, out string
-	perEdge, extra int
-	seed           uint64
+	In, Edges, Out string
+	PerEdge, Extra int
+	Seed           uint64
 }
 
 func main() {
 	var opts options
-	flag.StringVar(&opts.in, "in", "", "input dump (OTLP/JSON lines)")
-	flag.StringVar(&opts.edges, "edges", "", "edges file: '<source_id> <target_id>' per line, # comments")
-	flag.StringVar(&opts.out, "out", "", "output file")
-	flag.IntVar(&opts.perEdge, "per-edge", 3, "traces kept per edge")
-	flag.IntVar(&opts.extra, "extra", 40, "additional random whole traces (unpaired halves, noise)")
-	flag.Uint64Var(&opts.seed, "seed", 1, "seed for the random extra traces")
+	flag.StringVar(&opts.In, "in", "", "input dump (OTLP/JSON lines)")
+	flag.StringVar(&opts.Edges, "edges", "", "edges file: '<source_id> <target_id>' per line, # comments")
+	flag.StringVar(&opts.Out, "out", "", "output file")
+	flag.IntVar(&opts.PerEdge, "per-edge", 3, "traces kept per edge")
+	flag.IntVar(&opts.Extra, "extra", 40, "additional random whole traces (unpaired halves, noise)")
+	flag.Uint64Var(&opts.Seed, "seed", 1, "seed for the random extra traces")
 	flag.Parse()
 
 	if err := run(opts); err != nil {
@@ -82,7 +64,7 @@ func main() {
 }
 
 func run(opts options) error {
-	lines, err := readLines(opts.in)
+	lines, err := readLines(opts.In)
 	if err != nil {
 		return err
 	}
@@ -90,7 +72,7 @@ func run(opts options) error {
 	if err != nil {
 		return err
 	}
-	edges, err := readEdges(opts.edges)
+	edges, err := readEdges(opts.Edges)
 	if err != nil {
 		return err
 	}
@@ -98,7 +80,7 @@ func run(opts options) error {
 	if err != nil {
 		return err
 	}
-	return writeTrimmed(opts.out, lines, keep)
+	return writeTrimmed(opts.Out, lines, keep)
 }
 
 func readLines(path string) ([]map[string]any, error) {
@@ -108,9 +90,20 @@ func readLines(path string) ([]map[string]any, error) {
 	}
 	defer file.Close()
 
-	var lines []map[string]any
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 1<<20), maxLineBytes)
+	lines, err := scanLines(scanner)
+	if err != nil {
+		return nil, err
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read dump %s: %w", path, err)
+	}
+	return lines, nil
+}
+
+func scanLines(scanner *bufio.Scanner) ([]map[string]any, error) {
+	var lines []map[string]any
 	for scanner.Scan() {
 		if len(strings.TrimSpace(scanner.Text())) == 0 {
 			continue
@@ -120,9 +113,6 @@ func readLines(path string) ([]map[string]any, error) {
 			return nil, fmt.Errorf("parse dump line %d: %w", len(lines)+1, err)
 		}
 		lines = append(lines, doc)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read dump %s: %w", path, err)
 	}
 	return lines, nil
 }
@@ -144,8 +134,15 @@ func indexResource(spans map[spanRef]spanInfo, resourceSpans map[string]any) {
 	node := resourceNodeID(resourceSpans)
 	for _, scopeSpans := range list(resourceSpans["scopeSpans"]) {
 		for _, span := range list(scopeSpans["spans"]) {
-			ref := spanRef{traceID: str(span["traceId"]), spanID: str(span["spanId"])}
-			spans[ref] = spanInfo{node: node, kind: int(num(span["kind"])), parent: str(span["parentSpanId"])}
+			ref := spanRef{
+				TraceID: str(span["traceId"]),
+				SpanID:  str(span["spanId"]),
+			}
+			spans[ref] = spanInfo{
+				Node:   node,
+				Kind:   int(num(span["kind"])),
+				Parent: str(span["parentSpanId"]),
+			}
 		}
 	}
 }
@@ -167,52 +164,73 @@ func readEdges(path string) (map[string]bool, error) {
 	return edges, nil
 }
 
-// selectTraces keeps perEdge traces with a full pair for every edge, plus extra random traces.
 func selectTraces(spans map[spanRef]spanInfo, edges map[string]bool, opts options) (map[string]bool, error) {
-	pairTraces := tracesByEdge(spans)
+	keep, err := edgeTraces(tracesByEdge(spans), edges, opts.PerEdge)
+	if err != nil {
+		return nil, err
+	}
+	addRandomTraces(keep, spans, opts)
+	return keep, nil
+}
+
+func edgeTraces(pairTraces map[string]map[string]bool, edges map[string]bool, perEdge int) (map[string]bool, error) {
 	keep := make(map[string]bool)
 	for _, edge := range slices.Sorted(maps.Keys(edges)) {
 		traces := slices.Sorted(maps.Keys(pairTraces[edge]))
 		if len(traces) == 0 {
 			return nil, fmt.Errorf("%s: %w", edge, errEdgeWithoutPair)
 		}
-		for _, traceID := range traces[:min(opts.perEdge, len(traces))] {
+		for _, traceID := range traces[:min(perEdge, len(traces))] {
 			keep[traceID] = true
 		}
 	}
+	return keep, nil
+}
 
+func addRandomTraces(keep map[string]bool, spans map[spanRef]spanInfo, opts options) {
 	all := slices.Sorted(maps.Keys(traceIDs(spans)))
-	random := rand.New(rand.NewPCG(opts.seed, opts.seed))
-	random.Shuffle(len(all), func(i, j int) { all[i], all[j] = all[j], all[i] })
-	for _, traceID := range all[:min(opts.extra, len(all))] {
+	random := rand.New(rand.NewPCG(opts.Seed, opts.Seed))
+	random.Shuffle(len(all), func(i, j int) {
+		all[i], all[j] = all[j], all[i]
+	})
+	for _, traceID := range all[:min(opts.Extra, len(all))] {
 		keep[traceID] = true
 	}
-	return keep, nil
 }
 
 func tracesByEdge(spans map[spanRef]spanInfo) map[string]map[string]bool {
 	byEdge := make(map[string]map[string]bool)
 	for ref, server := range spans {
-		if server.kind != spanKindServer || server.parent == "" {
+		edge, paired := pairEdge(spans, ref, server)
+		if !paired {
 			continue
 		}
-		client, ok := spans[spanRef{traceID: ref.traceID, spanID: server.parent}]
-		if !ok || client.kind != spanKindClient {
-			continue
-		}
-		edge := client.node + " " + server.node
 		if byEdge[edge] == nil {
 			byEdge[edge] = make(map[string]bool)
 		}
-		byEdge[edge][ref.traceID] = true
+		byEdge[edge][ref.TraceID] = true
 	}
 	return byEdge
+}
+
+func pairEdge(spans map[spanRef]spanInfo, ref spanRef, server spanInfo) (string, bool) {
+	if server.Kind != spanKindServer || server.Parent == "" {
+		return "", false
+	}
+	client, ok := spans[spanRef{
+		TraceID: ref.TraceID,
+		SpanID:  server.Parent,
+	}]
+	if !ok || client.Kind != spanKindClient {
+		return "", false
+	}
+	return client.Node + " " + server.Node, true
 }
 
 func traceIDs(spans map[spanRef]spanInfo) map[string]bool {
 	ids := make(map[string]bool)
 	for ref := range spans {
-		ids[ref.traceID] = true
+		ids[ref.TraceID] = true
 	}
 	return ids
 }
@@ -222,27 +240,29 @@ func writeTrimmed(path string, lines []map[string]any, keep map[string]bool) err
 	if err != nil {
 		return fmt.Errorf("create %s: %w", path, err)
 	}
-	writer := bufio.NewWriter(file)
-	encoder := json.NewEncoder(writer)
-	written := 0
-	for _, doc := range lines {
-		if !filterExport(doc, keep) {
-			continue
-		}
-		if err := encoder.Encode(doc); err != nil {
-			return errors.Join(fmt.Errorf("write %s: %w", path, err), file.Close())
-		}
-		written++
-	}
-	if err := writer.Flush(); err != nil {
-		return errors.Join(fmt.Errorf("flush %s: %w", path, err), file.Close())
+	written, err := encodeKept(file, lines, keep)
+	if err != nil {
+		return errors.Join(fmt.Errorf("write %s: %w", path, err), file.Close())
 	}
 	slog.Info("trimmed dump written", "path", path, "exports", written, "traces", len(keep))
 	return file.Close()
 }
 
-// filterExport drops spans of traces outside keep and reports whether any span is left.
-// Each level keeps only children that still hold spans, so no empty resource or scope remains.
+func encodeKept(out io.Writer, lines []map[string]any, keep map[string]bool) (written int, err error) {
+	writer := bufio.NewWriter(out)
+	encoder := json.NewEncoder(writer)
+	for _, doc := range lines {
+		if !filterExport(doc, keep) {
+			continue
+		}
+		if err := encoder.Encode(doc); err != nil {
+			return written, err
+		}
+		written++
+	}
+	return written, writer.Flush()
+}
+
 func filterExport(doc map[string]any, keep map[string]bool) bool {
 	return keepNonEmpty(doc, "resourceSpans", func(resourceSpans map[string]any) bool {
 		return keepNonEmpty(resourceSpans, "scopeSpans", func(scopeSpans map[string]any) bool {
@@ -253,9 +273,6 @@ func filterExport(doc map[string]any, keep map[string]bool) bool {
 	})
 }
 
-// keepNonEmpty replaces parent[key] with the children that pass keepChild and reports
-// whether any child is left. Hand-written instead of samber/lo: this file is build-ignored,
-// and a module dependency used only here would be removed by `go mod tidy` (make verify).
 func keepNonEmpty(parent map[string]any, key string, keepChild func(map[string]any) bool) bool {
 	var kept []any
 	for _, child := range list(parent[key]) {
@@ -267,7 +284,6 @@ func keepNonEmpty(parent map[string]any, key string, keepChild func(map[string]a
 	return len(kept) > 0
 }
 
-// resourceNodeID mirrors the faultline node id contract (design step 1, ServiceRef and Node.id).
 func resourceNodeID(resourceSpans map[string]any) string {
 	resource, _ := resourceSpans["resource"].(map[string]any)
 	attributes := make(map[string]string)
