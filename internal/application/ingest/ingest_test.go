@@ -3,6 +3,7 @@ package ingest_test
 import (
 	"context"
 	"errors"
+	"iter"
 	"slices"
 	"strings"
 	"sync"
@@ -33,13 +34,47 @@ const (
 	unknownKind       = 9
 	rawValueMarker    = "RAW-VALUE-MUST-NOT-LEAK"
 
-	concurrentWorkers  = 8
-	requestsPerWorker  = 50
-	spansPerAccepted   = 2
-	overloadedBatchLen = 1
+	concurrentWorkers   = 8
+	lengthHintOvershoot = 1000
+	requestsPerWorker   = 50
+	spansPerAccepted    = 2
+	overloadedBatchLen  = 1
 )
 
 var errJournalBroken = errors.New("journal broken")
+
+type spanInput struct {
+	Resource resource.Resource
+	Fields   span.Fields
+}
+
+type sliceSource struct {
+	Inputs   []spanInput
+	Reported int
+	Passes   int
+}
+
+func sourceOf(inputs []spanInput) *sliceSource {
+	return &sliceSource{
+		Inputs:   inputs,
+		Reported: len(inputs),
+	}
+}
+
+func (s *sliceSource) Len() int {
+	return s.Reported
+}
+
+func (s *sliceSource) All() iter.Seq2[resource.Resource, span.Fields] {
+	return func(yield func(resource.Resource, span.Fields) bool) {
+		s.Passes++
+		for _, input := range s.Inputs {
+			if !yield(input.Resource, input.Fields) {
+				return
+			}
+		}
+	}
+}
 
 type fakeJournal struct {
 	lock     sync.Mutex
@@ -84,8 +119,8 @@ func newHarness(journalErr error) harness {
 	}
 }
 
-func validInput(spanID byte) ingest.SpanInput {
-	return ingest.SpanInput{
+func validInput(spanID byte) spanInput {
+	return spanInput{
 		Resource: telemetrytest.ValidResource(),
 		Fields: telemetrytest.FieldsWith(func(f *span.Fields) {
 			f.SpanID = ids.SpanID{
@@ -95,32 +130,32 @@ func validInput(spanID byte) ingest.SpanInput {
 	}
 }
 
-func inputWithResource(edit func(*resource.Resource)) ingest.SpanInput {
-	return ingest.SpanInput{
+func inputWithResource(edit func(*resource.Resource)) spanInput {
+	return spanInput{
 		Resource: telemetrytest.ResourceWith(edit),
 		Fields:   telemetrytest.ValidFields(),
 	}
 }
 
-func inputWithFields(edit func(*span.Fields)) ingest.SpanInput {
-	return ingest.SpanInput{
+func inputWithFields(edit func(*span.Fields)) spanInput {
+	return spanInput{
 		Resource: telemetrytest.ValidResource(),
 		Fields:   telemetrytest.FieldsWith(edit),
 	}
 }
 
-func serviceNameOfLength(length int) ingest.SpanInput {
+func serviceNameOfLength(length int) spanInput {
 	return inputWithResource(func(r *resource.Resource) {
 		r.ServiceName = strings.Repeat("s", length)
 	})
 }
 
-func expectedSpan(t *testing.T, input *ingest.SpanInput) span.Span {
+func expectedSpan(t *testing.T, input *spanInput) span.Span {
 	t.Helper()
 	return telemetrytest.MustSpan(t, input.Resource, input.Fields)
 }
 
-func rejection(t *testing.T, input *ingest.SpanInput) string {
+func rejection(t *testing.T, input *spanInput) string {
 	t.Helper()
 	_, err := span.New(input.Resource, input.Fields)
 	if err == nil {
@@ -129,9 +164,9 @@ func rejection(t *testing.T, input *ingest.SpanInput) string {
 	return err.Error()
 }
 
-func execute(t *testing.T, h harness, inputs ...ingest.SpanInput) (ingest.AcceptResult, error) {
+func execute(t *testing.T, h harness, inputs ...spanInput) (ingest.AcceptResult, error) {
 	t.Helper()
-	return h.Accept.Execute(t.Context(), inputs)
+	return h.Accept.Execute(t.Context(), sourceOf(inputs))
 }
 
 func diffResult(want, got ingest.AcceptResult) string {
@@ -173,7 +208,7 @@ func TestExecuteAppendsValidSpansAsOneBatchInInputOrder(t *testing.T) {
 
 type validationCase struct {
 	Name string
-	Args ingest.SpanInput
+	Args spanInput
 	Want bool
 }
 
@@ -320,13 +355,13 @@ func journalSpans(journal *fakeJournal) int {
 
 func TestExecuteWithoutValidSpansDoesNotTouchJournal(t *testing.T) {
 	invalid := serviceNameOfLength(0)
-	onlyInvalid := []ingest.SpanInput{
+	onlyInvalid := []spanInput{
 		invalid,
 		invalid,
 	}
 	tests := []struct {
 		Name string
-		Args []ingest.SpanInput
+		Args []spanInput
 		Want ingest.AcceptResult
 	}{
 		{
@@ -369,7 +404,7 @@ func TestExecuteWithoutValidSpansDoesNotTouchJournal(t *testing.T) {
 func TestExecuteReasonsAreDistinctInFirstSeenOrder(t *testing.T) {
 	tooLong := serviceNameOfLength(overLimitBytes)
 	missing := serviceNameOfLength(0)
-	inputs := []ingest.SpanInput{
+	inputs := []spanInput{
 		tooLong,
 		missing,
 		tooLong,
@@ -394,7 +429,7 @@ func TestExecuteReasonsAreDistinctInFirstSeenOrder(t *testing.T) {
 
 func TestExecuteKeepsAtMostMaxReasonsButCountsEveryRejection(t *testing.T) {
 	const extraDistinct = 5
-	inputs := make([]ingest.SpanInput, 0, ingest.MaxReasons+extraDistinct)
+	inputs := make([]spanInput, 0, ingest.MaxReasons+extraDistinct)
 	for offset := range ingest.MaxReasons + extraDistinct {
 		inputs = append(inputs, serviceNameOfLength(overLimitBytes+offset))
 	}
@@ -424,7 +459,7 @@ func TestExecuteReasonsCarryNoRawValues(t *testing.T) {
 	brokenUTF8 := inputWithResource(func(r *resource.Resource) {
 		r.K8sPodName = rawValueMarker + "\xc3\x28"
 	})
-	inputs := []ingest.SpanInput{
+	inputs := []spanInput{
 		tooLong,
 		brokenUTF8,
 	}
@@ -513,9 +548,9 @@ func TestExecuteStampsBatchWithClock(t *testing.T) {
 	accept := ingest.NewAcceptBatch(journal, fixedClock{
 		Time: stamped,
 	})
-	if _, err := accept.Execute(t.Context(), []ingest.SpanInput{
+	if _, err := accept.Execute(t.Context(), sourceOf([]spanInput{
 		validInput(firstSpanID),
-	}); err != nil {
+	})); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if len(journal.Batches) != 1 {
@@ -530,9 +565,9 @@ func TestExecutePassesTheCallerContext(t *testing.T) {
 	type ctxKey struct{}
 	ctx := context.WithValue(t.Context(), ctxKey{}, "request")
 	h := newHarness(nil)
-	if _, err := h.Accept.Execute(ctx, []ingest.SpanInput{
+	if _, err := h.Accept.Execute(ctx, sourceOf([]spanInput{
 		validInput(firstSpanID),
-	}); err != nil {
+	})); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if len(h.Journal.Contexts) != 1 {
@@ -554,10 +589,10 @@ func (j *sizeGatedJournal) Append(ctx context.Context, received batch.Batch) err
 	return j.fakeJournal.Append(ctx, received)
 }
 
-func executeConcurrently(t *testing.T, accept *ingest.AcceptBatch, inputs []ingest.SpanInput, wantErr error) {
+func executeConcurrently(t *testing.T, accept *ingest.AcceptBatch, inputs []spanInput, wantErr error) {
 	t.Helper()
 	for range requestsPerWorker {
-		if _, err := accept.Execute(t.Context(), inputs); !errors.Is(err, wantErr) {
+		if _, err := accept.Execute(t.Context(), sourceOf(inputs)); !errors.Is(err, wantErr) {
 			t.Errorf("err = %v, want %v", err, wantErr)
 		}
 	}
@@ -567,12 +602,12 @@ func TestStatsSumConcurrentRequestsExactly(t *testing.T) {
 	accept := ingest.NewAcceptBatch(&sizeGatedJournal{}, fixedClock{
 		Time: telemetrytest.Epoch(),
 	})
-	accepted := []ingest.SpanInput{
+	accepted := []spanInput{
 		validInput(firstSpanID),
 		validInput(secondSpanID),
 		serviceNameOfLength(0),
 	}
-	overloaded := []ingest.SpanInput{
+	overloaded := []spanInput{
 		validInput(thirdSpanID),
 	}
 	var workers sync.WaitGroup
@@ -593,5 +628,51 @@ func TestStatsSumConcurrentRequestsExactly(t *testing.T) {
 	}
 	if diff := cmp.Diff(want, accept.Stats()); diff != "" {
 		t.Errorf("stats (-want +got):\n%s", diff)
+	}
+}
+
+func TestExecuteWalksTheSourceExactlyOnce(t *testing.T) {
+	source := sourceOf([]spanInput{
+		validInput(firstSpanID),
+		serviceNameOfLength(0),
+		validInput(secondSpanID),
+	})
+	if _, err := newHarness(nil).Accept.Execute(t.Context(), source); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if source.Passes != 1 {
+		t.Errorf("All() walked %d times, want exactly one synchronous pass", source.Passes)
+	}
+}
+
+func TestExecuteResultDoesNotDependOnTheLengthHint(t *testing.T) {
+	inputs := []spanInput{
+		validInput(firstSpanID),
+		serviceNameOfLength(0),
+		validInput(secondSpanID),
+	}
+	want, err := execute(t, newHarness(nil), inputs...)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	for _, hint := range []int{
+		-1,
+		0,
+		1,
+		len(inputs) * lengthHintOvershoot,
+	} {
+		h := newHarness(nil)
+		source := sourceOf(inputs)
+		source.Reported = hint
+		got, err := h.Accept.Execute(t.Context(), source)
+		if err != nil {
+			t.Fatalf("Execute with Len() = %d: %v", hint, err)
+		}
+		if diff := diffResult(want, got); diff != "" {
+			t.Errorf("Len() = %d changed the result (-want +got):\n%s", hint, diff)
+		}
+		if diff := cmp.Diff(want.Accepted, journalSpans(h.Journal)); diff != "" {
+			t.Errorf("Len() = %d changed the journal (-want +got):\n%s", hint, diff)
+		}
 	}
 }

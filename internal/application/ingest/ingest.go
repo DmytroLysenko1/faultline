@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -29,9 +30,9 @@ type clock interface {
 	Now() time.Time
 }
 
-type SpanInput struct {
-	Resource resource.Resource
-	Fields   span.Fields
+type SpanSource interface {
+	Len() int
+	All() iter.Seq2[resource.Resource, span.Fields]
 }
 
 type AcceptResult struct {
@@ -42,8 +43,10 @@ type AcceptResult struct {
 
 func (r *AcceptResult) reject(err error) {
 	r.Rejected++
-	reason := err.Error()
-	if len(r.Reasons) < MaxReasons && !slices.Contains(r.Reasons, reason) {
+	if len(r.Reasons) >= MaxReasons {
+		return
+	}
+	if reason := err.Error(); !slices.Contains(r.Reasons, reason) {
 		r.Reasons = append(r.Reasons, reason)
 	}
 }
@@ -71,8 +74,8 @@ func NewAcceptBatch(journal spanJournal, clock clock) *AcceptBatch {
 	}
 }
 
-func (a *AcceptBatch) Execute(ctx context.Context, inputs []SpanInput) (AcceptResult, error) {
-	valid, result := partition(inputs)
+func (a *AcceptBatch) Execute(ctx context.Context, spans SpanSource) (AcceptResult, error) {
+	valid, result := partition(spans)
 	if err := a.enqueue(ctx, valid); err != nil {
 		return AcceptResult{}, err
 	}
@@ -114,11 +117,11 @@ func (a *AcceptBatch) Stats() Stats {
 	}
 }
 
-func partition(inputs []SpanInput) ([]span.Span, AcceptResult) {
-	valid := make([]span.Span, 0, len(inputs))
+func partition(spans SpanSource) ([]span.Span, AcceptResult) {
+	valid := make([]span.Span, 0, max(spans.Len(), 0))
 	var result AcceptResult
-	for _, input := range inputs {
-		accepted, err := span.New(input.Resource, input.Fields)
+	for source, fields := range spans.All() {
+		accepted, err := span.New(source, fields)
 		if err != nil {
 			result.reject(err)
 			continue

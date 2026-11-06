@@ -60,7 +60,7 @@ endif
 ##@ Verification
 
 .PHONY: verify
-verify: mod-check lint test-race cover-check vuln proto-lint gen-check ## Everything CI runs
+verify: mod-check lint test-race test-probes cover-check vuln proto-lint gen-check ## Everything CI runs
 
 .PHONY: mod-check
 mod-check: ## Fail if go.mod/go.sum are not tidy
@@ -89,6 +89,12 @@ ifneq ($(GO_PACKAGES),)
 else
 	@echo "test-race: no Go packages yet, skipping"
 endif
+
+PROBE_PACKAGES := ./internal/interfaces/otlp/decodelimit/...
+
+.PHONY: test-probes
+test-probes: ## Heap probes of the OTLP decode limit (without -race: they measure memory, not concurrency)
+	go test -count=1 -run 'TestWeightBounds' $(PROBE_PACKAGES)
 
 STRESS_PACKAGES := ./internal/application/ingest/... ./internal/infrastructure/memjournal/... ./internal/infrastructure/memgraph/...
 STRESS_COUNT := 200

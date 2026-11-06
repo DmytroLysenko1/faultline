@@ -1,0 +1,215 @@
+{
+  "revision": 1,
+  "generated_at": "2026-11-05T21:19:05.90503Z",
+  "nodes": [
+    {
+      "id": "svc:otel-demo/ad",
+      "unanswered_calls": 0,
+      "unanswered_failed_calls": 0
+    },
+    {
+      "id": "svc:otel-demo/cart",
+      "unanswered_calls": 4,
+      "unanswered_failed_calls": 0
+    },
+    {
+      "id": "svc:otel-demo/checkout",
+      "unanswered_calls": 0,
+      "unanswered_failed_calls": 0
+    },
+    {
+      "id": "svc:otel-demo/currency",
+      "unanswered_calls": 0,
+      "unanswered_failed_calls": 0
+    },
+    {
+      "id": "svc:otel-demo/email",
+      "unanswered_calls": 0,
+      "unanswered_failed_calls": 0
+    },
+    {
+      "id": "svc:otel-demo/flagd",
+      "unanswered_calls": 0,
+      "unanswered_failed_calls": 0
+    },
+    {
+      "id": "svc:otel-demo/fraud-detection",
+      "unanswered_calls": 0,
+      "unanswered_failed_calls": 0
+    },
+    {
+      "id": "svc:otel-demo/frontend",
+      "unanswered_calls": 0,
+      "unanswered_failed_calls": 0
+    },
+    {
+      "id": "svc:otel-demo/frontend-proxy",
+      "unanswered_calls": 7,
+      "unanswered_failed_calls": 0
+    },
+    {
+      "id": "svc:otel-demo/payment",
+      "unanswered_calls": 0,
+      "unanswered_failed_calls": 0
+    },
+    {
+      "id": "svc:otel-demo/product-catalog",
+      "unanswered_calls": 0,
+      "unanswered_failed_calls": 0
+    },
+    {
+      "id": "svc:otel-demo/quote",
+      "unanswered_calls": 0,
+      "unanswered_failed_calls": 0
+    },
+    {
+      "id": "svc:otel-demo/recommendation",
+      "unanswered_calls": 0,
+      "unanswered_failed_calls": 0
+    },
+    {
+      "id": "svc:otel-demo/shipping",
+      "unanswered_calls": 0,
+      "unanswered_failed_calls": 0
+    }
+  ],
+  "edges": [
+    {
+      "source": "svc:otel-demo/ad",
+      "target": "svc:otel-demo/flagd",
+      "calls": 1,
+      "failed_calls": 1
+    },
+    {
+      "source": "svc:otel-demo/cart",
+      "target": "svc:otel-demo/flagd",
+      "calls": 5,
+      "failed_calls": 0
+    },
+    {
+      "source": "svc:otel-demo/checkout",
+      "target": "svc:otel-demo/cart",
+      "calls": 6,
+      "failed_calls": 0
+    },
+    {
+      "source": "svc:otel-demo/checkout",
+      "target": "svc:otel-demo/currency",
+      "calls": 7,
+      "failed_calls": 0
+    },
+    {
+      "source": "svc:otel-demo/checkout",
+      "target": "svc:otel-demo/email",
+      "calls": 3,
+      "failed_calls": 0
+    },
+    {
+      "source": "svc:otel-demo/checkout",
+      "target": "svc:otel-demo/payment",
+      "calls": 3,
+      "failed_calls": 0
+    },
+    {
+      "source": "svc:otel-demo/checkout",
+      "target": "svc:otel-demo/product-catalog",
+      "calls": 4,
+      "failed_calls": 0
+    },
+    {
+      "source": "svc:otel-demo/checkout",
+      "target": "svc:otel-demo/shipping",
+      "calls": 6,
+      "failed_calls": 0
+    },
+    {
+      "source": "svc:otel-demo/fraud-detection",
+      "target": "svc:otel-demo/flagd",
+      "calls": 1,
+      "failed_calls": 1
+    },
+    {
+      "source": "svc:otel-demo/frontend",
+      "target": "svc:otel-demo/ad",
+      "calls": 3,
+      "failed_calls": 0
+    },
+    {
+      "source": "svc:otel-demo/frontend",
+      "target": "svc:otel-demo/cart",
+      "calls": 11,
+      "failed_calls": 0
+    },
+    {
+      "source": "svc:otel-demo/frontend",
+      "target": "svc:otel-demo/checkout",
+      "calls": 3,
+      "failed_calls": 0
+    },
+    {
+      "source": "svc:otel-demo/frontend",
+      "target": "svc:otel-demo/currency",
+      "calls": 2,
+      "failed_calls": 0
+    },
+    {
+      "source": "svc:otel-demo/frontend",
+      "target": "svc:otel-demo/product-catalog",
+      "calls": 22,
+      "failed_calls": 0
+    },
+    {
+      "source": "svc:otel-demo/frontend",
+      "target": "svc:otel-demo/recommendation",
+      "calls": 3,
+      "failed_calls": 0
+    },
+    {
+      "source": "svc:otel-demo/frontend-proxy",
+      "target": "svc:otel-demo/frontend",
+      "calls": 23,
+      "failed_calls": 0
+    },
+    {
+      "source": "svc:otel-demo/payment",
+      "target": "svc:otel-demo/flagd",
+      "calls": 3,
+      "failed_calls": 1
+    },
+    {
+      "source": "svc:otel-demo/recommendation",
+      "target": "svc:otel-demo/flagd",
+      "calls": 1,
+      "failed_calls": 1
+    },
+    {
+      "source": "svc:otel-demo/recommendation",
+      "target": "svc:otel-demo/product-catalog",
+      "calls": 4,
+      "failed_calls": 0
+    },
+    {
+      "source": "svc:otel-demo/shipping",
+      "target": "svc:otel-demo/quote",
+      "calls": 3,
+      "failed_calls": 0
+    }
+  ],
+  "pairing": {
+    "Observed": 381,
+    "Matched": 114,
+    "Duplicate": 4,
+    "Unpairable": 70,
+    "Evicted": 0,
+    "Expired": 71,
+    "Pending": 8,
+    "ExpiredCaller": 11,
+    "EvictedCaller": 0,
+    "TombstoneEvicted": 0
+  },
+  "graph": {
+    "GraphOverflow": 0,
+    "UnansweredOverflow": 0,
+    "NodeOverflow": 0
+  }
+}

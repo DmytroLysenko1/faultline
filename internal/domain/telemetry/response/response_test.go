@@ -341,3 +341,86 @@ func TestFailedDoesNotAllocate(t *testing.T) {
 		})
 	}
 }
+
+func TestRelevantNamesExactlyTheAttributesTheRuleReads(t *testing.T) {
+	tests := []struct {
+		Name string
+		Args string
+		Want bool
+	}{
+		{
+			Name: "rpc response status code",
+			Args: "rpc.response.status_code",
+			Want: true,
+		},
+		{
+			Name: "deprecated grpc status code",
+			Args: "rpc.grpc.status_code",
+			Want: true,
+		},
+		{
+			Name: "http response status code",
+			Args: "http.response.status_code",
+			Want: true,
+		},
+		{
+			Name: "deprecated http status code",
+			Args: "http.status_code",
+			Want: true,
+		},
+		{
+			Name: "error type",
+			Args: "error.type",
+			Want: true,
+		},
+		{
+			Name: "database system",
+			Args: "db.system.name",
+			Want: true,
+		},
+		{
+			Name: "deprecated database system",
+			Args: "db.system",
+			Want: true,
+		},
+		{
+			Name: "messaging system",
+			Args: "messaging.system",
+			Want: true,
+		},
+		{
+			Name: "unrelated attribute",
+			Args: "http.route",
+		},
+		{
+			Name: "empty key",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.Name, func(t *testing.T) {
+			if got := response.Relevant(tt.Args); got != tt.Want {
+				t.Errorf("Relevant(%q) = %v, want %v", tt.Args, got, tt.Want)
+			}
+		})
+	}
+}
+
+func TestEveryRelevantAttributeChangesTheDecision(t *testing.T) {
+	failing := map[string]string{
+		"rpc.response.status_code":  "UNAVAILABLE",
+		"rpc.grpc.status_code":      "14",
+		"http.response.status_code": "503",
+		"http.status_code":          "503",
+		"error.type":                "timeout",
+	}
+	for key, value := range failing {
+		if !response.Relevant(key) {
+			t.Errorf("%s decides Failed but Relevant(%q) is false: the adapter would drop it", key, key)
+		}
+		if !(response.Attributes{
+			key: value,
+		}).Failed(false) {
+			t.Errorf("%s=%s does not mark the call failed", key, value)
+		}
+	}
+}

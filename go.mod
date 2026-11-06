@@ -16,18 +16,27 @@ require (
 	connectrpc.com/grpcreflect v1.3.1
 	github.com/google/go-cmp v0.7.0
 	github.com/samber/lo v1.53.0
+	go.opentelemetry.io/collector/pdata v1.70.0
 	go.uber.org/goleak v1.3.0
+	golang.org/x/net v0.61.0
 	golang.org/x/sync v0.24.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261104224025-d1e00e9f33ab
+	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 )
 
 require (
 	github.com/cilium/ebpf v0.22.0 // indirect
+	github.com/hashicorp/go-version v1.9.0 // indirect
+	github.com/json-iterator/go v1.1.12 // indirect
+	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
+	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
+	go.opentelemetry.io/collector/featuregate v1.70.0 // indirect
+	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/telemetry v0.0.0-20261010193011-f71dc92da45e // indirect
-	golang.org/x/text v0.22.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/tools v0.52.0 // indirect
 	golang.org/x/vuln v1.9.0 // indirect
 )

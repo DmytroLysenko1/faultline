@@ -29,7 +29,7 @@
 
 ```
 interfaces/otlp.TraceReceiver ──► application/ingest.AcceptBatch ──► [spanJournal] ◄── infrastructure/memjournal
-   (pdata → []ingest.SpanInput)       (span.New, ReceivedAt = clock.Now())              │
+   (pdata → ingest.SpanSource)        (span.New, ReceivedAt = clock.Now())              │
                                                                                                  ▼
 application/processing.Pipeline ◄── [spanFeed] ── []Delivery{Batch, Release} ◄────────── memjournal.Journal
    │  (до 64 доступных пакетов за итерацию → один снимок)
@@ -67,7 +67,7 @@ cmd/faultctl → internal/cli: graph export -o dot|json
 | `internal/domain/topology/tombstone` | `Set` (ring + map), `Scope` | `ids`, `role` |
 | `internal/domain/topology/matcher` | `Matcher` (буфер ожидания), `Stats` (I1), `Limits` | `telemetry/*`, `call`, `clock`, `role`, `tombstone` |
 | `internal/domain/topology/graph` | `Graph` (агрегат), `Change`, `View`, `Node`, `Edge`, `Stats` | `resource`, `call`, `clock` |
-| `internal/application/ingest` | `AcceptBatch` (+ `Stats`); команда `SpanInput`, результат `AcceptResult`, `MaxReasons`; порты `spanJournal`, `clock`; `ErrOverloaded`, `ErrBatchTooLarge`, `ErrUnavailable` | `telemetry` |
+| `internal/application/ingest` | `AcceptBatch` (+ `Stats`); вход `SpanSource`, результат `AcceptResult`, `MaxReasons`; порты `spanJournal`, `clock`; `ErrOverloaded`, `ErrBatchTooLarge`, `ErrUnavailable` | `telemetry` |
 | `internal/application/processing` | `Pipeline`; порты `spanFeed`, `graphPublisher`; `Delivery`; `ErrFeedClosed` | `telemetry`, `topology` |
 | `internal/application/query` | `GetGraph`, порт `graphReader` | `topology` |
 | `internal/infrastructure/memgraph` | `Store` (`atomic.Pointer[topology.Snapshot]`), `ErrNilSnapshot`, `ErrNoSnapshot` | `topology` |
@@ -78,7 +78,7 @@ cmd/faultctl → internal/cli: graph export -o dot|json
 | `internal/interfaces/connectapi/graphmap` | `Graph`: `Snapshot` → `faultline.v1.Graph`, `ErrDanglingEdge` | `topology`, `gen` |
 | `internal/interfaces/connectapi/timeout` | `Interceptor`: unary-дедлайн | `connect` |
 | `internal/infrastructure/memjournal` | `Journal`: очередь пакетов в памяти, ограниченная по байтам (`Batch.Footprint()`) и по числу пакетов; `Limits`, `Stats`, `ErrInvalidLimits`, `ErrInvalidMax` | `telemetry`, `ingest`, `processing` (sentinel'ы портов) |
-| `internal/interfaces/otlp` | OTLP gRPC `TraceService`, маппинг pdata → `SpanInput` и `AcceptResult` → `partial_success`, карта ошибок, recovery-интерсептор | `application/ingest` |
+| `internal/interfaces/otlp` | OTLP gRPC `TraceService`, маппинг pdata → `SpanSource` (`otlp/spanmap`) и `AcceptResult` → `partial_success`, карта ошибок, recovery-интерсептор | `application/ingest` |
 | `internal/cli` | команды `faultctl`, рендереры dot/json | `internal/gen` и stdlib; `internal/domain`, `internal/application`, `internal/infrastructure` запрещены |
 | `cmd/faultline`, `cmd/faultctl` | composition root, конфиг, сигналы, жизненный цикл | всё |
 
@@ -230,10 +230,10 @@ Ownership-scope и тенанты в шаге 1 не применимы: оди�
 ### Валидация спана и `ServiceRef`
 
 Разделение обязанностей между адаптером и use case:
-- **Адаптер** (`interfaces/otlp`) только переводит формат: pdata → `[]ingest.SpanInput` (плоская команда из примитивов, без решений), `AcceptResult` → `partial_success`, ошибки → gRPC-коды. Синтаксис (protobuf, размер 4 МиБ) проверяет gRPC.
-- **`AcceptBatch(ctx, []SpanInput) (AcceptResult, error)`** вызывает доменный конструктор `span.New(resource, fields) (span.Span, error)` для каждого спана, собирает отказы (`span.ErrInvalid` с причиной) в `AcceptResult{Accepted, Rejected, Reasons}` и ставит валидные спаны в журнал.
+- **Адаптер** (`interfaces/otlp`) только переводит формат: pdata → `ingest.SpanSource` (ленивый обход спанов `pdata` в доменные `Resource` и `span.Fields`, без решений), `AcceptResult` → `partial_success`, ошибки → gRPC-коды. Синтаксис (protobuf, размер 4 МиБ) проверяет gRPC.
+- **`AcceptBatch(ctx, SpanSource) (AcceptResult, error)`** вызывает доменный конструктор `span.New(resource, fields) (span.Span, error)` для каждого спана, собирает отказы (`span.ErrInvalid` с причиной) в `AcceptResult{Accepted, Rejected, Reasons}` и ставит валидные спаны в журнал.
 
-Зачем так: OTLP/HTTP (FR-ING-001) и приём от агента (шаг 8) — ещё два адаптера. Каждый из них только маппит свой формат в `SpanInput`, а правила отказа и подсчёт `rejected` живут в одном месте. Цена — одна копия плоской структуры на спан (входит в бенчмарк A4). Use case никогда не принимает pdata или proto.
+Зачем так: OTLP/HTTP (FR-ING-001) и приём от агента (шаг 8) — ещё два адаптера. Каждый из них только отдаёт свой формат как `SpanSource`, а правила отказа и подсчёт `rejected` живут в одном месте. Промежуточного среза на спан нет (срез 4b, решение D1). Use case никогда не принимает pdata или proto.
 
 Выход (`GetGraph`) симметричной прослойки не получает: use case возвращает неизменяемый `Snapshot`, хэндлер маппит его в proto. DTO в `application` появится, только если форма ответа разойдётся с доменной (обезличка `external-tenant`, FR-SEC-003).
 
@@ -330,7 +330,7 @@ Gateway: `connectrpc.com/grpcreflect` включён, поэтому приём�
 | Где | Бюджет | Механизм |
 |---|---|---|
 | OTLP `Export` | дедлайн клиента (SDK по умолчанию 10 s); наша работа O(спанов) без блокировок | `Append` неблокирующий |
-| gRPC-сервер OTLP | `MaxRecvMsgSize = 4 MiB`, `MaxConcurrentStreams = 16`, `keepalive.EnforcementPolicy{MinTime: 10s}`, `ConnectionTimeout = 10s`; листенер обёрнут `netutil.LimitListener(…, 2)` | FR-ING-006, ограничение памяти в полёте (I5). Collector шлёт по одному соединению до `sending_queue.num_consumers = 10` запросов параллельно: при 4 потоках лишние запросы ждали бы квоту на клиенте и перегрузка проявлялась бы таймаутами клиента, а не `RESOURCE_EXHAUSTED`, которого ждёт приёмка FR-ING-005. 16 потоков покрывают Collector с запасом; память в полёте та же: 2 × 16 вместо 8 × 4 |
+| gRPC-сервер OTLP | `MaxRecvMsgSize = 4 MiB`, `MaxConcurrentStreams = 10`, `keepalive.EnforcementPolicy{MinTime: 10s}`, `keepalive.ServerParameters{Time: 30s, Timeout: 10s, MaxConnectionIdle: 1m}`, `ConnectionTimeout = 10s`, распаковка gzip; листенер обёрнут `netutil.LimitListener(…, 1)` | FR-ING-006, ограничение памяти в полёте (I5). Collector шлёт по одному соединению до `sending_queue.num_consumers = 10` запросов параллельно: 10 потоков — ровно столько, перегрузка видна как `RESOURCE_EXHAUSTED`, а не как ожидание квоты на клиенте. Keepalive не даёт мёртвому или простаивающему соединению держать единственный слот. Числа и замер — срез 4b (D2, D3) |
 | API, unary | Connect-интерсептор `context.WithTimeout(ctx, 30s)` → `DEADLINE_EXCEEDED`; ctx хэндлера отменяется | FR-API-007. Серверный `WriteTimeout` **не** используется: он не отменяет ctx и оборвёт поток `graph watch` в шаге 5. Вместо него `connectapi/limit` ставит дедлайн записи только на `GetGraph` и reflection: `RequestTimeout + SendTimeout` = 60 s от начала запроса, то есть 30 s на маршалинг и отправку после дедлайна ctx. Медленный клиент получает обрыв потока, слот освобождается |
 | HTTP-сервер API | `ReadHeaderTimeout 5s`, `ReadTimeout 30s`, `WriteTimeout 0`, `IdleTimeout 120s`; Connect `ReadMaxBytes = 1 MiB` | защита от Slowloris |
 | `faultctl` | `--timeout` (по умолчанию 10 s) → `context.WithTimeout` на весь вызов | |
@@ -395,10 +395,10 @@ Circuit breaker не нужен: исходящих зависимостей н�
 | I4 при остановке | В журнале N = 1000 пакетов, приходит сигнал: все N учтены в графе до выхода процесса (а не один пакет — иначе тест не отличит дренаж от удачного тайминга). Отдельно: дренаж не успел за 3 s (медленный фейк) → `lifecycle.drain_incomplete` с точным числом спанов |
 | Снимок под нагрузкой | Бенчмарк итерации Pipeline на графе 50 000 рёбер: аллокации на итерацию и пропускная способность пакетов/с; дренаж полного журнала укладывается в 3 s |
 | Валидация (`AcceptBatch`) | Таблица на use case: каждое правило таблицы валидации → точные `AcceptResult.Rejected` и причины, включая невалидный UTF-8, превышение длины на 1 байт и границу ровно в лимит; пакет из одних невалидных спанов в журнал не попадает |
-| Маппинг OTLP | Запрос через `ptrace` → `[]SpanInput`: виды спанов, атрибуты статуса, `service.name`, `k8s.namespace.name` против `service.namespace`; `AcceptResult` → `partial_success`; fuzz-тест маппинга (NFR-SEC-004): любой принятый спан проходит до `GetGraph`, и ответ маршалится в proto и protojson без ошибки |
+| Маппинг OTLP | `ptrace` → `SpanSource`: виды спанов, атрибуты статуса, `service.name`, `k8s.namespace.name` против `service.namespace`; `AcceptResult` → `partial_success`; fuzz-тест маппинга (NFR-SEC-004): любой принятый спан проходит до `GetGraph`, и ответ маршалится в proto и protojson без ошибки |
 | Id узла | Таблица коллизий: `{a/b, c}` и `{a, b/c}`, `%` в имени, пустой namespace — id различаются и обратимы |
 | Паника в хэндлере | Паникующий фейк `spanJournal` → `INTERNAL`, процесс и следующий запрос живы |
-| I5, память | Бенчмарк декодирования запроса 4 МиБ: прирост heap ≤ 3 × wire (проверяет допущение A4); тест `spanFixedBytes` (`unsafe.Sizeof(span.Span)`) ≤ 256 B; тест `Batch.Footprint()`: фиксированная часть × N + длины **различных** строк идентичности (строки ресурса общие для всех спанов ресурса и считаются один раз); бенчмарк-вывод нижней границы `journalMaxBytes` из запроса 4 МиБ минимальных спанов |
+| I5, память | Тест A4 через gRPC: 10 одновременных запросов 4 МиБ, удерживаемых в хэндлере, ≤ `otlp.ExportHeapRatio` × wire на запрос (срез 4b); тест `spanFixedBytes` (`unsafe.Sizeof(span.Span)`) ≤ 256 B; тест `Batch.Footprint()`: фиксированная часть × N + длины **различных** строк идентичности (строки ресурса общие для всех спанов ресурса и считаются один раз); тест нижней границы `journalMaxBytes` на самом большом запросе минимальных спанов |
 | Жизненный цикл | `goleak.VerifyTestMain` в `processing`, `memjournal`, `cmd/faultline`. e2e `run` на `:0` (адреса из листенеров): OTLP-пара → `GetGraph` видит ребро A→B → отмена → выход ≤ 10 s. Сигнал **не** отменяет ctx Pipeline (тест: сигнал при непустом журнале → все пакеты дочитаны). Неожиданный выход Pipeline (`nil` до сигнала) → журнал закрыт **до** остановки OTLP, следующий `Export` получает `UNAVAILABLE`, процесс завершается с кодом 1 без ожидания дренажа. Занятый порт → ошибка до старта компонентов, в сообщении адрес. Невалидный env → табличный тест сообщений |
 | API | `GetGraph` через gRPC и Connect-JSON даёт семантически одинаковый ответ (`cmp.Diff` после unmarshal); интерсептор → `DEADLINE_EXCEEDED`; паника в хэндлере → `INTERNAL` без значения паники, следующий запрос отвечает; при соотношении таймаутов по умолчанию (ctx = дедлайн записи − `SendTimeout`) клиент без своего дедлайна получает `DEADLINE_EXCEEDED`, а не обрыв, по gRPC, Connect-JSON/HTTP2 и Connect-JSON/HTTP1.1 |
 | Рендеринг CLI | Golden-тесты DOT и JSON (JSON: protojson → `json.Indent` для стабильного вида); DOT разбирается `gonum`; golden-кейс со «злыми» именами (`"`, `\`, перевод строки, `]; x [URL=…`): число узлов совпадает, инъекции нет |
@@ -471,14 +471,14 @@ stateDiagram-v2
 | граф | 10 000 узлов, 50 000 рёбер | ≈ 247 B на ребро вместе с его узлами и view, измерено бенчмарком; плюс строки и id узла ≤ 2 KiB | ≈ 12 MiB | ≈ 30 MiB |
 | снимки | ≤ 6 одновременно живых: опубликованный, строящийся и по одному у каждого из ≤ 4 одновременных `GetGraph` | ≈ 5 MiB на снимок: строки общие с графом, копируются только структуры | ≈ 30 MiB | ≈ 30 MiB |
 | маршалинг ответов API | ≤ 4 одновременных `GetGraph` × (дерево proto-объектов + буфер маршалинга + буфер gzip) | дерево ≈ 5,5 MiB на запрос при лимитах по умолчанию (измерено; строки не копируются); худший ответ при лимитах по умолчанию: proto ≈ 21 MiB, protojson ≈ 31 MiB; буфер gzip ≤ размера ответа (несжимаемые строки) | ≈ 10 MiB | ≈ 270 MiB |
-| декодирование в полёте | 2 соединения × 16 потоков × 4 MiB wire × 3 (A4) | | ≈ 384 MiB | ≈ 384 MiB |
-| **итого** | | | **≈ 601 MiB** | **≈ 962 MiB** |
+| запросы в полёте (декодирование + срез валидных спанов) | 1 соединение × 10 потоков × 4 MiB wire × `ExportHeapRatio` 11; дерево ограничено `MaxDecodedBytes` = 32 MiB до декодирования (срез 4b, D5) | ≤ 42,3 MiB на запрос по построению, 11,4 MiB на демо-запрос | ≈ 114 MiB | ≈ 440 MiB |
+| **итого** | | | **≈ 331 MiB** | **≈ 1014 MiB** |
 
-Нижняя граница `journalMaxBytes` = 48 MiB: запрос 4 МиБ вмещает около 140 000 минимальных спанов (~30 B на проводе), это ≈ 35 MiB фиксированной части плюс ≤ 4 MiB строк. Поэтому при валидированном конфиге любой одиночный запрос помещается в пустой журнал, и `ErrBatchTooLarge` недостижим. Граница подтверждается бенчмарком в срезе 4b, когда появится кодирование OTLP (строка «I5, память» в таблице тестов).
+Нижняя граница `journalMaxBytes` = 48 MiB: самый большой запрос минимальных спанов ≤ 4 МиБ — 123 360 спанов по 34 B на проводе (замер 4b), `Footprint()` = 30,1 MiB. Поэтому при валидированном конфиге любой одиночный запрос помещается в пустой журнал, и `ErrBatchTooLarge` недостижим. Граница подтверждается тестом в `test/ingest` (срез 4b).
 
-В манифесте: `GOMEMLIMIT=1280MiB`, limits 2 GiB / 2 CPU (как в NFR-PERF-001). Худший случай при конфиге по умолчанию (≈ 962 MiB) ниже порога валидатора 0,85 × `GOMEMLIMIT` (≈ 1088 MiB) с запасом ≈ 126 MiB. При `GOMEMLIMIT=1GiB` порог (≈ 870 MiB) был бы превышен, а измеренные tombstones и граф оказались тяжелее оценок, поэтому лимит поднят. Между `GOMEMLIMIT` и лимитом пода остаётся 768 MiB на перерасход GC, стеки горутин и память вне кучи.
+В манифесте: `GOMEMLIMIT=1280MiB`, limits 2 GiB / 2 CPU (как в NFR-PERF-001). Худший случай при конфиге по умолчанию (≈ 1014 MiB) ниже порога валидатора 0,85 × `GOMEMLIMIT` (≈ 1088 MiB) с запасом ≈ 74 MiB. При `GOMEMLIMIT=1GiB` порог (≈ 870 MiB) был бы превышен, поэтому лимит поднят. Между `GOMEMLIMIT` и лимитом пода остаётся 768 MiB на перерасход GC, стеки горутин и память вне кучи.
 
-**Конфиг не может выйти за бюджет.** Валидатор конфига (`cmd/faultline`, этап Starting) считает по формуле этой таблицы худший случай памяти и худший размер ответа `GetGraph` для заданных лимитов и отказывается стартовать (exit 2 с перечнем вкладов), если память > 0,85 × `GOMEMLIMIT` или ответ > 80 MiB (`SendMaxBytes`). Поэтому поднять `FAULTLINE_GRAPH_MAX_NODES` так, что `GetGraph` навсегда перестанет помещаться в ответ, нельзя: процесс просто не запустится с понятным сообщением. Перегрузка проявляется как `RESOURCE_EXHAUSTED`, а не как OOMKill (FR-ING-005). Соединения сверх 2 ждут в backlog листенера. В шаге 1 единственный клиент — Collector OTel Demo (одно соединение).
+**Конфиг не может выйти за бюджет.** Валидатор конфига (`cmd/faultline`, этап Starting) считает по формуле этой таблицы худший случай памяти и худший размер ответа `GetGraph` для заданных лимитов и отказывается стартовать (exit 2 с перечнем вкладов), если память > 0,85 × `GOMEMLIMIT` или ответ > 80 MiB (`SendMaxBytes`). Поэтому поднять `FAULTLINE_GRAPH_MAX_NODES` так, что `GetGraph` навсегда перестанет помещаться в ответ, нельзя: процесс просто не запустится с понятным сообщением. Перегрузка проявляется как `RESOURCE_EXHAUSTED`, а не как OOMKill (FR-ING-005). Соединения сверх одного ждут в backlog листенера; мёртвые и простаивающие закрывает серверный keepalive (срез 4b, D2). В шаге 1 единственный клиент — Collector OTel Demo (одно соединение).
 
 ## Наблюдаемость
 
@@ -493,7 +493,7 @@ stateDiagram-v2
 | Жив ли конвейер? | `/healthz`, `lifecycle.state`, неожиданный выход компонента → код 1 |
 
 Решения:
-- **Логи:** `slog.NewJSONHandler` в stderr (FR-OPS-004), уровень из `FAULTLINE_LOG_LEVEL`, стабильные имена событий (`pipeline.stats`, `otlp.export.rejected`, `otlp.export.overloaded`, `lifecycle.state`, `lifecycle.drain_incomplete`, `otlp.export.too_large`, `rpc.panic`, `api.panic`, `api.get_graph_failed`, `api.busy`, `api.reject_write_failed`, `api.io_deadline_unsupported`). Ошибки логируются только на границах: интерсепторы, Pipeline, `run`. Корреляция: `trace_id` входящего `traceparent` (если есть) в атрибутах лога RPC.
+- **Логи:** `slog.NewJSONHandler` в stderr (FR-OPS-004), уровень из `FAULTLINE_LOG_LEVEL`, стабильные имена событий (`pipeline.stats`, `otlp.export.rejected`, `otlp.export.overloaded`, `lifecycle.state`, `lifecycle.drain_incomplete`, `otlp.export.too_large`, `otlp.export.failed`, `otlp.export.decode_rejected`, `rpc.panic`, `api.panic`, `api.get_graph_failed`, `api.busy`, `api.reject_write_failed`, `api.io_deadline_unsupported`). Ошибки логируются только на границах: интерсепторы, Pipeline, `run`. Корреляция: `trace_id` входящего `traceparent` (если есть) в атрибутах лога RPC.
 - **`pipeline.stats`:** Info-лог раз в 30 s со всеми счётчиками `PairingStats` и `GraphStats` (`graph_overflow`, `unanswered_overflow`, `node_overflow`), ingest-счётчиками, ревизией и глубиной журнала. Пишет его отдельная горутина в `cmd/faultline` (тикер + `ctx.Done()`), которая читает **опубликованный снимок** через `memgraph` и ingest-счётчики и глубину журнала через атомарные счётчики `AcceptBatch` и `memjournal`; состояние горутины Pipeline она не трогает, поэтому гонки нет и лог идёт и в простое. Метрики Prometheus — шаг 6.
 - **Self-tracing:** спаны стартуют только на пути API (`GetGraph`). Путь приёма и обработки (`Export`, `AcceptBatch`, `Pipeline`) **не трассируется** вовсе: иначе каждый принятый пакет порождал бы новые спаны, и при экспорте через Collector, который шлёт трейсы обратно в faultline, возникла бы петля с самоусилением. Сравнение адресов (`localhost` против `127.0.0.1`, DNS сервиса, Collector посередине) петлю не ловит, поэтому защита — в отсутствии спанов на пути приёма, а не в валидации адреса. По умолчанию глобальный `TracerProvider` — no-op; экспорт включается через `FAULTLINE_SELF_TRACING_ENDPOINT`.
 
@@ -574,7 +574,7 @@ stateDiagram-v2
 | A1 | otel-go и Collector повторяют `RESOURCE_EXHAUSTED` только с `RetryInfo` | **проверено**: `otlptracegrpc@v1.43.0/client.go:294-296` |
 | A2 | Collector склеивает спаны разных сервисов в один Export | **опровергнуто** (срез 0, 2 × 10 min): 0 из 2523 экспортов. Tombstones остаются: они защищают от повтора OTLP-запроса, а не только от склейки |
 | A3 | Спаны выставляют код ответа (`rpc.response.status_code` / `rpc.grpc.status_code` / `http.response.status_code`) | **подтверждено с поправкой** (срез 0): в одном демо одновременно встречаются старые и новые имена — `rpc.grpc.status_code` (числом) и `rpc.response.status_code` (строкой), `http.status_code` и `http.response.status_code`. Правило поля `Span.Failed` читает обе формы. Живой пример OR сторон: `recommendation → flagd`, client `DEADLINE_EXCEEDED`, server `OK` |
-| A4 | Декодирование запроса 4 МиБ даёт прирост heap ≤ 3 × wire | проверяется бенчмарком в срезе 4b; при провале пересчитать бюджет памяти |
+| A4 | Декодирование запроса 4 МиБ даёт прирост heap ≤ 3 × wire | **опровергнуто** (срез 4b): 2,85× на спанах демо, 8,67× на минимальных спанах, до 107× на специально собранном запросе. Дерево ограничено до декодирования (`MaxDecodedBytes`, D5), бюджет пересчитан по построению (`ExportHeapRatio` 11), потоков 10, соединение одно; тест следит, что вес элементов — верхняя оценка структур `pdata` |
 | A5 | OTel Demo без observability-стека помещается в Docker VM вместе с faultline | **подтверждено** (срез 0): профиль `deploy/dev/otel-demo-values.yaml` (без Jaeger/Prometheus/Grafana/OpenSearch и браузерного трафика) работает в однонодовом kind; Docker VM 16 GiB (сумма limits демо ≈ 6.9 GiB + нода + faultline 2 GiB) |
 | A6 | `telemetrygen traces` кладёт client- и server-спан в один `service.name` | не проверено; на результат не влияет (self-loop допустим) |
 | A7 | У server-спана демо родитель — CLIENT-спан вызывающего | **подтверждено для рёбер** (срез 0): наше правило пар и servicegraph-коннектор дали одно и то же множество из 20 рёбер. Шум, который даст `expired`/`unpairable`, но не ложные рёбра: вложенные SERVER → SERVER у `flagd` и `frontend`; корневые server-спаны; трейсы, где `frontend` потерял свои спаны (server-половинки `product-catalog` и `recommendation` без пары); load-generator не экспортирует свои спаны, поэтому рёбер от него нет. `agent` делает CLIENT-вызовы `ChatLLM.chat` к LLM без server-спанов — живой случай `unanswered_calls` |
@@ -584,7 +584,8 @@ stateDiagram-v2
 
 | Цель | Команда |
 |---|---|
-| Всё, что гоняет CI | `make verify` (mod-check, lint, test-race, cover-check, vuln, proto-lint, gen-check) |
+| Всё, что гоняет CI | `make verify` (mod-check, lint, test-race, test-probes, cover-check, vuln, proto-lint, gen-check) |
+| Пробы памяти OTLP | `make test-probes` (`!race`, входит в `make verify`) |
 | Стресс конкурентности | `make test-stress` (`-race -count=200` для `ingest`, `processing`, `memjournal`, `memgraph`; ночная job CI и перед тегом) |
 | Генерация proto | `make generate` |
 | Совместимость API | `make proto-breaking` (против последнего тега `v*`) |
@@ -664,9 +665,9 @@ var (
 
 const MaxReasons = 16
 
-type SpanInput struct {
-	Resource resource.Resource
-	Fields   span.Fields
+type SpanSource interface {
+	Len() int
+	All() iter.Seq2[resource.Resource, span.Fields]
 }
 
 type AcceptResult struct {
@@ -691,7 +692,7 @@ type clock interface {
 }
 
 func NewAcceptBatch(journal spanJournal, clock clock) *AcceptBatch
-func (a *AcceptBatch) Execute(ctx context.Context, inputs []SpanInput) (AcceptResult, error)
+func (a *AcceptBatch) Execute(ctx context.Context, spans SpanSource) (AcceptResult, error)
 func (a *AcceptBatch) Stats() Stats
 ```
 
@@ -749,6 +750,209 @@ func (j *Journal) Stats() Stats
 
 Бенчмарк нижней границы `journalMaxBytes` («запрос 4 МиБ минимальных спанов») переносится в срез 4b: число спанов в 4 МиБ даёт только настоящее кодирование OTLP (`pdata`), а `pdata` приходит в 4b.
 
+### Срез 4b — OTLP-приём: решения и Go-API (контракт тестов)
+
+Ред. 6 (по реализации): учтены четыре круга ревью спеки (pocock, osmani, pstack), замер через настоящий gRPC и модель веса, проверенная пробными тестами; уточнения, найденные при реализации, внесены в текст ниже.
+
+**Замер до кода (допущение A4).** Сервер `grpc` v1.85 + кодек `pdata` v1.70, клиент в отдельном процессе, 10 одновременных запросов по 4 МиБ удерживаются в хэндлере, heap после GC:
+
+| Форма запроса | Спанов в 4 МиБ | B/спан на проводе | Heap на запрос в хэндлере (дерево `pdata` + срез валидных спанов) | × wire |
+|---|---|---|---|---|
+| спаны дампа OTel Demo | 5 663 | 729 | 11,4 MiB | **2,85×** |
+| минимальные спаны (`trace_id`, `span_id`, один ресурс) | 123 360 | 34 | 34,7 MiB | **8,67×** |
+
+gzip на удерживаемый heap не влияет: сжатый буфер освобождается до `Unmarshal` (`grpc` `rpc_util.go` `defer compressed.Free()`). Во время декодирования живут кадры запроса и их копия `MaterializeToBuffer` (2 × 4 МиБ) плюс растущее дерево; после возврата кодека кадры освобождаются (`defer data.Free()`), и в хэндлере остаются дерево (25,2 MiB на худший легальный запрос) и срез валидных спанов (≈ 9,5 MiB). `pdata` строки копирует, буфер не держит: пакет в журнале не удерживает запрос.
+
+**Вес элементов после декодирования** (`pdata` v1.70, пустой элемент, 2 B на проводе): `Span` 218 B, `ResourceSpans` 138 B, `ScopeSpans` 122 B, `Link` 90 B, `Event` 74 B, `KeyValue` 45 B, `AnyValue` (элемент массива) 19 B. Отсюда худший случай не «минимальные спаны», а **специально собранный запрос**: 4 МиБ пустых спанов (2 097 120 штук по 2 B) разворачиваются в 429 MiB (107×), одно событие-«бомба» из 2 млн пустых `Event` — в 141 MiB. Валидация в use case приходит слишком поздно: дерево уже построено.
+
+A4 («≤ 3×») держится на реальном трафике и **не держится в худшем случае**. Решения:
+
+- **D1 — приём через источник спанов, без промежуточного среза.** `AcceptBatch.Execute(ctx, spans SpanSource)`: `Len()` — подсказка ёмкости (без неё рост `append` удваивает пик: замер 47 MB аллокаций роста на минимальный запрос); правильность от неё не зависит, неверное значение стоит только аллокаций, а сверху её ограничивает D5, `All()` — ленивый `iter.Seq2[resource.Resource, span.Fields]` прямо по `pdata`. Тип `ingest.SpanInput` удаляется. Контракт порта: `All()` проходится ровно один раз и синхронно, до единственного `Append`; после возврата `Execute` не хранит ни `Resource`, ни `Fields`. Поэтому «всё или ничего» (I4) не меняется.
+- **D2 — одно соединение, 10 потоков, серверный keepalive.** `MaxConnections = 1`, `MaxConcurrentStreams = 10` = `sending_queue.num_consumers` Collector по умолчанию (срез 7 пишет это значение в values явно): Collector не ждёт квоту потоков на клиенте, перегрузка остаётся `RESOURCE_EXHAUSTED`. Чтобы единственный слот не держало мёртвое или забытое соединение (`LimitListener` не отказывает, а держит в backlog): `keepalive.ServerParameters{Time: 30s, Timeout: 10s, MaxConnectionIdle: 1m, MaxConnectionAge: 5m, MaxConnectionAgeGrace: 10s}` и `EnforcementPolicy{MinTime: 10s, PermitWithoutStream: true}` — полуоткрытое соединение закрывается по ping-таймауту за ≤ 40 s, простаивающее (ручной `telemetrygen`) — за 1 min, а соединение с зависшим потоком (idle-таймер `grpc` не тикает, пока открыт хоть один поток) — по возрасту за ≤ 5 min 10 s. Grace 10 s больше таймаута экспортёра Collector (5 s), так что ротация не обрывает запросы старого соединения. Новое соединение ждёт в backlog, пока старое не закроется: обычно сразу после завершения его потоков, в худшем случае (зависший поток) до 10 s — экспорты этого окна получат `DEADLINE_EXCEEDED`, Collector их повторит. `PermitWithoutStream` не даёт клиенту с `permit_without_stream: true` получить GOAWAY `too_many_pings`. Ручной `telemetrygen` при подключённом Collector ждёт в backlog — ограничение шага 1, в `deploy/dev/README.md`. Шаг 8 (много клиентов) вводит admission control до декодирования.
+- **D3 — бюджет по построению, а не по удачной форме запроса.** Благодаря D5 дерево `pdata` одного запроса не больше `MaxDecodedBytes` = 32 MiB, а валидных спанов не больше `MaxDecodedBytes / 226 B` (208 + 2,25 × 8) ≈ 148 000, их срез ≤ 148 000 × 72 B ≈ 10,2 MiB. Пик на запрос: в кодеке — 2 × 4 МиБ кадров + ≤ 32 MiB дерева = 40 MiB; в хэндлере — ≤ 32 + 10,3 = 42,3 MiB. `ExportHeapRatio = 11` (42,3 / 4 = 10,6 с запасом). Строка «запросы в полёте» = `MaxConnections × MaxConcurrentStreams × MaxRecvMsgBytes × ExportHeapRatio` = 1 × 10 × 4 МиБ × 11 = 440 MiB; итог худшего случая ≈ 1014 MiB < 1088 MiB, запас ≈ 74 MiB. Типично (демо, 2,85×) ≈ 114 MiB. Валидатор `cmd/` читает `otlp.MaxConnections`, `otlp.MaxConcurrentStreams`, `otlp.MaxRecvMsgBytes`, `otlp.ExportHeapRatio`, а не их копии.
+- **D5 — предел дерева до декодирования.** Серверный кодек (`grpc.ForceServerCodecV2`, только на сервере OTLP) склеивает кадры (`MaterializeToBuffer`, как кодек `pdata`), одним проходом `protowire` без аллокаций считает **вес** запроса — верхнюю оценку heap, который построит `pdata` v1.70, по его настоящему устройству (`generated_proto_*.go`):
+  - **собственная аллокация** сообщения, хранимого по указателю, с округлением до класса размеров Go: `ExportTraceServiceRequest` 32, `ResourceSpans` 128, `ScopeSpans` 112, `Span` 208, `SpanEvent` 64, `SpanLink` 80, `EntityRef` 80 B; сообщения по значению (`Resource`, `InstrumentationScope`, `Status`, `KeyValue`, `AnyValue` в массиве) своей аллокации не имеют;
+  - **слот в срезе** родителя × 2,25 — запас ёмкости `append` (до 2×) и округление массива-подложки до класса размеров (до 12,5 %): указатель 8 B, `KeyValue` 40 B, `AnyValue` 16 B, строка в `[]string` 16 B;
+  - **обёртка oneof** `AnyValue` по виду значения: строка 16, bytes 24, bool/int/double/strindex 8, массив и `kvlist` 32 B;
+  - **строки и bytes** — `L + 16` при `L ≤ 256` (классы размеров Go до 256 B идут шагом 16 B), `L + L/4 + 16` при `L > 256` (выше классы реже: 769 B занимает 896 B, +16,5 %; выше 32 KiB аллокация округляется до страниц по 8 KiB). Длина wire отдельно не прибавляется: строки — единственное, что `pdata` копирует из wire, и они уже учтены (в ред. 3–5 они считались дважды, и это маскировало ошибку формулы на 769 B); идентификаторы `trace_id`/`span_id`/`parent_span_id` — массивы фиксированной длины внутри структуры, строкой не считаются;
+  - обходятся **все** поля, которые декодирует `pdata` (номера `case`), включая устаревшее `ResourceSpans` 1000 (`DeprecatedScopeSpans`), `Resource.entity_refs` (3) с `id_keys`/`description_keys` и `InstrumentationScope.attributes` (3); неизвестные поля и скаляры `pdata` не аллоцирует, повтор одиночного сообщения сливается на месте (замер),
+и при весе > `MaxDecodedBytes` или вложенности `AnyValue` > `MaxNestingDepth` (32) отказывает **до** `pdata`. Иначе вызывает `UnmarshalProto` на том же буфере, второй копии нет. Отказ кодека `grpc` всегда превращает в `INTERNAL` (`failed to unmarshal`): Collector не повторяет такой запрос, и это правильно — повтор того же запроса не пройдёт никогда. Отказ пишется Warn `otlp.export.decode_rejected` (вес, предел; не чаще `LogInterval`). Легальный худший запрос (123 360 минимальных спанов) весит 26,3 MiB (дерево 25,3 MiB) и проходит, демо-запрос 4 МиБ — 16,2 MiB (дерево 11,0 MiB); плотные запросы из крошечных атрибутов около 4 МиБ отклоняются — реальные SDK шлют пачки по 512 спанов, на порядки меньше. Таблица, составленная вручную, трижды пропускала стоимость (ревью ред. 3 и 4: поле 1000, `entity_refs`, обёртки oneof, запас ёмкости срезов и округление строк — до 1,65× на запросе из многих мелких родителей). Поэтому модель проверяют **два пробных теста**, а не внимательность: (1) поля — для каждого сообщения обхода, номеров полей 1–32 и 1000 и двух типов кодирования (пустой length-delimited, varint 0) запрос из 20 000 таких сообщений; (2) формы — для каждого повторяемого поля много родителей × n детей (1, 2, 3, 5, 9, 17, 33, 36, 65, 70) × длина содержимого (0, 1, 9, 17, 33, 49 B), ≈ 1 MiB wire, плюс строки и bytes у границ классов размеров и страниц (129 B … 1 MiB). Все требуют настоящий прирост heap ≤ вес. Модель ред. 3 — 66 нарушений, ред. 4 — до 1,65×, ред. 5 — до 1,11× на строках > 2 KiB и ниже границы на 769 B; текущая — 0 нарушений. 24 мутации модели (каждое поле, каждый вес, рост слота, округление, предел вложенности, ранний останов) тесты убивают. Пробы меряют память и однопоточны, поэтому идут без `-race` (тег `!race`, цель `make test-probes` в `make verify`, 13 s): под `-race` декодирование `pdata` замедляется в разы, а гонок здесь нет. Поле или раскладка, которые `pdata` изменит после обновления, уронят тест раньше, чем бюджет станет ложью.
+- **D4 — gzip.** Collector по умолчанию сжимает gzip. Адаптер регистрирует распаковщик (`google.golang.org/grpc/encoding/gzip`). Без него каждый запрос демо получил бы `UNIMPLEMENTED`. Лимит 4 МиБ `grpc` применяет к размеру после распаковки.
+
+**Нижняя граница журнала (перенесено из 4a).** Самый большой запрос минимальных спанов ≤ 4 МиБ — 123 360 спанов (замер), `Footprint()` = 30,1 MiB < 48 MiB. `ErrBatchTooLarge` при валидированном конфиге недостижим.
+
+**Известная цена, без изменения в шаге 1.** `span.New` проверяет ресурс на каждом спане: 0,25 µs/спан при коротких строках, 1,13 µs/спан при строках идентичности на пределе (826 B) — 138 ms на худший запрос 4 МиБ на одном ядре. Пропускная способность с запасом: демо-спаны 2,5 µs/спан (из них декодирование `pdata` 1,8 µs), 50 000 спанов/с ≈ 0,13 ядра. Проверка ресурса один раз на `ResourceSpans` — кандидат оптимизации к нагрузочному тесту NFR-PERF-001 (шаг 6).
+
+**Пакеты**
+
+| Go-пакет | Что внутри | Импортирует |
+|---|---|---|
+| `internal/interfaces/otlp` | `NewServer(acceptor, options)` — единственный конструктор (ресивер `traceReceiver` неэкспортируемый, встраивает `UnimplementedGRPCServer`; события логов создаются один раз и общие для ресивера и кодека), `LimitListener`, `Options`, порт `spanAcceptor`, таблица исходов `failureOf` (статус + событие), `partial_success`, `trace_id` из `traceparent` | `pdata`, `grpc`, `x/net/netutil`, `ingest`, `otlp/*` |
+| `internal/interfaces/otlp/spanmap` | `Source` (`NewSource`): `ptrace.Traces` → `Len`/`All` для `ingest.SpanSource`, только перевод формата | `pdata`, `telemetry/*` |
+| `internal/interfaces/otlp/decodelimit` | `Weigher` (`NewWeigher(limits)`, `Weigh(wire) (int64, error)`) — вес будущего дерева одним проходом `protowire`; схема весов строится один раз в `NewWeigher`, глобальных таблиц нет; `Weigh` экспортирован ради пробных тестов: им нужно само число. `Codec` (`NewCodec(weigher, onReject)`) — серверный кодек: вес, затем `UnmarshalProto` того же буфера; ответы кодирует кодек `"proto"` | `protowire`, `grpc/encoding`, `grpc/mem` |
+| `internal/interfaces/otlp/otlptest` | построители запросов для тестов (минимальные спаны 4 МиБ, запрос из дампа демо), замер heap | `pdata`, `protowire` |
+| `internal/interfaces/otlp/recovery` | `UnaryInterceptor`: паника → `INTERNAL`, Error `rpc.panic` со стеком | `grpc` |
+| `internal/interfaces/otlp/throttle` | `Throttle`: не чаще одной записи за интервал, пропущенные суммируются; порт `clock`. Отдельный Go-пакет — чтобы проверять его фейковыми часами через публичный API, а не белым ящиком внутри `otlp` | stdlib |
+
+**`internal/application/ingest` (изменение API 4a)**
+
+```go
+type SpanSource interface {
+	Len() int
+	All() iter.Seq2[resource.Resource, span.Fields]
+}
+
+func (a *AcceptBatch) Execute(ctx context.Context, spans SpanSource) (AcceptResult, error)
+```
+
+`partition` выделяет `make([]span.Span, 0, spans.Len())` и проходит `spans.All()` один раз.
+
+**`internal/interfaces/otlp`**
+
+```go
+const (
+	MaxRecvMsgBytes      = 4 << 20
+	MaxConcurrentStreams = 10
+	MaxConnections       = 1
+	ExportHeapRatio      = 11
+	MaxDecodedBytes      = 32 << 20
+	MaxNestingDepth      = 32
+	KeepaliveMinTime     = 10 * time.Second
+	KeepaliveTime        = 30 * time.Second
+	KeepaliveTimeout     = 10 * time.Second
+	MaxConnectionIdle    = time.Minute
+	MaxConnectionAge     = 5 * time.Minute
+	MaxConnectionAgeGrace = 10 * time.Second
+	ConnectionTimeout    = 10 * time.Second
+	RetryDelay           = time.Second
+	LogInterval          = 10 * time.Second
+	MaxErrorMessageBytes = 1 << 10
+)
+
+type spanAcceptor interface {
+	Execute(ctx context.Context, spans ingest.SpanSource) (ingest.AcceptResult, error)
+}
+
+type Keepalive struct {
+	Time                  time.Duration
+	Timeout               time.Duration
+	MaxConnectionIdle     time.Duration
+	MaxConnectionAge      time.Duration
+	MaxConnectionAgeGrace time.Duration
+}
+
+type Options struct {
+	Keepalive Keepalive
+	Clock     clock
+	Logger    *slog.Logger
+}
+
+func DefaultOptions(logger *slog.Logger, clock clock) Options
+func NewServer(acceptor spanAcceptor, options Options) *grpc.Server
+func LimitListener(listener net.Listener) net.Listener
+```
+
+В `Options` только то, что тесту нужно ускорить (keepalive), подменить (часы) или перехватить (логгер). Лимиты, которые читает валидатор бюджета, — константы, а не поля: значение не может разойтись с бюджетом. `Options` передаются один раз: логгер событий, кодека и паник один и тот же. `otlp.LimitListener` (`netutil.LimitListener` с `MaxConnections`) живёт рядом со своей константой; `cmd/faultline` (срез 5b) только оборачивает им листенер.
+
+Контракт `Export`:
+- `acceptor.Execute(ctx, spanmap.NewSource(request.Traces()))`. Адаптер ничего не решает: валидация, подсчёт отказов и `ReceivedAt` — в use case;
+- нет отказов → пустой `ExportResponse`; есть → `partial_success{rejected_spans: int64(Rejected), error_message: …}`, код OK. `error_message` — `Reasons` через `"; "`, причины добавляются целиком, пока сумма ≤ `MaxErrorMessageBytes`; первая причина длиннее лимита обрезается по границе руны. Всегда валидный UTF-8;
+- ошибка → gRPC-статус и событие лога по одной таблице `failureOf(err)` (одна классификация на три ошибки журнала, а не два `switch`);
+- события: `otlp.export.rejected` (Warn: `rejected_spans`, `reason` — первая причина, `suppressed_requests`, `suppressed_spans`; не чаще `LogInterval`), `otlp.export.overloaded` (Warn: `suppressed_requests`; не чаще `LogInterval`), `otlp.export.too_large` (Error, каждый раз, `error` несёт размер и ёмкость журнала), `otlp.export.failed` (Error, каждый `INTERNAL` из `Execute`). К каждому — `trace_id`, если во входящих метаданных есть валидный `traceparent` W3C: версия `00`, 32 hex в нижнем регистре не из одних нулей, 16 hex parent-id не из нулей, 2 hex флагов, ровно 55 символов. Логируется только разобранный trace id, никогда сырая строка заголовка (защита от инъекции в лог). Пропущенные троттлингом записи за последний интервал при остановке теряются в логах; точные значения — в счётчиках `ingest.Stats`;
+- спанов self-tracing на этом пути нет (см. «Self-tracing»).
+
+| Ошибка | gRPC-статус | Текст клиенту | Кто отвечает |
+|---|---|---|---|
+| `ingest.ErrOverloaded` | `RESOURCE_EXHAUSTED` + `errdetails.RetryInfo{RetryDelay: 1s}` | `span journal overloaded, retry later` | `statusOf` |
+| `ingest.ErrBatchTooLarge` | `INVALID_ARGUMENT` без `RetryInfo` | `request exceeds span journal capacity` | `statusOf` |
+| `ingest.ErrUnavailable` | `UNAVAILABLE` | `span journal unavailable` | `statusOf` |
+| `context.Canceled` / `context.DeadlineExceeded` | `CANCELLED` / `DEADLINE_EXCEEDED` | текст ошибки ctx | `statusOf` |
+| прочее из `Execute` | `INTERNAL` | `internal error` | `statusOf` |
+| вес дерева > `MaxDecodedBytes`, вложенность > `MaxNestingDepth` или битый protobuf | `INTERNAL` | `grpc: failed to unmarshal …: <причина>` | `decodelimit`, до `pdata` |
+| паника хэндлера | `INTERNAL` | `internal error` | `recovery` |
+| запрос > 4 МиБ (после распаковки) | `RESOURCE_EXHAUSTED` без `RetryInfo` | текст `grpc` | `grpc`, до хэндлера |
+| неизвестное сжатие | `UNIMPLEMENTED` | текст `grpc` | `grpc`, до хэндлера |
+
+Строку `decodelimit` пишет Warn `otlp.export.decode_rejected` (`reason`: `too_heavy` — вместе с `weight` и `limit`; `too_deep` и `malformed` — без них: вес там частичный, до места останова; не чаще `LogInterval`) — через колбэк `onReject`, события логов живут только в `otlp`. Две последние строки отвечает сам `grpc` до хэндлера, поэтому в шаге 1 они не логируются и не считаются: Collector считает их окончательными и не повторяет. Счётчик и лог для них — `stats.Handler` в шаге 6 вместе с метриками. Тесты закрепляют коды.
+
+`NewServer`: `grpc.ForceServerCodecV2(decodelimit.Codec(…))`, `grpc.MaxRecvMsgSize(MaxRecvMsgBytes)`, `grpc.MaxConcurrentStreams(MaxConcurrentStreams)`, `grpc.KeepaliveEnforcementPolicy{MinTime: KeepaliveMinTime, PermitWithoutStream: true}`, `grpc.KeepaliveParams(keepalive.ServerParameters{…})`, `grpc.ConnectionTimeout(ConnectionTimeout)`, `grpc.ChainUnaryInterceptor(recovery.UnaryInterceptor(logger))`, `ptraceotlp.RegisterGRPCServer`. Reflection на порту OTLP нет.
+
+**`internal/interfaces/otlp/spanmap`**
+
+```go
+type Source struct{ … }
+
+func NewSource(traces ptrace.Traces) Source
+func (s Source) Len() int
+func (s Source) All() iter.Seq2[resource.Resource, span.Fields]
+```
+
+- возвращается конкретный тип, а не `ingest.SpanSource` (принимай интерфейсы, возвращай структуры): `spanmap` не зависит от `ingest`;
+- `Len()` = `traces.SpanCount()`;
+- ресурс: строковые атрибуты `service.name`, `service.namespace`, `k8s.namespace.name`, `k8s.pod.name` (`Value.Str()`: нестроковое значение = отсутствует). Приоритет namespace решает домен (`ServiceRef`). `Resource` строится один раз на `ResourceSpans` и отдаётся каждому его спану;
+- спан: `TraceID`, `SpanID`, `ParentSpanID` — копия массивов; `Kind`: значение вне `[0, 5]` → `kind.Unspecified` (проверка диапазона до сужения `int32 → uint8`); `StatusError` = `Status().Code() == StatusCodeError`;
+- атрибуты: один проход `Attributes().All()`, в `response.Attributes` — только ключи с `response.Relevant(key)` и только **скалярные** значения (строка, число, bool), `Value.AsString()` (число 14 → `"14"`). Массив, `kvlist` и bytes в релевантном ключе считаются отсутствующими: `AsString` строит из них JSON (ревью 4b: массив из 850 000 пустых значений в `error.type` проходил предел веса и аллоцировал ещё 41 MiB вне бюджета), а коды ответа в semconv всегда скаляры. Карта создаётся лениво: у спана без нужных атрибутов — `nil`, без аллокации. **Правка домена:** `response.Relevant(key string) bool` — имена атрибутов уже живут в `response`, адаптер их не дублирует;
+- итератор прекращает обход, если `yield` вернул `false`.
+
+**`internal/interfaces/otlp/throttle`**
+
+```go
+type Suppressed struct {
+	Events int64
+	Weight int64
+}
+
+func New(interval time.Duration, clock clock) *Throttle
+func (t *Throttle) Admit(weight int64) (Suppressed, bool)
+```
+
+`Admit` копит пропущенные события и их вес; раз в `interval` возвращает `true` и то, что было **пропущено** с прошлой записи (текущее событие не входит — его пишет вызывающий), затем обнуляет счёт. Поля лога `suppressed_requests` и `suppressed_spans` берутся из `Suppressed` один в один. Первое событие пишется сразу. Безопасен для конкурентных хэндлеров (мьютекс).
+
+**`internal/interfaces/otlp/decodelimit`**
+
+```go
+type Limits struct {
+	MaxDecodedBytes int64
+	MaxNestingDepth int
+}
+
+var (
+	ErrTooHeavy   = errors.New(…)
+	ErrTooDeep    = errors.New(…)
+	ErrMalformed  = errors.New(…)
+)
+
+func NewWeigher(limits Limits) *Weigher
+func (w *Weigher) Weigh(wire []byte) (int64, error)
+func NewCodec(weigher *Weigher, onReject func(err error, weight int64)) *Codec
+```
+
+- `Weigh` обходит `ExportTraceServiceRequest` → `ResourceSpans` (2 и 1000) → `Resource` (`attributes`, `entity_refs` → `id_keys`/`description_keys`) / `ScopeSpans` → `InstrumentationScope` (`attributes`) / `Span` → `attributes`/`events`/`links`/`status` → `KeyValue` → `AnyValue` → `ArrayValue`/`KeyValueList` по номерам полей OTLP; остальные поля пропускает (`protowire.ConsumeFieldValue`): `pdata` их либо не аллоцирует (неизвестные, скаляры, повтор одиночного сообщения сливается на месте — замер), либо копирует как строку (учтено длиной wire). Вложенность проверяется до рекурсии. Обход прекращается, как только вес превысил предел: время на враждебный запрос не больше, чем на легальный;
+- кодек: `Unmarshal(data, v)` — `data.MaterializeToBuffer(mem.DefaultBufferPool())`, `Weigh`, при отказе `onReject` и ошибка, иначе `UnmarshalProto` того же буфера. Ошибка `UnmarshalProto` на байтах, которые `Weigh` принял (например, неверный тип кодирования у известного поля), оборачивается в `ErrMalformed` и тоже вызывает `onReject(err, weight)`: любой отказ кодека пишется одинаково; `Free` в `defer` (для одного буфера `MaterializeToBuffer` только берёт ссылку, `data` освобождает сам `grpc` — двойного освобождения нет). Сообщение без `UnmarshalProto` и `Marshal` — делегат `encoding.GetCodecV2("proto")`, который ищется при вызове, а не при создании (порядок `init` не важен; `grpc` сам регистрирует `"proto"`). `Name()` = `"proto"`. Кодек ставится только на сервер OTLP (`ForceServerCodecV2`), глобальная регистрация кодеков не меняется.
+
+**`internal/interfaces/otlp/recovery`**
+
+```go
+func UnaryInterceptor(logger *slog.Logger) grpc.UnaryServerInterceptor
+```
+
+Паника → Error `rpc.panic` (`method`, `panic`, `stack`), клиенту `INTERNAL` с текстом `internal error`, без значения паники.
+
+**Тесты**
+
+| Где | Что |
+|---|---|
+| `ingest` (обновление 4a) | тесты переходят на `SpanSource`; добавляется: `All()` проходится ровно один раз; `Len()` меньше и больше фактического числа не меняет результат |
+| `otlp/spanmap` | виды спанов включая `-1`, `6`, `1<<20`; статус; атрибуты строкой и числом, нерелевантные отброшены, спан без них — `nil` и 0 аллокаций; несколько ресурсов и scope; нестроковый `service.name`; `Len()` = `SpanCount()`; ранний выход итератора |
+| `otlp/throttle` | первое событие сразу с `Suppressed{}`; события в интервале копятся; запись после интервала несёт ровно пропущенные (без текущего); конкурентные `Admit` под `-race` не теряют событий (фейковые часы) |
+| `otlp/decodelimit` | fuzz `FuzzWeighNeverPanics` (паника в кодеке не ловится `recovery`: `grpc` декодирует до цепочки интерсепторов); два пробных теста весов (поля: сообщение × номера 1–32 и 1000 × тип кодирования; формы: повторяемое поле × родители × n детей × длина содержимого; настоящий heap ≤ вес — это тест A4 на структуры `pdata`); вес ≥ настоящего дерева для дампа демо и минимальных спанов; враждебные запросы 4 МиБ (пустые спаны через поле 2 и через 1000, пустые `entity_refs`, массив пустых bytes, многие `ScopeSpans` по 36 атрибутов) отклонены `ErrTooHeavy`, обход остановлен рано; вложенность 32 проходит, 33 → `ErrTooDeep`; обрезанные байты → `ErrMalformed`; легальный худший запрос и дамп проходят; кодек вызывает `onReject` и не зовёт `UnmarshalProto` при отказе; байты, которые `Weigh` принял, а `pdata` отверг, дают `ErrMalformed` и `onReject` |
+| `otlp/recovery` | паника → `INTERNAL` без значения паники, Error-лог со стеком; следующий вызов отвечает |
+| `otlp` | через `bufconn` и клиент `ptraceotlp`: каждая строка карты ошибок (код, `RetryInfo` есть/нет, текст), включая строку `grpc` «> 4 МиБ» (неизвестное сжатие в одном процессе не проверить: реестр компрессоров у клиента и сервера общий; закреплено поведением `grpc`), строку `decodelimit` (битые байты → `INTERNAL` и `otlp.export.decode_rejected` с `reason: malformed`) и запрос с gzip; `partial_success` с лимитом 1 KiB и UTF-8; события логов (вторая запись в пределах `LogInterval` не пишется); `trace_id` из валидного `traceparent` и отсутствие атрибута для невалидного; паника акцептора → `INTERNAL`, следующий `Export` отвечает; keepalive: простаивающее соединение закрывается по `MaxConnectionIdle`, соединение с зависшим потоком — по `MaxConnectionAge` (короткие интервалы в тесте), второе соединение через `LimitListener(1)` после этого обслуживается; запрос-«бомба» по gRPC → `INTERNAL` без вызова акцептора; A4: 10 одновременных самых больших запросов минимальных спанов проходят настоящий `AcceptBatch` и удерживаются **перед проверкой последнего спана** (источник-обёртка ждёт на последнем элементе: дерево `pdata` ещё живо, срез валидных спанов почти полон — это и есть пик; позже GC уже собирает дерево, и замер на `Append` показал бы 8 MiB вместо 33 MiB), замер 33,4 MiB на запрос, дают heap ≤ `ExportHeapRatio` × 4 МиБ на запрос. Условия замера: клиентский raw-кодек называется `"proto"` и передаётся на вызов (`grpc.ForceCodecV2`), не глобально; клиент шлёт один и тот же заранее закодированный буфер, он входит в базовую линию; heap снимается, когда все 10 хэндлеров уже вошли |
+| `test/ingest` (вне `internal`: адаптер + use case + настоящий `memjournal`) | I4 по gRPC: кредит исчерпан → `RESOURCE_EXHAUSTED` с `RetryInfo`, журнал не изменился; пакет больше остатка кредита отклонён целиком; больше полной ёмкости → `INVALID_ARGUMENT` без `RetryInfo`; журнал закрыт → `UNAVAILABLE`; нижняя граница: самый большой запрос минимальных спанов ≤ 4 МиБ даёт `Footprint() ≤ 48 MiB`; пакет в журнале не держит буфер запроса (heap после `Export` и GC ≤ `Footprint()` + 1 MiB) |
+| `test/replay` | дамп → `ptrace.JSONUnmarshaler` → `spanmap` → `AcceptBatch` (фейковый журнал) → `topology.Builder` → снимок. Строка дампа = один Export; `ReceivedAt` = max `end_time` строки, приведённый к монотонному. Сравнение с `test/demo/otel-demo/replay.golden.json` через `cmp.Diff` (`FAULTLINE_UPDATE_GOLDEN=1` перезаписывает golden — переменная окружения, а не флаг: флаг требует глобальной переменной); I1 сходится на дампе; рёбра ⊇ `required` и ⊆ `required ∪ optional`. Fuzz `FuzzExportReachesGraph`: любые байты → `ExportRequest.UnmarshalProto` → весь путь → `graphmap` → `proto.Marshal` и `protojson.Marshal` без ошибки (seed — строки дампа) |
+
+**Зависимости:** `go.opentelemetry.io/collector/pdata` v1.70.0, `google.golang.org/grpc` v1.85.0 (`errdetails` из `google.golang.org/genproto/googleapis/rpc` уже есть). `golang.org/x/net/netutil` — в срезе 5b и в тесте keepalive.
+
 ## Критерии приёмки (Definition of Done шага)
 
 **Гейты качества**
@@ -803,7 +1007,7 @@ func (j *Journal) Stats() Stats
 | `google.golang.org/grpc` | Apache 2.0 | gRPC-сервер OTLP (порт 4317), `errdetails` для `RetryInfo` (через `google.golang.org/genproto/googleapis/rpc`) |
 | `connectrpc.com/connect` | Apache 2.0 | API (порт 8080); HTTP/2 без TLS — штатный `http.Protocols` (Go 1.24+), без `x/net/h2c` |
 | `connectrpc.com/grpcreflect` | Apache 2.0 | Reflection для `grpcurl` (FR-API-001) |
-| `golang.org/x/net/netutil` | BSD-3 | `LimitListener` для OTLP (I5) |
+| `golang.org/x/net/netutil` | BSD-3 | `LimitListener(…, 1)` для OTLP (I5, срез 4b D2) |
 | `golang.org/x/sync` (`semaphore`) | BSD-3 | Ограничение одновременных `GetGraph` в `connectapi/limit` (журнал считает кредит под своим мьютексом; жизненный цикл — `sync.WaitGroup.Go`, без `errgroup`, см. «Жизненный цикл») |
 | `go.opentelemetry.io/otel` (+ `sdk`, `otlptracegrpc`) | Apache 2.0 | Self-tracing, по умолчанию no-op |
 | `github.com/spf13/cobra` | Apache 2.0 | CLI `faultline`, `faultctl` |

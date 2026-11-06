@@ -101,3 +101,12 @@ func (a Attributes) CallsExternalSystem() bool {
 		a[attrDBSystem] != "" ||
 		a[attrMessagingSystem] != ""
 }
+
+func Relevant(key string) bool {
+	switch key {
+	case attrRPCResponseStatusCode, attrRPCGRPCStatusCode, attrHTTPResponseStatusCode, attrHTTPStatusCode,
+		attrErrorType, attrDBSystemName, attrDBSystem, attrMessagingSystem:
+		return true
+	}
+	return false
+}
