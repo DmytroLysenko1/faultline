@@ -90,6 +90,13 @@ else
 	@echo "test-race: no Go packages yet, skipping"
 endif
 
+STRESS_PACKAGES := ./internal/application/ingest/... ./internal/infrastructure/memjournal/... ./internal/infrastructure/memgraph/...
+STRESS_COUNT := 200
+
+.PHONY: test-stress
+test-stress: ## Repeat concurrency-sensitive tests under the race detector (nightly CI, before a tag)
+	go test -race -count=$(STRESS_COUNT) $(STRESS_PACKAGES)
+
 .PHONY: cover-check
 cover-check: test-race ## Enforce per-package coverage thresholds (NFR-MAINT-001)
 ifneq ($(GO_PACKAGES),)

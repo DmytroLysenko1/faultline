@@ -189,6 +189,8 @@ linters:
           msg: no stdout printing — use slog/zap (observability doctrine)
         - pattern: ^log\.(Print|Fatal|Panic)(|f|ln)$
           msg: no stdlib log — errors flow up as values; log only at the final boundary
+        - pattern: ^time\.(Now|Since|Until)$
+          msg: inject a clock port — domain and application time must be deterministic
     gocritic:
       enabled-tags:
         - diagnostic
@@ -204,6 +206,10 @@ linters:
         linters:
           - forbidigo
         text: only topology.Builder keeps the expire
+      - path-except: internal/(domain|application)/
+        linters:
+          - forbidigo
+        text: inject a clock port
       # Tests build large table literals and helper closures; relax size/complexity/sec there.
       - path: _test\.go
         linters:

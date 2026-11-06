@@ -18,11 +18,15 @@ type Batch struct {
 }
 
 func New(spans []span.Span, receivedAt time.Time) (Batch, error) {
+	return NewOwning(slices.Clone(spans), receivedAt)
+}
+
+func NewOwning(spans []span.Span, receivedAt time.Time) (Batch, error) {
 	if len(spans) == 0 {
 		return Batch{}, ErrEmpty
 	}
 	return Batch{
-		Spans:      slices.Clone(spans),
+		Spans:      spans,
 		ReceivedAt: receivedAt,
 	}, nil
 }

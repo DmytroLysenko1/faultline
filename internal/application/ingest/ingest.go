@@ -1,0 +1,130 @@
+package ingest
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"sync/atomic"
+	"time"
+
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
+)
+
+var (
+	ErrOverloaded    = errors.New("span journal overloaded")
+	ErrBatchTooLarge = errors.New("batch exceeds span journal capacity")
+	ErrUnavailable   = errors.New("span journal unavailable")
+)
+
+const MaxReasons = 16
+
+type spanJournal interface {
+	Append(ctx context.Context, received batch.Batch) error
+}
+
+type clock interface {
+	Now() time.Time
+}
+
+type SpanInput struct {
+	Resource resource.Resource
+	Fields   span.Fields
+}
+
+type AcceptResult struct {
+	Accepted int
+	Rejected int
+	Reasons  []string
+}
+
+func (r *AcceptResult) reject(err error) {
+	r.Rejected++
+	reason := err.Error()
+	if len(r.Reasons) < MaxReasons && !slices.Contains(r.Reasons, reason) {
+		r.Reasons = append(r.Reasons, reason)
+	}
+}
+
+type Stats struct {
+	AcceptedSpans       int64
+	RejectedSpans       int64
+	OverloadedResponses int64
+	TooLargeResponses   int64
+}
+
+type AcceptBatch struct {
+	journal    spanJournal
+	clock      clock
+	accepted   atomic.Int64
+	rejected   atomic.Int64
+	overloaded atomic.Int64
+	tooLarge   atomic.Int64
+}
+
+func NewAcceptBatch(journal spanJournal, clock clock) *AcceptBatch {
+	return &AcceptBatch{
+		journal: journal,
+		clock:   clock,
+	}
+}
+
+func (a *AcceptBatch) Execute(ctx context.Context, inputs []SpanInput) (AcceptResult, error) {
+	valid, result := partition(inputs)
+	if err := a.enqueue(ctx, valid); err != nil {
+		return AcceptResult{}, err
+	}
+	a.accepted.Add(int64(result.Accepted))
+	a.rejected.Add(int64(result.Rejected))
+	return result, nil
+}
+
+func (a *AcceptBatch) enqueue(ctx context.Context, valid []span.Span) error {
+	received, err := batch.NewOwning(valid, a.clock.Now())
+	if errors.Is(err, batch.ErrEmpty) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("accept batch: %w", err)
+	}
+	if err := a.journal.Append(ctx, received); err != nil {
+		a.countFailure(err)
+		return fmt.Errorf("accept batch of %d spans: %w", len(valid), err)
+	}
+	return nil
+}
+
+func (a *AcceptBatch) countFailure(err error) {
+	switch {
+	case errors.Is(err, ErrOverloaded):
+		a.overloaded.Add(1)
+	case errors.Is(err, ErrBatchTooLarge):
+		a.tooLarge.Add(1)
+	}
+}
+
+func (a *AcceptBatch) Stats() Stats {
+	return Stats{
+		AcceptedSpans:       a.accepted.Load(),
+		RejectedSpans:       a.rejected.Load(),
+		OverloadedResponses: a.overloaded.Load(),
+		TooLargeResponses:   a.tooLarge.Load(),
+	}
+}
+
+func partition(inputs []SpanInput) ([]span.Span, AcceptResult) {
+	valid := make([]span.Span, 0, len(inputs))
+	var result AcceptResult
+	for _, input := range inputs {
+		accepted, err := span.New(input.Resource, input.Fields)
+		if err != nil {
+			result.reject(err)
+			continue
+		}
+		valid = append(valid, accepted)
+	}
+	result.Accepted = len(valid)
+	return valid, result
+}

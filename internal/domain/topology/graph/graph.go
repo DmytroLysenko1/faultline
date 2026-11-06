@@ -114,8 +114,7 @@ func (g *Graph) addNode(service resource.ServiceRef) (added bool) {
 		g.Stats.NodeOverflow++
 		return false
 	}
-	node := NewNode(service)
-	g.Nodes[service] = &node
+	g.Nodes[service] = new(NewNode(service))
 	return true
 }
 

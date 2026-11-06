@@ -126,3 +126,36 @@ func TestNewBatchCopiesSpans(t *testing.T) {
 		t.Errorf("ReceivedAt = %v, want %v", received.ReceivedAt, receivedAt)
 	}
 }
+
+func TestNewOwningRejectsEmpty(t *testing.T) {
+	for _, spans := range [][]span.Span{
+		nil,
+		{},
+	} {
+		if _, err := batch.NewOwning(spans, time.Unix(1, 0)); !errors.Is(err, batch.ErrEmpty) {
+			t.Errorf("NewOwning(%d spans) err = %v, want %v", len(spans), err, batch.ErrEmpty)
+		}
+	}
+}
+
+func TestNewOwningTakesSpansWithoutCopy(t *testing.T) {
+	const runs = 100
+	spans := []span.Span{
+		telemetrytest.MustSpan(t, telemetrytest.ValidResource(), telemetrytest.ValidFields()),
+	}
+	received, err := batch.NewOwning(spans, time.Unix(1, 0))
+	if err != nil {
+		t.Fatalf("NewOwning: %v", err)
+	}
+	if &received.Spans[0] != &spans[0] {
+		t.Errorf("NewOwning copied the spans, want the batch to own the caller's slice")
+	}
+	allocations := testing.AllocsPerRun(runs, func() {
+		if _, err := batch.NewOwning(spans, time.Unix(1, 0)); err != nil {
+			t.Errorf("NewOwning: %v", err)
+		}
+	})
+	if allocations != 0 {
+		t.Errorf("NewOwning allocates %.0f times, want 0 on the ingest hot path", allocations)
+	}
+}

@@ -304,3 +304,40 @@ func TestCallsExternalSystem(t *testing.T) {
 		})
 	}
 }
+
+func TestFailedDoesNotAllocate(t *testing.T) {
+	const runs = 100
+	tests := []struct {
+		Name string
+		Args response.Attributes
+	}{
+		{
+			Name: "no response code attributes",
+			Args: response.Attributes{
+				"service.version": "1.0.0",
+			},
+		},
+		{
+			Name: "numeric gRPC code",
+			Args: response.Attributes{
+				"rpc.grpc.status_code": "14",
+			},
+		},
+		{
+			Name: "numeric HTTP code",
+			Args: response.Attributes{
+				"http.response.status_code": "503",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.Name, func(t *testing.T) {
+			allocations := testing.AllocsPerRun(runs, func() {
+				tt.Args.Failed(false)
+			})
+			if allocations != 0 {
+				t.Errorf("Failed allocates %.0f times per span, want 0 on the ingest hot path", allocations)
+			}
+		})
+	}
+}

@@ -52,7 +52,11 @@ func (a Attributes) rpcFailed() (failed, found bool) {
 	if name := a[attrRPCResponseStatusCode]; name != "" {
 		return !isBenignGRPCCodeName(grpcCodeName(name)), true
 	}
-	code, err := strconv.Atoi(a[attrRPCGRPCStatusCode])
+	raw := a[attrRPCGRPCStatusCode]
+	if raw == "" {
+		return false, false
+	}
+	code, err := strconv.Atoi(raw)
 	if err != nil {
 		return false, false
 	}
@@ -64,7 +68,11 @@ func (a Attributes) httpFailed() (failed, found bool) {
 		attrHTTPResponseStatusCode,
 		attrHTTPStatusCode,
 	} {
-		code, err := strconv.Atoi(a[key])
+		raw := a[key]
+		if raw == "" {
+			continue
+		}
+		code, err := strconv.Atoi(raw)
 		if err == nil {
 			return code >= minHTTPServerErrorCode, true
 		}

@@ -67,7 +67,7 @@ cmd/faultctl → internal/cli: graph export -o dot|json
 | `internal/domain/topology/tombstone` | `Set` (ring + map), `Scope` | `ids`, `role` |
 | `internal/domain/topology/matcher` | `Matcher` (буфер ожидания), `Stats` (I1), `Limits` | `telemetry/*`, `call`, `clock`, `role`, `tombstone` |
 | `internal/domain/topology/graph` | `Graph` (агрегат), `Change`, `View`, `Node`, `Edge`, `Stats` | `resource`, `call`, `clock` |
-| `internal/application/ingest` | `AcceptBatch`; команда `SpanInput`, результат `AcceptResult`; порты `spanJournal`, `clock`; `ErrOverloaded`, `ErrBatchTooLarge`, `ErrUnavailable` | `telemetry` |
+| `internal/application/ingest` | `AcceptBatch` (+ `Stats`); команда `SpanInput`, результат `AcceptResult`, `MaxReasons`; порты `spanJournal`, `clock`; `ErrOverloaded`, `ErrBatchTooLarge`, `ErrUnavailable` | `telemetry` |
 | `internal/application/processing` | `Pipeline`; порты `spanFeed`, `graphPublisher`; `Delivery`; `ErrFeedClosed` | `telemetry`, `topology` |
 | `internal/application/query` | `GetGraph`, порт `graphReader` | `topology` |
 | `internal/infrastructure/memgraph` | `Store` (`atomic.Pointer[topology.Snapshot]`), `ErrNilSnapshot`, `ErrNoSnapshot` | `topology` |
@@ -77,7 +77,7 @@ cmd/faultctl → internal/cli: graph export -o dot|json
 | `internal/interfaces/connectapi/recovery` | `Handler` для `connect.WithRecover`: паника → `INTERNAL` с общим текстом `ErrPanic`, Error-лог со стеком | `connect` |
 | `internal/interfaces/connectapi/graphmap` | `Graph`: `Snapshot` → `faultline.v1.Graph`, `ErrDanglingEdge` | `topology`, `gen` |
 | `internal/interfaces/connectapi/timeout` | `Interceptor`: unary-дедлайн | `connect` |
-| `internal/infrastructure/memjournal` | очередь пакетов в памяти, ограниченная по байтам (`Batch.Footprint()`) и по числу пакетов | `telemetry`, `ingest`, `processing` (sentinel'ы портов) |
+| `internal/infrastructure/memjournal` | `Journal`: очередь пакетов в памяти, ограниченная по байтам (`Batch.Footprint()`) и по числу пакетов; `Limits`, `Stats`, `ErrInvalidLimits`, `ErrInvalidMax` | `telemetry`, `ingest`, `processing` (sentinel'ы портов) |
 | `internal/interfaces/otlp` | OTLP gRPC `TraceService`, маппинг pdata → `SpanInput` и `AcceptResult` → `partial_success`, карта ошибок, recovery-интерсептор | `application/ingest` |
 | `internal/cli` | команды `faultctl`, рендереры dot/json | `internal/gen` и stdlib; `internal/domain`, `internal/application`, `internal/infrastructure` запрещены |
 | `cmd/faultline`, `cmd/faultctl` | composition root, конфиг, сигналы, жизненный цикл | всё |
@@ -197,7 +197,7 @@ func (b *Builder) Snapshot() *Snapshot // граф + PairingStats + GraphStats +
 - **I3 — согласованность ребра.** Σ `edge.calls` = `matched − graph_overflow`, где `graph_overflow` — вызовы, не вошедшие в граф из-за лимита узлов или рёбер (I5). `edge.failedCalls ≤ edge.calls`. Вызовы без ответа: Σ `node.unanswered_calls` = `expired_caller − unanswered_overflow` (caller-узел не создан из-за `maxNodes`), `node.unansweredFailedCalls ≤ node.unansweredCalls`. Узлы сверх `maxNodes` считаются в `node_overflow` (спан учтён в I1, узел не создан).
 - **I4 — нет тихой потери после ответа.** Успешный ответ OTLP ⇒ все валидные спаны запроса поставлены в журнал, и при штатной остановке они будут обработаны до выхода, **если дренаж уложился в 3 s**; иначе недочитанное явно фиксируется Error-логом `lifecycle.drain_incomplete` с числом спанов (см. «Жизненный цикл»). Перегрузка ⇒ `RESOURCE_EXHAUSTED` **с `RetryInfo`**, и из запроса ничего не поставлено (всё или ничего). Ограничение шага 1: при **падении** процесса теряются журнал, ожидающие половинки и граф. Durability появляется в шаге 3 (NATS R3) и становится полной с чекпоинтами в шаге 5.
 - **I5 — ограниченная память** (в байтах, а не в пакетах). Каждая структура ограничена, итог задан формулой в разделе «Бюджет памяти»:
-  - журнал ≤ `journalMaxBytes` (по `Batch.Footprint()`) и ≤ `journalMaxBatches` пакетов;
+  - журнал ≤ `journalMaxBytes` (по `Batch.Footprint()`) и ≤ `journalMaxBatches` пакетов, ожидающих в очереди (выданные Pipeline, но не освобождённые, держат кредит байтов, поэтому память ограничена и ими);
   - каждая строка идентичности ограничена по длине при валидации, поэтому байты спана, половинки и узла конечны;
   - буфер ожидания ≤ `maxPending`, tombstones ≤ `maxTombstones`;
   - граф ≤ `maxNodes` узлов и ≤ `maxEdges` рёбер; одновременно живут не более 6 снимков (опубликованный, строящийся и по одному на каждый из ≤ 4 одновременных `GetGraph`);
@@ -209,7 +209,7 @@ func (b *Builder) Snapshot() *Snapshot // граф + PairingStats + GraphStats +
 |---|---|---|
 | `topology.Builder` и всё внутри него: буфер `matcher.Matcher` (pending, tombstones, списки), `graph.Graph` (узлы, рёбра, ревизия) | горутина `Pipeline.Run` | single-writer: `Builder` не покидает горутину, мьютекс не нужен; ревизию назначает сам `graph`, поэтому немонотонная ревизия невозможна по построению |
 | последний `Snapshot` | `Pipeline` через `graphPublisher.Publish` | `atomic.Pointer` на неизменяемый снимок: писатель подменяет указатель, читатели (API, лог `pipeline.stats`) читают без блокировок |
-| очередь пакетов и кредит байтов | `memjournal.Journal` — владелец канала и семафора | писатели (OTLP-хэндлеры) под `RLock` проверяют `closed`, берут кредит `semaphore.Weighted.TryAcquire(batch.Footprint())` и делают неблокирующую отправку. `Close()` под `Lock` ставит `closed` и закрывает канал **один раз**, только владелец. Читатель (`Pipeline`) возвращает кредит через `Delivery.Release` |
+| очередь пакетов и кредит байтов | `memjournal.Journal` — владелец канала и учёта байтов | один `sync.Mutex` охраняет `closed`, учёт неосвобождённых байтов, пакетов и спанов и неблокирующую отправку в канал. `Append` под мьютексом проверяет `closed`, ctx и кредит (`held.Bytes + Footprint() ≤ MaxBytes`) и делает неблокирующую отправку; `Footprint()` считается до захвата мьютекса и запоминается в записи очереди. `Close()` под тем же мьютексом ставит `closed` и закрывает канал **один раз**, только владелец, поэтому отправки в закрытый канал быть не может. `Receive` ждёт канал без мьютекса. Читатель (`Pipeline`) возвращает кредит через `Delivery.Release` (берёт мьютекс, идемпотентен). Один мьютекс вместо `semaphore.Weighted` + `RWMutex`: проще, и `Stats` всегда согласован; захват — один раз на OTLP-запрос, а не на спан |
 | состояние жизненного цикла | горутина `run` в `cmd/faultline` | автомат Starting → Serving → Draining/Aborting → Stopped (см. «Жизненный цикл»), переходы делает только `run` |
 
 ## 3. Форма каждого порта
@@ -220,7 +220,7 @@ func (b *Builder) Snapshot() *Snapshot // граф + PairingStats + GraphStats +
 |---|---|---|
 | `spanJournal` (ingest) | `Append(ctx, telemetry.Batch) error` | Атомарно для всего пакета: либо поставлен целиком, либо `ErrOverloaded` (сейчас нет кредита байтов или места в очереди — повтор имеет смысл), `ErrBatchTooLarge` (`Footprint()` больше **полной** ёмкости журнала — повтор не поможет никогда), `ErrUnavailable` (журнал закрыт при остановке) или ошибка ctx. Не блокируется (fail-fast). Пустой пакет сюда не приходит |
 | `clock` (ingest) | `Now() time.Time` | Источник `Batch.ReceivedAt`; в тестах фейковые часы |
-| `spanFeed` (processing) | `Receive(ctx, max int) ([]Delivery, error)` | Блокируется, пока не появится хотя бы один пакет, затем **без ожидания** забирает ещё уже готовые, всего не больше `max`. Так Pipeline строит один снимок на несколько пакетов: под нагрузкой пачки крупнее, в простое задержка видимости — один пакет. Когда журнал закрыт и пуст, возвращает `ErrFeedClosed`: это штатный конец дренажа |
+| `spanFeed` (processing) | `Receive(ctx, limit int) ([]Delivery, error)` | Блокируется, пока не появится хотя бы один пакет, затем **без ожидания** забирает ещё уже готовые, всего не больше `limit`. Так Pipeline строит один снимок на несколько пакетов: под нагрузкой пачки крупнее, в простое задержка видимости — один пакет. Когда журнал закрыт и пуст, возвращает `ErrFeedClosed`: это штатный конец дренажа |
 | `Delivery` (processing) | `Batch() telemetry.Batch`; `Release()` | **Освобождение кредита памяти**, а не подтверждение доставки. Pipeline вызывает `Release` после `Publish` снимка, в который вошёл пакет, — так очередь не принимает новое, пока старое не видно читателям. Durability-подтверждение в шаге 3 так не сделать: после `Publish` половинки пакета могут ещё ждать пару в памяти, и ack «по доставке» потерял бы их при падении. Правильная граница — ack по позиции журнала вместе с чекпоинтом состояния матчера и графа (шаг 5); тогда порт расширится методом позиции, а `Release` останется для кредита |
 | `graphPublisher` (processing) | `Publish(ctx, *topology.Snapshot) error` | Публикует неизменяемый снимок. Проверки ревизии нет: монотонность гарантирует `graph` |
 | `graphReader` (query) | `Latest(ctx) (*topology.Snapshot, error)` | Всегда возвращает снимок; до первого изменения графа — пустой с ревизией 0 и `generated_at` момента старта |
@@ -474,7 +474,7 @@ stateDiagram-v2
 | декодирование в полёте | 2 соединения × 16 потоков × 4 MiB wire × 3 (A4) | | ≈ 384 MiB | ≈ 384 MiB |
 | **итого** | | | **≈ 601 MiB** | **≈ 962 MiB** |
 
-Нижняя граница `journalMaxBytes` = 48 MiB: запрос 4 МиБ вмещает около 140 000 минимальных спанов (~30 B на проводе), это ≈ 35 MiB фиксированной части плюс ≤ 4 MiB строк. Поэтому при валидированном конфиге любой одиночный запрос помещается в пустой журнал, и `ErrBatchTooLarge` недостижим. Граница подтверждается бенчмарком в срезе 4a (строка «I5, память» в таблице тестов).
+Нижняя граница `journalMaxBytes` = 48 MiB: запрос 4 МиБ вмещает около 140 000 минимальных спанов (~30 B на проводе), это ≈ 35 MiB фиксированной части плюс ≤ 4 MiB строк. Поэтому при валидированном конфиге любой одиночный запрос помещается в пустой журнал, и `ErrBatchTooLarge` недостижим. Граница подтверждается бенчмарком в срезе 4b, когда появится кодирование OTLP (строка «I5, память» в таблице тестов).
 
 В манифесте: `GOMEMLIMIT=1280MiB`, limits 2 GiB / 2 CPU (как в NFR-PERF-001). Худший случай при конфиге по умолчанию (≈ 962 MiB) ниже порога валидатора 0,85 × `GOMEMLIMIT` (≈ 1088 MiB) с запасом ≈ 126 MiB. При `GOMEMLIMIT=1GiB` порог (≈ 870 MiB) был бы превышен, а измеренные tombstones и граф оказались тяжелее оценок, поэтому лимит поднят. Между `GOMEMLIMIT` и лимитом пода остаётся 768 MiB на перерасход GC, стеки горутин и память вне кучи.
 
@@ -585,7 +585,7 @@ stateDiagram-v2
 | Цель | Команда |
 |---|---|
 | Всё, что гоняет CI | `make verify` (mod-check, lint, test-race, cover-check, vuln, proto-lint, gen-check) |
-| Стресс конкурентности | `make test-stress` (`-race -count=200` для `processing`, `memjournal`, `memgraph`; ночная job CI и перед тегом) |
+| Стресс конкурентности | `make test-stress` (`-race -count=200` для `ingest`, `processing`, `memjournal`, `memgraph`; ночная job CI и перед тегом) |
 | Генерация proto | `make generate` |
 | Совместимость API | `make proto-breaking` (против последнего тега `v*`) |
 | Локальный запуск | `go run ./cmd/faultline all` |
@@ -640,14 +640,114 @@ stateDiagram-v2
 | 1 | `telemetry` (`Span`, `NewSpan` с лимитами строк и UTF-8, `ServiceRef`, `Batch.Footprint`) + `matcher.Matcher` с tombstones и вытеснением | I1 property, таблица сопоставления, `failed` обеих сторон |
 | 2 | `graph.Graph`, `Builder`, `Snapshot` (публичные поля, id в рёбрах), `GraphStats`, ревизия, лимиты, `unanswered_*` | I3, оракул пар, ревизия при изменении любого счётчика, бенчмарк heap на элемент |
 | 3 | `graph.proto` + buf + `connectapi.GetGraph` + `memgraph` + grpcreflect | `buf lint`; gRPC и Connect-JSON дают одинаковый ответ; размер ответа на лимитах |
-| 4a | `ingest.AcceptBatch` + `memjournal` (кредит байтов, `Receive(max)`, `Release`) | валидация, I4 «всё или ничего» на уровне use case, `ErrBatchTooLarge`, бенчмарк нижней границы журнала |
-| 4b | `otlp.TraceReceiver`: маппинг pdata, карта ошибок, recovery, параметры gRPC-сервера; **replay-тест дампа** в `test/replay` | I4 с `RetryInfo`, `INVALID_ARGUMENT`, fuzz до маршалинга ответа, бенчмарк A4, replay = golden |
+| 4a | `ingest.AcceptBatch` + `memjournal` (кредит байтов, `Receive(limit)`, `Release`) | валидация, I4 «всё или ничего» на уровне use case, `ErrBatchTooLarge`, кредит возвращается при любой ошибке |
+| 4b | `otlp.TraceReceiver`: маппинг pdata, карта ошибок, recovery, параметры gRPC-сервера; **replay-тест дампа** в `test/replay` | I4 с `RetryInfo`, `INVALID_ARGUMENT`, fuzz до маршалинга ответа, бенчмарк A4, бенчмарк нижней границы журнала, replay = golden |
 | 5a | `processing.Pipeline` (итерации до 64 пакетов, `Publish` → `Release`) | I2 «k вызовов на пакет» под `test-stress`, бенчмарк итерации на 50 000 рёбер, goleak |
 | ✔ | **Контрольная точка 1:** OTLP → журнал → Pipeline → `GetGraph` в одном процессе (тест на настоящих компонентах, без `cmd/`) | |
 | 5b | `cmd/faultline`: конфиг, ctx-модель, жизненный цикл (Draining/Aborting), `/healthz`, лог `pipeline.stats` | e2e на `:0`, дренаж 1000 пакетов, `drain_incomplete`, неожиданный выход Pipeline → `UNAVAILABLE`, goleak |
 | 6 | `faultctl` + рендереры | golden DOT/JSON (`EmitUnpopulated`), злые имена, коды выхода, `WithReadMaxBytes` |
 | 7 | Dockerfile, манифесты, `make demo-1`, `hack/demo-check.sh` (ожидание готовности, опрос, списки, разбор `pipeline.stats`), `deploy/dev/README.md` | демо в kind проходит `required ⊆ граф ⊆ required ∪ optional` |
 | ✔ | **Контрольная точка 2 (15.11):** скелет ходит в kind | |
+
+### Срез 4a — Go-API (контракт тестов)
+
+Тесты среза написаны до прод-кода и компилируются только против этих имён. Изменение имени или сигнатуры — правка тестов в том же коммите.
+
+**`internal/application/ingest`**
+
+```go
+var (
+	ErrOverloaded    = errors.New(…) // нет кредита байтов или места в очереди: повтор имеет смысл
+	ErrBatchTooLarge = errors.New(…) // Footprint() больше полной ёмкости журнала: повтор не поможет
+	ErrUnavailable   = errors.New(…) // журнал закрыт
+)
+
+const MaxReasons = 16
+
+type SpanInput struct {
+	Resource resource.Resource
+	Fields   span.Fields
+}
+
+type AcceptResult struct {
+	Accepted int
+	Rejected int
+	Reasons  []string
+}
+
+type Stats struct {
+	AcceptedSpans       int64
+	RejectedSpans       int64
+	OverloadedResponses int64
+	TooLargeResponses   int64
+}
+
+type spanJournal interface {
+	Append(ctx context.Context, received batch.Batch) error
+}
+
+type clock interface {
+	Now() time.Time
+}
+
+func NewAcceptBatch(journal spanJournal, clock clock) *AcceptBatch
+func (a *AcceptBatch) Execute(ctx context.Context, inputs []SpanInput) (AcceptResult, error)
+func (a *AcceptBatch) Stats() Stats
+```
+
+Контракт `Execute`:
+- каждый вход проходит `span.New`; валидные спаны в порядке входа — один `batch.NewOwning(valid, clock.Now())` и один `Append`. `NewOwning` забирает срез без копии (`batch.New` = копия + `NewOwning`): срез `valid` собран заново и use case его больше не трогает, а копия стоила ≈ 10 MB на запрос из 140 000 спанов. Правило «пустой пакет запрещён» живёт только в домене (`batch.ErrEmpty`);
+- `Reasons` — `err.Error()` отказов `span.New`, без повторов, в порядке первого появления, не больше `MaxReasons`; `Rejected` считает все отказы. Дедупликация — `slices.Contains` по срезу ≤ `MaxReasons`, а не `lo.Uniq`: замер на 140 000 отказах — 0,6 µs и 0,5 KiB против 2,4 ms и 9 MiB у `lo.Uniq` (map на весь вход);
+- ни одного валидного спана (в том числе пустой вход) → `Append` не вызывается, ошибки нет;
+- ошибка `Append` → нулевой `AcceptResult` и ошибка с `%w`: из запроса ничего не поставлено, спаны запроса не входят ни в `AcceptedSpans`, ни в `RejectedSpans` (клиент повторит весь запрос);
+- `Stats` — атомарные счётчики `int64` (как `partial_success.rejected_spans` в OTLP; переход `int → int64` без проверки переполнения, в отличие от `uint64`): `AcceptedSpans`/`RejectedSpans` растут только при успешном ответе, `OverloadedResponses` — на `ErrOverloaded`, `TooLargeResponses` — на `ErrBatchTooLarge`. Безопасен для конкурентных `Execute`. Каждое поле атомарно, но `Stats` в целом — не согласованный снимок: для лога этого достаточно.
+
+**`internal/application/processing`** (в срезе 4a — только то, что нужно журналу)
+
+```go
+var ErrFeedClosed = errors.New(…)
+
+type Delivery interface {
+	Batch() batch.Batch
+	Release()
+}
+```
+
+**`internal/infrastructure/memjournal`**
+
+```go
+var (
+	ErrInvalidLimits = errors.New(…)
+	ErrInvalidMax    = errors.New(…)
+)
+
+type Limits struct {
+	MaxBytes   int64
+	MaxBatches int
+}
+
+type Stats struct {
+	Bytes   int64
+	Batches int
+	Spans   int
+}
+
+func New(limits Limits) (*Journal, error)
+func (j *Journal) Append(ctx context.Context, received batch.Batch) error
+func (j *Journal) Receive(ctx context.Context, limit int) ([]processing.Delivery, error)
+func (j *Journal) Close()
+func (j *Journal) Stats() Stats
+```
+
+Контракт:
+- `New`: `MaxBytes < 1` или `MaxBatches < 1` → `ErrInvalidLimits`. Диапазоны из таблицы «Конфигурация» проверяет `cmd/`, не журнал;
+- `Append` не блокируется. Порядок проверок: `Footprint() > MaxBytes` → `ingest.ErrBatchTooLarge`; закрыт → `ingest.ErrUnavailable`; ошибка ctx; нет кредита байтов или очередь полна (`MaxBatches` ограничивает **ожидающие в очереди** пакеты) → `ingest.ErrOverloaded`. При любой ошибке кредит возвращён, журнал не изменился;
+- `Receive(ctx, limit)`: `limit < 1` → `ErrInvalidMax`; ждёт хотя бы один пакет, затем без ожидания забирает уже готовые, всего ≤ `limit`, в порядке `Append`; отмена ctx во время ожидания → ошибка ctx; закрыт и пуст → `processing.ErrFeedClosed`, а закрыт и не пуст — сначала остаток;
+- `Release` возвращает кредит байтов; повторный `Release` той же доставки ничего не делает (не паникует и не возвращает кредит дважды);
+- `Close` идемпотентен, безопасен параллельно с `Append`: каждый `Append`, вернувший `nil`, будет выдан `Receive` до `ErrFeedClosed`;
+- `Stats` — **неосвобождённые** пакеты (в очереди и выданные без `Release`): байты по `Footprint()`, число пакетов, число спанов. Это и глубина журнала для `pipeline.stats`, и точный остаток для `lifecycle.drain_incomplete`.
+
+Бенчмарк нижней границы `journalMaxBytes` («запрос 4 МиБ минимальных спанов») переносится в срез 4b: число спанов в 4 МиБ даёт только настоящее кодирование OTLP (`pdata`), а `pdata` приходит в 4b.
 
 ## Критерии приёмки (Definition of Done шага)
 
@@ -704,7 +804,7 @@ stateDiagram-v2
 | `connectrpc.com/connect` | Apache 2.0 | API (порт 8080); HTTP/2 без TLS — штатный `http.Protocols` (Go 1.24+), без `x/net/h2c` |
 | `connectrpc.com/grpcreflect` | Apache 2.0 | Reflection для `grpcurl` (FR-API-001) |
 | `golang.org/x/net/netutil` | BSD-3 | `LimitListener` для OTLP (I5) |
-| `golang.org/x/sync` (`semaphore`) | BSD-3 | Кредит байтов журнала (жизненный цикл — `sync.WaitGroup.Go`, без `errgroup`, см. «Жизненный цикл») |
+| `golang.org/x/sync` (`semaphore`) | BSD-3 | Ограничение одновременных `GetGraph` в `connectapi/limit` (журнал считает кредит под своим мьютексом; жизненный цикл — `sync.WaitGroup.Go`, без `errgroup`, см. «Жизненный цикл») |
 | `go.opentelemetry.io/otel` (+ `sdk`, `otlptracegrpc`) | Apache 2.0 | Self-tracing, по умолчанию no-op |
 | `github.com/spf13/cobra` | Apache 2.0 | CLI `faultline`, `faultctl` |
 | `github.com/google/go-cmp`, `go.uber.org/goleak` | BSD-3 / MIT | Тесты |

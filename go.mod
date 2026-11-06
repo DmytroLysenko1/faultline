@@ -16,6 +16,7 @@ require (
 	connectrpc.com/grpcreflect v1.3.1
 	github.com/google/go-cmp v0.7.0
 	github.com/samber/lo v1.53.0
+	go.uber.org/goleak v1.3.0
 	golang.org/x/sync v0.24.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261104224025-d1e00e9f33ab
 	google.golang.org/protobuf v1.36.12
