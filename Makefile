@@ -91,12 +91,15 @@ else
 endif
 
 PROBE_PACKAGES := ./internal/interfaces/otlp/decodelimit/...
+DRAIN_PACKAGES := ./test/pipeline/...
 
 .PHONY: test-probes
-test-probes: ## Heap probes of the OTLP decode limit (without -race: they measure memory, not concurrency)
+test-probes: ## Heap and time probes without -race: OTLP decode limit, then pipeline drain on its own CPU
 	go test -count=1 -run 'TestWeightBounds' $(PROBE_PACKAGES)
+	go test -count=1 -run 'TestDrainFullJournal' $(DRAIN_PACKAGES)
 
-STRESS_PACKAGES := ./internal/application/ingest/... ./internal/infrastructure/memjournal/... ./internal/infrastructure/memgraph/...
+STRESS_PACKAGES := ./internal/application/ingest/... ./internal/application/processing/... \
+	./internal/infrastructure/memjournal/... ./internal/infrastructure/memgraph/... ./test/pipeline/...
 STRESS_COUNT := 200
 
 .PHONY: test-stress
