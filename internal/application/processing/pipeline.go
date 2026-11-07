@@ -9,7 +9,10 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 )
 
-const MaxBatchesPerIteration = 64
+const (
+	MaxBatchesPerIteration = 64
+	HeldSnapshots          = 1
+)
 
 type spanFeed interface {
 	Receive(ctx context.Context, limit int) ([]Delivery, error)

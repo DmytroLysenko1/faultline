@@ -91,11 +91,14 @@ else
 endif
 
 PROBE_PACKAGES := ./internal/interfaces/otlp/decodelimit/...
+BUDGET_PACKAGES := ./internal/domain/topology/... ./internal/infrastructure/memjournal/... \
+	./internal/interfaces/connectapi/...
 DRAIN_PACKAGES := ./test/pipeline/...
 
 .PHONY: test-probes
-test-probes: ## Heap and time probes without -race: OTLP decode limit, then pipeline drain on its own CPU
+test-probes: ## Heap and time probes without -race: decode limit, memory budget model, then pipeline drain
 	go test -count=1 -run 'TestWeightBounds' $(PROBE_PACKAGES)
+	go test -count=1 -run 'TestWorstCaseHeap|TestViewHeap' $(BUDGET_PACKAGES)
 	go test -count=1 -run 'TestDrainFullJournal' $(DRAIN_PACKAGES)
 
 STRESS_PACKAGES := ./internal/application/ingest/... ./internal/application/processing/... \

@@ -14,6 +14,8 @@ var (
 	ErrNoSnapshot  = errors.New("no snapshot published")
 )
 
+const HeldSnapshots = 1
+
 type Store struct {
 	Current atomic.Pointer[topology.Snapshot]
 }

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"math"
@@ -28,7 +27,6 @@ import (
 	"google.golang.org/protobuf/testing/protocmp"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/query"
-	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/graph"
@@ -44,9 +42,6 @@ const (
 	maxConfiguredNodes  = 20_000
 	maxConfiguredEdges  = 100_000
 	slowClientNodes     = 10_000
-	maxNamespaceBytes   = 255
-	maxNameBytes        = 255
-	nodeSuffixDigits    = 5
 	shortTimeout        = 50 * time.Millisecond
 	slowClientTimeout   = 500 * time.Millisecond
 	enterTimeout        = 10 * time.Second
@@ -714,17 +709,10 @@ func checkWireSize(t *testing.T, got *faultlinev1.Graph) {
 	}
 }
 
-func worstService(index int) resource.ServiceRef {
-	return resource.ServiceRef{
-		Namespace: strings.Repeat(`"`, maxNamespaceBytes),
-		Name:      strings.Repeat(`"`, maxNameBytes-nodeSuffixDigits) + fmt.Sprintf("%0*d", nodeSuffixDigits, index),
-	}
-}
-
 func worstNodes(count int) []graph.Node {
 	nodes := make([]graph.Node, 0, count)
 	for i := range count {
-		node := graph.NewNode(worstService(i))
+		node := graph.NewNode(telemetrytest.WorstService(i))
 		node.UnansweredCalls = math.MaxUint64
 		node.UnansweredFailedCalls = math.MaxUint64
 		nodes = append(nodes, node)

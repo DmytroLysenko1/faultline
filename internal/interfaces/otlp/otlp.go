@@ -3,6 +3,8 @@ package otlp
 import (
 	"log/slog"
 	"time"
+
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/decodelimit"
 )
 
 const (
@@ -22,6 +24,7 @@ const (
 	RetryDelay            = time.Second
 	LogInterval           = 10 * time.Second
 	MaxErrorMessageBytes  = 1 << 10
+	MaxSpansPerRequest    = MaxDecodedBytes / decodelimit.MinSpanWeight
 )
 
 type clock interface {
@@ -54,4 +57,8 @@ func DefaultOptions(logger *slog.Logger, clock clock) Options {
 		Clock:  clock,
 		Logger: logger,
 	}
+}
+
+func WorstHeapBytes() int64 {
+	return MaxConnections * MaxConcurrentStreams * MaxRecvMsgBytes * ExportHeapRatio
 }

@@ -21,6 +21,8 @@ const (
 	slotGrowthFactor    = 2
 )
 
+const MinSpanWeight = ownSpan + pointerSlot*slotGrowthFactor + pointerSlot>>slotSlackShift
+
 type Limits struct {
 	MaxDecodedBytes int64
 	MaxNestingDepth int

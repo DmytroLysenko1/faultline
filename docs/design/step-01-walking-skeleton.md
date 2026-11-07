@@ -463,22 +463,27 @@ stateDiagram-v2
 
 Оценки на элемент — верхние оценки по структуре данных (map + элемент списка + значение), а не `unsafe.Sizeof`: `map[CallKey]*list.Element` плюс `list.Element` (48 B) плюс значение половинки дают ≈ 180 B. Точные числа даёт бенчмарк «heap на элемент» (100 000 половинок, 1 000 000 tombstones, граф на лимитах) в срезах 1–2; таблица обновляется измеренными значениями до среза 5.
 
-| Структура | Лимит (по умолчанию) | Оценка на элемент | Типично | Худший случай |
-|---|---|---|---|---|
-| журнал | `journalMaxBytes` = 64 MiB по `Batch.Footprint()` | учёт точный: фиксированная часть спана ≤ 256 B (тест) + различные строки | 64 MiB | 64 MiB |
-| буфер ожидания | 100 000 половинок | ≈ 180 B + строки (≤ 826 B, если у каждой половинки уникальный сервис) | ≈ 17 MiB | ≈ 96 MiB |
-| tombstones | 1 000 000 ключей | ≈ 88 B, измерено бенчмарком (ring-буфер + `map[CallKey]Scope`) | ≈ 84 MiB | ≈ 84 MiB |
-| граф | 10 000 узлов, 50 000 рёбер | ≈ 247 B на ребро вместе с его узлами и view, измерено бенчмарком; плюс строки и id узла ≤ 2 KiB | ≈ 12 MiB | ≈ 30 MiB |
-| снимки | ≤ 6 одновременно живых: опубликованный, строящийся и по одному у каждого из ≤ 4 одновременных `GetGraph` | ≈ 5 MiB на снимок: строки общие с графом, копируются только структуры | ≈ 30 MiB | ≈ 30 MiB |
-| маршалинг ответов API | ≤ 4 одновременных `GetGraph` × (дерево proto-объектов + буфер маршалинга + буфер gzip) | дерево ≈ 5,5 MiB на запрос при лимитах по умолчанию (измерено; строки не копируются); худший ответ при лимитах по умолчанию: proto ≈ 21 MiB, protojson ≈ 31 MiB; буфер gzip ≤ размера ответа (несжимаемые строки) | ≈ 10 MiB | ≈ 270 MiB |
-| запросы в полёте (декодирование + срез валидных спанов) | 1 соединение × 10 потоков × 4 MiB wire × `ExportHeapRatio` 11; дерево ограничено `MaxDecodedBytes` = 32 MiB до декодирования (срез 4b, D5) | ≤ 42,3 MiB на запрос по построению, 11,4 MiB на демо-запрос | ≈ 114 MiB | ≈ 440 MiB |
-| **итого** | | | **≈ 331 MiB** | **≈ 1014 MiB** |
+Худший случай считает формула, а не эта таблица: каждый пакет отдаёт свой вклад (`WorstCaseHeapBytes`), `cmd/faultline` складывает их и сравнивает с пределом при старте (срез 5b-1, D1). Стоимости элементов измерены в установившемся режиме с вытеснением и закреплены пробами в своих пакетах. Вклады при конфиге по умолчанию:
+
+| Вклад | Лимит (по умолчанию) | Худший случай |
+|---|---|---|
+| журнал | `journalMaxBytes` = 64 MiB по `Batch.Footprint()` + канал на 4096 записей | 64,2 MiB |
+| буфер ожидания | 100 000 половинок × (240 + 512) B | 71,7 MiB |
+| tombstones | 1 000 000 × (104 + 16) B | 114,4 MiB |
+| граф | 10 000 узлов, 50 000 рёбер (248 B на ребро, 2 264 B на узел со строками) | 33,4 MiB |
+| снимки | 3 view: второй view графа на время `CurrentView`, опубликованный (`memgraph`), строящийся (Pipeline) | 8,7 MiB |
+| `Builder.Apply` | самый большой пакет ≈ 148 000 спанов × 104 B | 14,7 MiB |
+| ответы API | 4 одновременных `GetGraph` × (удерживаемый снимок + дерево + 2,5 × ответ JSON на худших строках) | 343,3 MiB |
+| запросы в полёте | 1 соединение × 10 потоков × 4 MiB × `ExportHeapRatio` 11 (срез 4b, D3) | 440 MiB |
+| **итого** | | **≈ 1 090,5 MiB** |
+
+Типичный случай на демо — ≈ 300 MiB: строки короткие, граф 14 узлов, ответ — килобайты.
 
 Нижняя граница `journalMaxBytes` = 48 MiB: самый большой запрос минимальных спанов ≤ 4 МиБ — 123 360 спанов по 34 B на проводе (замер 4b), `Footprint()` = 30,1 MiB. Поэтому при валидированном конфиге любой одиночный запрос помещается в пустой журнал, и `ErrBatchTooLarge` недостижим. Граница подтверждается тестом в `test/ingest` (срез 4b).
 
-В манифесте: `GOMEMLIMIT=1280MiB`, limits 2 GiB / 2 CPU (как в NFR-PERF-001). Худший случай при конфиге по умолчанию (≈ 1014 MiB) ниже порога валидатора 0,85 × `GOMEMLIMIT` (≈ 1088 MiB) с запасом ≈ 74 MiB. При `GOMEMLIMIT=1GiB` порог (≈ 870 MiB) был бы превышен, поэтому лимит поднят. Между `GOMEMLIMIT` и лимитом пода остаётся 768 MiB на перерасход GC, стеки горутин и память вне кучи.
+В манифесте: `GOMEMLIMIT=1408MiB`, limits 2 GiB / 2 CPU (как в NFR-PERF-001). Худший случай при конфиге по умолчанию (≈ 1 090,5 MiB) ниже порога валидатора 0,85 × `GOMEMLIMIT` (≈ 1 197 MiB). При 1280 MiB порог (≈ 1 088 MiB) был бы превышен, поэтому предел поднят (срез 5b-1, D5). Между `GOMEMLIMIT` и лимитом пода остаётся 640 MiB: превышение мягкого предела под давлением GC, бинарник и память вне Go (стеки уже внутри `GOMEMLIMIT`). Без `GOMEMLIMIT` процесс ставит предел сам: `memory.max × 1408 / 2048` в контейнере, 1408 MiB вне его; `GOMEMLIMIT=off` и `GOMEMLIMIT` больше `memory.max` — отказ старта.
 
-**Конфиг не может выйти за бюджет.** Валидатор конфига (`cmd/faultline`, этап Starting) считает по формуле этой таблицы худший случай памяти и худший размер ответа `GetGraph` для заданных лимитов и отказывается стартовать (exit 2 с перечнем вкладов), если память > 0,85 × `GOMEMLIMIT` или ответ > 80 MiB (`SendMaxBytes`). Поэтому поднять `FAULTLINE_GRAPH_MAX_NODES` так, что `GetGraph` навсегда перестанет помещаться в ответ, нельзя: процесс просто не запустится с понятным сообщением. Перегрузка проявляется как `RESOURCE_EXHAUSTED`, а не как OOMKill (FR-ING-005). Соединения сверх одного ждут в backlog листенера; мёртвые и простаивающие закрывает серверный keepalive (срез 4b, D2). В шаге 1 единственный клиент — Collector OTel Demo (одно соединение).
+**Конфиг не может выйти за бюджет.** Валидатор конфига (`cmd/faultline`, этап Starting) складывает вклады пакетов для заданных лимитов и отказывается стартовать (exit 2 с перечнем вкладов по убыванию), если память > 0,85 × `GOMEMLIMIT`. Размер ответа `GetGraph` при старте не проверяется: диапазоны `FAULTLINE_GRAPH_MAX_NODES` и `FAULTLINE_GRAPH_MAX_EDGES` выбраны так, что худший ответ (62 MiB) меньше `SendMaxBytes` (80 MiB), и это закрепляет тест (срез 5b-1, D4). Перегрузка проявляется как `RESOURCE_EXHAUSTED`, а не как OOMKill (FR-ING-005). Соединения сверх одного ждут в backlog листенера; мёртвые и простаивающие закрывает серверный keepalive (срез 4b, D2). В шаге 1 единственный клиент — Collector OTel Demo (одно соединение).
 
 ## Наблюдаемость
 
@@ -515,6 +520,7 @@ stateDiagram-v2
 | `FAULTLINE_GRAPH_MAX_EDGES` | `50000` | 1 … 100 000 |
 | `FAULTLINE_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `FAULTLINE_SELF_TRACING_ENDPOINT` | пусто (no-op) | `host:port`; трассируется только путь API (см. «Self-tracing») |
+| `GOMEMLIMIT` (рантайм Go) | `memory.max × 1408 / 2048` в контейнере, иначе `1408MiB` | число с единицей рантайма; `off` и значение больше `memory.max` — отказ старта (срез 5b-1, D5) |
 
 Диапазоны — грубая граница для каждой переменной; комбинацию дополнительно проверяет валидатор худшего случая (см. «Бюджет памяти»). Тест: табличный, включая комбинацию, где каждая переменная в диапазоне, а сумма вкладов превышает 0,85 × `GOMEMLIMIT` → exit 2.
 
@@ -533,7 +539,7 @@ stateDiagram-v2
 `make demo-1` — одна команда, идемпотентная:
 1. `kind-up` (профиль `deploy/kind/kind-config.yaml`; если OTel Demo не помещается в Docker VM, то однонодовый `deploy/kind/kind-config-demo.yaml`, Открытый вопрос 1). Образ kind-ноды закреплён по digest в обоих профилях; если существующий кластер создан с другим профилем, `kind-up` пересоздаёт его, а не переиспользует молча.
 2. `make image`: многостадийный `Dockerfile`, `CGO_ENABLED=0`, `gcr.io/distroless/static-debian12:nonroot`, тег `faultline:dev`; `kind load docker-image`.
-3. `kubectl apply -k deploy/dev/skeleton`: Namespace `faultline`, Deployment `faultline all` (`runAsNonRoot`, `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`, `seccompProfile: RuntimeDefault`, limits 2Gi/2CPU, `GOMEMLIMIT=1280MiB`, readiness `GET /healthz`), Service с портами 4317/8080.
+3. `kubectl apply -k deploy/dev/skeleton`: Namespace `faultline`, Deployment `faultline all` (`runAsNonRoot`, `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`, `seccompProfile: RuntimeDefault`, limits 2Gi/2CPU, `GOMEMLIMIT=1408MiB`, readiness `GET /healthz`), Service с портами 4317/8080.
 4. `helm upgrade --install -n otel-demo --create-namespace` OTel Demo **зафиксированной версии чарта** с `deploy/dev/otel-demo-values.yaml`:
    - выключены Jaeger, Grafana, Prometheus, OpenSearch;
    - в Collector добавлен экспортер `otlp/faultline`: `endpoint: faultline.faultline.svc:4317`, `tls.insecure: true`, `timeout: 5s` (явно, чтобы окно повторов было известно, см. «Tombstones»), `retry_on_failure.enabled: true`, `sending_queue.enabled: true`;
@@ -645,7 +651,9 @@ stateDiagram-v2
 | 4b | `otlp.TraceReceiver`: маппинг pdata, карта ошибок, recovery, параметры gRPC-сервера; **replay-тест дампа** в `test/replay` | I4 с `RetryInfo`, `INVALID_ARGUMENT`, fuzz до маршалинга ответа, бенчмарк A4, бенчмарк нижней границы журнала, replay = golden |
 | 5a | `processing.Pipeline` (итерации до 64 пакетов, `Publish` → `Release`) | I2 «k вызовов на пакет» под `test-stress`, бенчмарк итерации на 50 000 рёбер, goleak |
 | ✔ | **Контрольная точка 1:** OTLP → журнал → Pipeline → `GetGraph` в одном процессе (тест на настоящих компонентах, без `cmd/`) | |
-| 5b | `cmd/faultline`: конфиг, ctx-модель, жизненный цикл (Draining/Aborting), `/healthz`, лог `pipeline.stats` | e2e на `:0`, дренаж 1000 пакетов, `drain_incomplete`, неожиданный выход Pipeline → `UNAVAILABLE`, goleak |
+| 5b-1 | `cmd/faultline`: конфиг из env, валидатор худшего случая памяти и размера ответа | таблица сообщений, golden вкладов, пробы модели, коды 0/2 |
+| 5b-2 | `run`, ctx-модель, жизненный цикл (Draining/Aborting), `/healthz`, коды выхода | e2e на `:0`, дренаж 1000 пакетов, `drain_incomplete`, неожиданный выход Pipeline → `UNAVAILABLE`, goleak |
+| 5b-3 | лог `pipeline.stats`, `lifecycle.state`, self-tracing no-op | фейковые часы, запись в простое, нет спанов на пути приёма |
 | 6 | `faultctl` + рендереры | golden DOT/JSON (`EmitUnpopulated`), злые имена, коды выхода, `WithReadMaxBytes` |
 | 7 | Dockerfile, манифесты, `make demo-1`, `hack/demo-check.sh` (ожидание готовности, опрос, списки, разбор `pipeline.stats`), `deploy/dev/README.md` | демо в kind проходит `required ⊆ граф ⊆ required ∪ optional` |
 | ✔ | **Контрольная точка 2 (15.11):** скелет ходит в kind | |
@@ -769,7 +777,7 @@ A4 («≤ 3×») держится на реальном трафике и **не
 
 - **D1 — приём через источник спанов, без промежуточного среза.** `AcceptBatch.Execute(ctx, spans SpanSource)`: `Len()` — подсказка ёмкости (без неё рост `append` удваивает пик: замер 47 MB аллокаций роста на минимальный запрос); правильность от неё не зависит, неверное значение стоит только аллокаций, а сверху её ограничивает D5, `All()` — ленивый `iter.Seq2[resource.Resource, span.Fields]` прямо по `pdata`. Тип `ingest.SpanInput` удаляется. Контракт порта: `All()` проходится ровно один раз и синхронно, до единственного `Append`; после возврата `Execute` не хранит ни `Resource`, ни `Fields`. Поэтому «всё или ничего» (I4) не меняется.
 - **D2 — одно соединение, 10 потоков, серверный keepalive.** `MaxConnections = 1`, `MaxConcurrentStreams = 10` = `sending_queue.num_consumers` Collector по умолчанию (срез 7 пишет это значение в values явно): Collector не ждёт квоту потоков на клиенте, перегрузка остаётся `RESOURCE_EXHAUSTED`. Чтобы единственный слот не держало мёртвое или забытое соединение (`LimitListener` не отказывает, а держит в backlog): `keepalive.ServerParameters{Time: 30s, Timeout: 10s, MaxConnectionIdle: 1m, MaxConnectionAge: 5m, MaxConnectionAgeGrace: 10s}` и `EnforcementPolicy{MinTime: 10s, PermitWithoutStream: true}` — полуоткрытое соединение закрывается по ping-таймауту за ≤ 40 s, простаивающее (ручной `telemetrygen`) — за 1 min, а соединение с зависшим потоком (idle-таймер `grpc` не тикает, пока открыт хоть один поток) — по возрасту за ≤ 5 min 10 s. Grace 10 s больше таймаута экспортёра Collector (5 s), так что ротация не обрывает запросы старого соединения. Новое соединение ждёт в backlog, пока старое не закроется: обычно сразу после завершения его потоков, в худшем случае (зависший поток) до 10 s — экспорты этого окна получат `DEADLINE_EXCEEDED`, Collector их повторит. `PermitWithoutStream` не даёт клиенту с `permit_without_stream: true` получить GOAWAY `too_many_pings`. Ручной `telemetrygen` при подключённом Collector ждёт в backlog — ограничение шага 1, в `deploy/dev/README.md`. Шаг 8 (много клиентов) вводит admission control до декодирования.
-- **D3 — бюджет по построению, а не по удачной форме запроса.** Благодаря D5 дерево `pdata` одного запроса не больше `MaxDecodedBytes` = 32 MiB, а валидных спанов не больше `MaxDecodedBytes / 226 B` (208 + 2,25 × 8) ≈ 148 000, их срез ≤ 148 000 × 72 B ≈ 10,2 MiB. Пик на запрос: в кодеке — 2 × 4 МиБ кадров + ≤ 32 MiB дерева = 40 MiB; в хэндлере — ≤ 32 + 10,3 = 42,3 MiB. `ExportHeapRatio = 11` (42,3 / 4 = 10,6 с запасом). Строка «запросы в полёте» = `MaxConnections × MaxConcurrentStreams × MaxRecvMsgBytes × ExportHeapRatio` = 1 × 10 × 4 МиБ × 11 = 440 MiB; итог худшего случая ≈ 1014 MiB < 1088 MiB, запас ≈ 74 MiB. Типично (демо, 2,85×) ≈ 114 MiB. Валидатор `cmd/` читает `otlp.MaxConnections`, `otlp.MaxConcurrentStreams`, `otlp.MaxRecvMsgBytes`, `otlp.ExportHeapRatio`, а не их копии.
+- **D3 — бюджет по построению, а не по удачной форме запроса.** Благодаря D5 дерево `pdata` одного запроса не больше `MaxDecodedBytes` = 32 MiB, а валидных спанов не больше `MaxDecodedBytes / 226 B` (208 + 2,25 × 8) ≈ 148 000, их срез ≤ 148 000 × 72 B ≈ 10,2 MiB. Пик на запрос: в кодеке — 2 × 4 МиБ кадров + ≤ 32 MiB дерева = 40 MiB; в хэндлере — ≤ 32 + 10,3 = 42,3 MiB. `ExportHeapRatio = 11` (42,3 / 4 = 10,6 с запасом). Строка «запросы в полёте» = `MaxConnections × MaxConcurrentStreams × MaxRecvMsgBytes × ExportHeapRatio` = 1 × 10 × 4 МиБ × 11 = 440 MiB; итог худшего случая — см. «Бюджет памяти» (срез 5b-1 уточнил модель). Типично (демо, 2,85×) ≈ 114 MiB. Валидатор `cmd/` читает `otlp.MaxConnections`, `otlp.MaxConcurrentStreams`, `otlp.MaxRecvMsgBytes`, `otlp.ExportHeapRatio`, а не их копии.
 - **D5 — предел дерева до декодирования.** Серверный кодек (`grpc.ForceServerCodecV2`, только на сервере OTLP) склеивает кадры (`MaterializeToBuffer`, как кодек `pdata`), одним проходом `protowire` без аллокаций считает **вес** запроса — верхнюю оценку heap, который построит `pdata` v1.70, по его настоящему устройству (`generated_proto_*.go`):
   - **собственная аллокация** сообщения, хранимого по указателю, с округлением до класса размеров Go: `ExportTraceServiceRequest` 32, `ResourceSpans` 128, `ScopeSpans` 112, `Span` 208, `SpanEvent` 64, `SpanLink` 80, `EntityRef` 80 B; сообщения по значению (`Resource`, `InstrumentationScope`, `Status`, `KeyValue`, `AnyValue` в массиве) своей аллокации не имеют;
   - **слот в срезе** родителя × 2,25 — запас ёмкости `append` (до 2×) и округление массива-подложки до класса размеров (до 12,5 %): указатель 8 B, `KeyValue` 40 B, `AnyValue` 16 B, строка в `[]string` 16 B;
@@ -972,7 +980,7 @@ func UnaryInterceptor(logger *slog.Logger) grpc.UnaryServerInterceptor
 - потолок на графе 50 000 рёбер — ≈ 64 пакета за ≈ 17 ms ≈ 3 700 пакетов/с; выше журнал заполняется, и `Append` отвечает `RESOURCE_EXHAUSTED` (перегрузка видна клиенту, память не растёт). Задержка видимости под нагрузкой — одна итерация (≈ 17 ms + `Apply`);
 - на графе демо (14 узлов, 20 рёбер) снимок стоит микросекунды.
 
-**Известная цена, без изменения в шаге 1.** На графе 50 000 рёбер под постоянным потоком пересборка снимка занимает до одного ядра и даёт до ≈ 280 MB/с мусора (58 снимков/с × 4,8 MB). Живой heap при этом не растёт: снимок живёт, пока на него ссылаются `memgraph` или `GetGraph` (≤ 6, строка «снимки» в I5); дополнительно на время `CurrentView` сосуществуют старый и новый view графа (≈ 2 × 2,4 MB) — в запасе бюджета (≈ 74 MiB). Кандидаты оптимизации к нагрузочному тесту NFR-PERF-001 (шаг 6): отсортированный view, поддерживаемый инкрементально; снимок без изменения графа переиспользует срезы предыдущего (сейчас каждый снимок — своя копия, I2).
+**Известная цена, без изменения в шаге 1.** На графе 50 000 рёбер под постоянным потоком пересборка снимка занимает до одного ядра и даёт до ≈ 280 MB/с мусора (58 снимков/с × 4,8 MB). Живой heap при этом не растёт: снимок живёт, пока на него ссылаются `memgraph` или `GetGraph` и Pipeline (строка «снимки» в I5, где учтён и второй view графа на время `CurrentView`). Кандидаты оптимизации к нагрузочному тесту NFR-PERF-001 (шаг 6): отсортированный view, поддерживаемый инкрементально; снимок без изменения графа переиспользует срезы предыдущего (сейчас каждый снимок — своя копия, I2).
 
 **Решения**
 
@@ -1023,10 +1031,102 @@ func (p *Pipeline) Run(ctx context.Context) error
 
 **Makefile:** описание цели `test-probes` → «замеры heap и времени без `-race`»; `STRESS_PACKAGES` += `./internal/application/processing/...` и `./test/pipeline/...`; проба дренажа — отдельным вызовом `go test -count=1 -run TestDrainFullJournal ./test/pipeline/...` после проб `decodelimit`, чтобы они не делили CPU и GC (в `make test` она идёт вместе с остальными пакетами; предел проверяет именно `test-probes`); измеренное на CI время записывается сюда при приёмке среза.
 
+### Срез 5b-1 — конфиг и бюджет памяти: решения и Go-API (контракт тестов)
+
+Ред. 4 (по реализации): пробы поправили две стоимости — узел графа 216 B, а не 200; временные срезы `Apply` теперь выделяются сразу под пакет (104 B на спан, без роста `append`). Ред. 3: учтены три круга ревью спеки (pocock, osmani, pstack) и замер настоящего хэндлера `GetGraph`. Ред. 1 ошиблась в сложении; ред. 2 занизила память ответа API (2 × ответ вместо 2,5 × при замере 2,3 ×) и временные срезы `Apply` (8 вместо 17 MiB) — с исправленной моделью конфиг по умолчанию вышел за порог при `GOMEMLIMIT` = 1280 MiB, поэтому предел поднят до 1408 MiB (решение пользователя, D5).
+
+Срез 5b разрезан на три части по риску: **5b-1** — конфиг из env и валидатор худшего случая памяти (без горутин); **5b-2** — `run`, жизненный цикл, `/healthz`, коды выхода; **5b-3** — `pipeline.stats`, `lifecycle.state`, self-tracing. Каждая заканчивается зелёным `make verify`.
+
+**Замеры до кода.**
+
+| Что | Значение |
+|---|---|
+| ответ `GetGraph` на худших строках (`"` × 255, счётчики `MaxUint64`), на узел / ребро | JSON 2 675 / 108,9 B; proto 2 072 / 30,3 B; дерево proto-объектов 168 / 72 B |
+| живой пик **сервера** на один `GetGraph` (10 000 узлов, 50 000 рёбер, клиент выбрасывает ответ, GC перед каждым отсчётом) | JSON + gzip 75,5 MiB, JSON 74,5 MiB, proto + gzip 27,3 MiB, proto 26,7 MiB — JSON: дерево 5 MiB + 2,3 × ответа (30,7 MiB) |
+| половинка в буфере ожидания (без строк), установившийся режим с вытеснением, N = 0,1 M … 1,8 M | до 233 B (бенчмарк без вытеснения — 180,5 B) |
+| tombstone, то же | до 102 B (без вытеснения — 87,9 B) |
+| ребро графа с view / узел графа (структура) | 247,2 B / ≈ 208 B (проба: 20 000 узлов с худшими строками — 2 256 B на узел вместе со строками) |
+| временные срезы `Builder.Apply` на самый большой пакет (≈ 148 000 спанов, срез 4b D3) | было: `participants` (`lo.FilterMap`, `len(spans)` × 32 B) + `calls` через `append` — проба 20,4 MB (138 B на спан: старый и новый массив живут вместе при росте); стало: `calls` выделяется сразу на `len(spans)` — 104 B на спан, 14,7 MiB |
+
+**Решения**
+
+- **D1 — каждый пакет считает только то, что держит сам.** Стоимость элемента живёт рядом со структурой и её пробой (как `otlp.ExportHeapRatio` в 4b); `cmd` только складывает. Ни один пакет не знает, сколько снимков держат другие. Константы — максимум замеров, округлённый вверх с запасом:
+
+  | Пакет | API | Формула |
+  |---|---|---|
+  | `topology/tombstone` | `WorstCaseHeapBytes(limit int) int64` | `limit × (104 + 16)` — запись плюс слот кольца на время последнего роста |
+  | `topology/matcher` | `Limits.WorstCaseHeapBytes() int64` | `MaxPending × (240 + 512)` (половинка хранит только `ServiceRef`, ≤ 2 × 256 B) + tombstones |
+  | `topology/graph` | `Limits.WorstCaseHeapBytes() int64`, `Limits.ViewHeapBytes() int64` | граф: `MaxEdges × 248 + MaxNodes × (216 + 2 048)` (строки узла: id после `PathEscape` ≤ 1,5 KiB + `ServiceRef` ≤ 0,5 KiB); один view (копия срезов): `MaxNodes × 64 + MaxEdges × 48` |
+  | `topology` | `Limits.WorstCaseHeapBytes() int64`, `ApplyHeapBytes(maxSpans int) int64` | matcher + граф + 1 view (второй view графа на время `CurrentView`); `Apply`: `maxSpans × (32 + 72)` — `calls` выделяется сразу на число спанов пакета, роста `append` нет |
+  | `memgraph` | `HeldSnapshots = 1` | опубликованный снимок |
+  | `processing` | `HeldSnapshots = 1` | снимок, который Pipeline строит и ещё не опубликовал (старый в это время держит `memgraph`) |
+  | `memjournal` | `Limits.WorstCaseHeapBytes() int64` | `MaxBytes + MaxBatches × 56` — канал очереди выделяется сразу на `MaxBatches` записей |
+  | `connectapi` | `WorstHeapBytes(maxNodes, maxEdges int, viewBytes int64) int64`, `WorstResponseBytes(maxNodes, maxEdges int) int64` | ответ JSON: `2 688 × N + 112 × E + 1 KiB`; на каждый из `MaxConcurrentGetGraph` запросов: удерживаемый снимок (`viewBytes`) + дерево `176 × N + 80 × E` + `2,5 × ответ` (замер 2,3 ×) |
+  | `otlp` | `WorstHeapBytes() int64`, `MaxSpansPerRequest = MaxDecodedBytes / 226` | `MaxConnections × MaxConcurrentStreams × MaxRecvMsgBytes × ExportHeapRatio` |
+
+  `cmd`: `journal + topology + (memgraph.HeldSnapshots + processing.HeldSnapshots) × ViewHeapBytes + connectapi.WorstHeapBytes(N, E, ViewHeapBytes) + ApplyHeapBytes(otlp.MaxSpansPerRequest) + otlp.WorstHeapBytes`. Поднимешь `MaxConcurrentGetGraph` — вырастет только вклад `connectapi`. По умолчанию: журнал 64,2 + буфер ожидания 71,7 + tombstones 114,4 + граф 33,4 + 3 view 8,7 + `Apply` 14,7 + ответы API со снимками 343,3 + запросы в полёте 440 ≈ **1 090,5 MiB** (тест закрепляет 1 143 522 800 B) — ниже 0,85 × 1408 MiB ≈ 1 197 MiB, резерв модели ≈ 106 MiB.
+- **D2 — что покрывает запас 15 %.** Модель считает **живой heap** (`HeapAlloc` после GC), а `GOMEMLIMIT` ограничивает всю память рантайма. Разницу — фрагментацию спанов, стеки горутин, мусор между циклами GC, пулы буферов `grpc` и gzip, соединения API, ждущие слота, — оплачивает запас 0,15 × `GOMEMLIMIT` ≈ 211 MiB. Резерв модели (≈ 106 MiB) покрывает её неточность, а не память вне модели. Проверка всей памяти процесса под нагрузкой — нагрузочный тест NFR-PERF-001 (шаг 6) и демо в kind (срез 7).
+- **D3 — модель проверяют пробы, а не внимательность.** У каждой формулы — проба в своём пакете (`!race`, `TestWorstCaseHeap…`, в `make test-probes`): настоящий прирост `HeapAlloc` ≤ формулы в **установившемся режиме** (вставлено 3 × лимит) при нескольких N (`matcher` и `tombstone`: 1 000 … 1 000 000; `graph`: 1 000 узлов / 5 000 рёбер и 20 000 узлов / 1 ребро с худшими строками; `topology`: живой пик (GC на каждом отсчёте — нижняя граница пика) во время `Apply` пакета из 148 470 server-спанов, закрывающих половинки прошлого пакета, сверх постоянных структур; tombstones держатся в установившемся режиме (маленький лимит, вытеснение с первого пакета) — рост их карты с нуля не часть `Apply` и в рабочем режиме не случается (без этого проба падала в 1–5 прогонах из 20); `memjournal`: пустой журнал с `MaxBatches` = 1 000 000). Проба `connectapi` гоняет **настоящий хэндлер** через HTTP с JSON и `Accept-Encoding: gzip` и с ответом, выброшенным клиентом, на двух видах худших строк — `"` × 255 (самый длинный JSON, сжимается ≈ 1000:1) и случайные печатные символы (плохо сжимаются, буфер gzip наибольший), и сравнивает живой пик сервера с `WorstHeapBytes` на один запрос. Замер: 60–77 MiB на `"` × 255 (разброс между прогонами и машинами) и ≈ 41 MiB на случайных строках при модели 82,9 MiB — запас от 7 %. Проба `otlp` — существующий тест A4 среза 4b (`ExportHeapRatio`); тест `MaxSpansPerRequest`: запрос из `MaxSpansPerRequest + 1` пустых спанов `Weigh` отклоняет как `ErrTooHeavy`.
+- **D4 — предел ответа гарантируют диапазоны, а не проверка при старте.** Самый большой допустимый граф (20 000 узлов, 100 000 рёбер) даёт ответ 62 MiB < `SendMaxBytes` (80 MiB), проверка при старте никогда бы не сработала. Вместо неё тест `connectapi.WorstResponseBytes(20 000, 100 000) ≤ SendMaxBytes`: расширят диапазоны — тест упадёт раньше, чем ответ перестанет помещаться.
+- **D5 — предел памяти: 1408 MiB.** Манифест: `GOMEMLIMIT=1408MiB` при пределе пода 2 GiB. `GOMEMLIMIT` — мягкий предел всей памяти рантайма Go, включая стеки и метаданные; оставшиеся 640 MiB покрывают его превышение под давлением GC (рантайм не жертвует больше ≈ 50 % CPU на сборку и даёт памяти вырасти), бинарник и память вне Go. `memoryLimit(lookup, readCgroup)` разбирает `GOMEMLIMIT` из `lookup` по синтаксису рантайма (целое с необязательной единицей `B`, `KiB`, `MiB`, `GiB`, `TiB`, или `off`), строже его в двух местах: знак `+` и пустая строка — ошибка, а не число и не «выключено»; доля от `memory.max` считается делением до умножения (без переполнения на огромных значениях) и возвращает значение и источник; `debug.SetMemoryLimit` вызывает `realMain`:
+  1. `GOMEMLIMIT` — число → оно; источник `env`;
+  2. `GOMEMLIMIT=off` → exit 2: «`GOMEMLIMIT=off` disables the memory budget»;
+  3. не задан, предел контейнера известен (cgroup v2 `/sys/fs/cgroup/memory.max` — число) → `memory.max × 1408 / 2048`; источник `cgroup`;
+  4. не задан, предела нет (ноутбук, `max`, файла нет, cgroup v1 — шаг 1 требует v2, как kind и современные k8s) → 1408 MiB; источник `default`.
+
+  `GOMEMLIMIT` больше `memory.max` → exit 2: GC не успел бы до OOMKill. Источник и значение пишет Info-лог `config.memory_limit` в 5b-2, когда есть логгер.
+- **D6 — разбор env — линейный набор вызовов, ошибки собираются все.** `envReader{lookup}` с типизированными методами (`size`, `count`, `duration`, `address`, `level`, `endpoint`): каждый принимает имя, значение по умолчанию и диапазон и копит ошибки; `Load` — последовательность `cfg.X = reader.kind(name, def, lo, hi)` и `errors.Join(reader.errs...)`. Правила:
+  - не задана — значение по умолчанию; задана пустой строкой — ошибка (`value: ""` в Helm — опечатка); исключение — `FAULTLINE_SELF_TRACING_ENDPOINT`, где пусто = выключено;
+  - пробелы и регистр не исправляются: `" 10s"`, `"10S"`, `"Info"` — ошибки;
+  - целые без `+` и `-`; размер — целое и единица `B`, `KiB`, `MiB`, `GiB`; без единицы — ошибка (`64` вместо `64MiB`); переполнение проверяется **до** умножения (`n > MaxInt64 / unit`);
+  - адрес — `host:port` без пробелов, хост непустой (`:4317` молча слушал бы все интерфейсы), порт 1 … 65535 (тесты передают листенеры на `:0` прямо в `run`, а не через env); IPv6 в скобках;
+  - перекрёстная проверка `TOMBSTONE_TTL ≥ PAIRING_TTL` — только если обе переменные разобраны;
+  - сообщения: `FAULTLINE_PAIRING_TTL: invalid duration "10", want e.g. 10s`; `FAULTLINE_GRAPH_MAX_NODES: 30000 out of range, want 1 … 20000`; `FAULTLINE_JOURNAL_MAX_BYTES: 32MiB out of range, want 48MiB … 512MiB`.
+- **D7 — бинарник и передача в 5b-2.** `faultline all` — единственная подкоманда шага 1 (раздел «Команды»); без подкоманды или с неизвестной — exit 2 и строка использования. `main` = `os.Exit(realMain(process{Args, Lookup: os.LookupEnv, ReadCgroup: readCgroupMemoryMax, SetMemoryLimit: debug.SetMemoryLimit, Stderr: os.Stderr}))`: всё, что трогает процесс, передаётся явно, и тест не меняет предел памяти своего процесса. Порядок, который продолжит 5b-2: подкоманда → `Load` → `memoryLimit` → `debug.SetMemoryLimit` → `checkBudget` → (5b-2: логгер, `net.Listen`, `run(ctx, cfg, …)`). `run` получает `Config` и лимитов не строит, только читает его; `checkBudget` и вклады принимают `*Config` (`gocritic hugeParam`: 120 B) и его не меняют. Коды выхода: 0 — годен, 2 — подкоманда, конфиг, предел памяти или бюджет, 1 — не удалось написать причину в stderr. В 5b-1 `faultline all` с годным конфигом выходит с 0.
+- **D8 — `cmd/faultline` под гейтом покрытия.** В `cmd/faultline` остаётся логика (разбор env, выбор предела памяти), поэтому `cover-check` исключает только `cmd/faultline/main.go`, а не весь `cmd/` (≥ 70 %).
+
+**`cmd/faultline` (package main)**
+
+```go
+type Config struct {
+	OTLPAddr            string
+	APIAddr             string
+	Journal             memjournal.Limits
+	Topology            topology.Limits
+	LogLevel            slog.Level
+	SelfTracingEndpoint string
+}
+
+type process struct {
+	Args           []string
+	Lookup         func(name string) (string, bool)
+	ReadCgroup     func() ([]byte, error)
+	SetMemoryLimit func(limit int64) int64
+	Stderr         io.Writer
+}
+
+func realMain(current process) int
+func Load(lookup func(name string) (string, bool)) (Config, error)
+func memoryLimit(lookup func(name string) (string, bool), readCgroup func() ([]byte, error)) (limit int64, source string, err error)
+func checkBudget(cfg *Config, limit int64) error
+```
+
+**Тесты**
+
+| Где | Что |
+|---|---|
+| `cmd/faultline` конфиг | пустое окружение → значения таблицы «Конфигурация»; на каждую переменную: верное значение записано в нужное поле; неверный формат, пустая строка, пробелы, регистр, знак, единица, переполнение, выход за диапазон с обеих сторон → сообщение точно по D6; несколько ошибок → все в одном ответе; `TOMBSTONE_TTL < PAIRING_TTL` → ошибка, а при неразобранном `PAIRING_TTL` — только его ошибка; адрес без хоста и с портом 0 → ошибка, `[::1]:4317` — годен |
+| `cmd/faultline` бюджет | по умолчанию сумма равна выписанному числом итогу (golden — один случай) и проходит при 1408 MiB, а при 1280 MiB — нет; комбинация «каждая переменная в диапазоне, сумма > 0,85 × предела» → ошибка с вкладами в MiB по убыванию; вклады берутся из функций пакетов (тест не повторяет формулы) |
+| `cmd/faultline` предел памяти | четыре источника D5, единицы `GOMEMLIMIT`, `off`, `GOMEMLIMIT` > `memory.max` (фейки `lookup` и `readCgroup`) |
+| `cmd/faultline` `realMain` | без подкоманды и с неизвестной → 2 и использование в stderr; неверная переменная → 2 и её имя в stderr; годный конфиг → 0. Один тест кода выхода процесса — повторный запуск `os.Args[0]` из `TestMain` с переменной-флагом, без `go build` |
+| пакеты D1 | пробы D3; `connectapi.WorstResponseBytes(20 000, 100 000) ≤ SendMaxBytes` (D4) |
+
+**Makefile:** в `test-probes` — строка `go test -count=1 -run 'TestWorstCaseHeap' ./internal/domain/topology/... ./internal/infrastructure/memjournal/... ./internal/interfaces/connectapi/...`; `hack/cover-check.sh` исключает `cmd/faultline/main.go`, а не весь `cmd/`.
+
 ## Критерии приёмки (Definition of Done шага)
 
 **Гейты качества**
-- [ ] `make verify` зелёный в CI, включая `cover-check` (≥ 70 % по пакетам шага, ≥ 80 % для `internal/domain/topology`; без `cmd/` и `internal/gen`) и шаг `docker build`.
+- [ ] `make verify` зелёный в CI, включая `cover-check` (≥ 70 % по пакетам шага, ≥ 80 % для `internal/domain/topology`; без `cmd/faultline/main.go` и `internal/gen`) и шаг `docker build`.
 - [ ] depguard-правила слоёв действуют: временный импорт grpc в `internal/domain` ломает `make lint`.
 - [ ] `buf lint` по `graph.proto`; `make proto-breaking` работает против последнего тега.
 

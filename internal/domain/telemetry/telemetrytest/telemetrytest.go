@@ -2,7 +2,11 @@ package telemetrytest
 
 import (
 	"encoding/binary"
+	"fmt"
 	"runtime"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -160,4 +164,84 @@ func HeapInUse() uint64 {
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
 	return stats.HeapAlloc
+}
+
+type PeakSampler struct {
+	peak     atomic.Uint64
+	stop     chan struct{}
+	halted   sync.Once
+	sampling sync.WaitGroup
+}
+
+func StartPeakSampler(tb testing.TB) *PeakSampler {
+	tb.Helper()
+	sampler := &PeakSampler{
+		stop: make(chan struct{}),
+	}
+	sampler.sampling.Go(sampler.sample)
+	tb.Cleanup(sampler.halt)
+	return sampler
+}
+
+func (s *PeakSampler) sample() {
+	for {
+		s.record()
+		select {
+		case <-s.stop:
+			return
+		default:
+		}
+	}
+}
+
+func (s *PeakSampler) record() {
+	live := HeapInUse()
+	for {
+		seen := s.peak.Load()
+		if live <= seen || s.peak.CompareAndSwap(seen, live) {
+			return
+		}
+	}
+}
+
+func (s *PeakSampler) halt() {
+	s.halted.Do(func() {
+		close(s.stop)
+	})
+	s.sampling.Wait()
+}
+
+func (s *PeakSampler) Stop() uint64 {
+	s.halt()
+	s.record()
+	return s.peak.Load()
+}
+
+const (
+	SteadyStateRounds = 3
+	worstIndexDigits  = 7
+	worstCharacter    = `"`
+)
+
+func WorstResource(index int) resource.Resource {
+	suffix := fmt.Sprintf("%0*d", worstIndexDigits, index)
+	return resource.Resource{
+		ServiceName:      strings.Repeat(worstCharacter, resource.MaxServiceNameBytes-worstIndexDigits) + suffix,
+		ServiceNamespace: strings.Repeat(worstCharacter, resource.MaxServiceNamespaceBytes-worstIndexDigits) + suffix,
+	}
+}
+
+func WorstService(index int) resource.ServiceRef {
+	return WorstResource(index).ServiceRef()
+}
+
+func HeapGrowth(build func() any) uint64 {
+	before := HeapInUse()
+	built := build()
+	after := HeapInUse()
+	runtime.KeepAlive(built)
+	if after < before {
+		return 0
+	}
+	return after - before
 }

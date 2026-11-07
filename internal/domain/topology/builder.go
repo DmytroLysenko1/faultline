@@ -63,7 +63,7 @@ func (l Limits) graphLimits() graph.Limits {
 
 func (b *Builder) Apply(received batch.Batch) {
 	unanswered := b.Matcher.Expire(received.ReceivedAt)
-	var calls []call.Call
+	calls := make([]call.Call, 0, len(received.Spans))
 	for _, observed := range received.Spans {
 		if matched, ok := b.Matcher.Match(observed, received.ReceivedAt); ok {
 			calls = append(calls, matched)

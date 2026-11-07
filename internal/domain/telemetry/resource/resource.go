@@ -11,8 +11,8 @@ import (
 var ErrInvalid = errors.New("invalid resource")
 
 const (
-	maxServiceNameBytes      = 255
-	maxServiceNamespaceBytes = 255
+	MaxServiceNameBytes      = 255
+	MaxServiceNamespaceBytes = 255
 	maxK8sNamespaceBytes     = 63
 	maxK8sPodNameBytes       = 253
 	identityFieldCount       = 4
@@ -63,12 +63,12 @@ func (r Resource) identities() [identityFieldCount]identity {
 		{
 			Field:    "service.name",
 			Value:    r.ServiceName,
-			MaxBytes: maxServiceNameBytes,
+			MaxBytes: MaxServiceNameBytes,
 		},
 		{
 			Field:    "service.namespace",
 			Value:    r.ServiceNamespace,
-			MaxBytes: maxServiceNamespaceBytes,
+			MaxBytes: MaxServiceNamespaceBytes,
 		},
 		{
 			Field:    "k8s.namespace.name",
