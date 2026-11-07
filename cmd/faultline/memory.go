@@ -16,10 +16,20 @@ const (
 	containerShareDenominator = manifestPodMemory / mib
 	cgroupMemoryMaxPath       = "/sys/fs/cgroup/memory.max"
 	cgroupUnlimited           = "max"
-	sourceEnv                 = "env"
-	sourceCgroup              = "cgroup"
-	sourceDefault             = "default"
 )
+
+type limitSource string
+
+const (
+	sourceEnv     limitSource = "env"
+	sourceCgroup  limitSource = "cgroup"
+	sourceDefault limitSource = "default"
+)
+
+type memorySetting struct {
+	Bytes  int64
+	Source limitSource
+}
 
 var (
 	errMemoryLimitOff       = errors.New("GOMEMLIMIT=off disables the memory budget")
@@ -33,28 +43,36 @@ func readCgroupMemoryMax() ([]byte, error) {
 	return os.ReadFile(cgroupMemoryMaxPath)
 }
 
-func memoryLimit(lookup lookupFunc, readCgroup cgroupReader) (limit int64, source string, err error) {
+func memoryLimit(lookup lookupFunc, readCgroup cgroupReader) (memorySetting, error) {
 	container, bounded := containerLimit(readCgroup)
 	raw, set := lookup(envMemoryLimit)
 	if !set {
-		limit, source = derivedLimit(container, bounded)
-		return limit, source, nil
+		return derivedLimit(container, bounded), nil
 	}
-	limit, err = parseMemoryLimit(raw)
+	limit, err := parseMemoryLimit(raw)
 	if err != nil {
-		return 0, "", err
+		return memorySetting{}, err
 	}
 	if bounded && limit > container {
-		return 0, "", fmt.Errorf("%w: %s > %s", errMemoryLimitContainer, formatSize(limit), formatSize(container))
+		return memorySetting{}, fmt.Errorf("%w: %s > %s", errMemoryLimitContainer, formatSize(limit), formatSize(container))
 	}
-	return limit, sourceEnv, nil
+	return memorySetting{
+		Bytes:  limit,
+		Source: sourceEnv,
+	}, nil
 }
 
-func derivedLimit(container int64, bounded bool) (limit int64, source string) {
+func derivedLimit(container int64, bounded bool) memorySetting {
 	if bounded {
-		return container / containerShareDenominator * containerShareNumerator, sourceCgroup
+		return memorySetting{
+			Bytes:  container / containerShareDenominator * containerShareNumerator,
+			Source: sourceCgroup,
+		}
 	}
-	return defaultMemoryLimit, sourceDefault
+	return memorySetting{
+		Bytes:  defaultMemoryLimit,
+		Source: sourceDefault,
+	}
 }
 
 func parseMemoryLimit(raw string) (int64, error) {

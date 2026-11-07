@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"go.uber.org/goleak"
 )
 
 const reexecFlag = "FAULTLINE_TEST_REEXEC"
@@ -17,7 +18,7 @@ func TestMain(m *testing.M) {
 	if os.Getenv(reexecFlag) != "" {
 		main()
 	}
-	os.Exit(m.Run())
+	goleak.VerifyTestMain(m, goleak.IgnoreAnyFunction("os/signal.loop"))
 }
 
 type recordedLimit struct {
@@ -113,21 +114,6 @@ func TestRealMain(t *testing.T) {
 				Stderr: "worst-case memory exceeds the budget: 1090.5 MiB > 85% of GOMEMLIMIT 1024.0 MiB " +
 					"(otlp requests 440.0 MiB, api responses 343.3 MiB, pairing and graph 222.5 MiB, journal 64.2 MiB, " +
 					"batch apply 14.7 MiB, snapshots 5.8 MiB)\n",
-			},
-		},
-		{
-			Name: "valid config sets the memory limit and exits cleanly",
-			Args: process{
-				Args: []string{
-					commandAll,
-				},
-				Lookup: environment(map[string]string{}),
-			},
-			Want: outcome{
-				Code: exitOK,
-				Limits: []int64{
-					manifestMemoryLimit,
-				},
 			},
 		},
 	}

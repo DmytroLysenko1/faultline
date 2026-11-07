@@ -104,10 +104,12 @@ test-probes: ## Heap and time probes without -race: decode limit, memory budget 
 STRESS_PACKAGES := ./internal/application/ingest/... ./internal/application/processing/... \
 	./internal/infrastructure/memjournal/... ./internal/infrastructure/memgraph/... ./test/pipeline/...
 STRESS_COUNT := 200
+SHUTDOWN_TESTS := TestShutdownOrder|TestDrainIncomplete|TestSignalAfterPipelineExit|TestEveryComponent|TestOTLPStuckAfterStop
 
 .PHONY: test-stress
 test-stress: ## Repeat concurrency-sensitive tests under the race detector (nightly CI, before a tag)
 	go test -race -count=$(STRESS_COUNT) $(STRESS_PACKAGES)
+	go test -race -count=$(STRESS_COUNT) -run '$(SHUTDOWN_TESTS)' ./cmd/faultline/
 
 .PHONY: cover-check
 cover-check: test-race ## Enforce per-package coverage thresholds (NFR-MAINT-001)

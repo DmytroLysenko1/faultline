@@ -24,14 +24,10 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 		env    map[string]string
 		cgroup cgroupReader
 	}
-	type want struct {
-		Limit  int64
-		Source string
-	}
 	tests := []struct {
 		Name    string
 		Args    args
-		Want    want
+		Want    memorySetting
 		WantErr error
 	}{
 		{
@@ -42,8 +38,8 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 				},
 				cgroup: noCgroup,
 			},
-			Want: want{
-				Limit:  1408 << 20,
+			Want: memorySetting{
+				Bytes:  1408 << 20,
 				Source: sourceEnv,
 			},
 		},
@@ -55,8 +51,8 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 				},
 				cgroup: noCgroup,
 			},
-			Want: want{
-				Limit:  1 << 30,
+			Want: memorySetting{
+				Bytes:  1 << 30,
 				Source: sourceEnv,
 			},
 		},
@@ -68,8 +64,8 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 				},
 				cgroup: noCgroup,
 			},
-			Want: want{
-				Limit:  1 << 40,
+			Want: memorySetting{
+				Bytes:  1 << 40,
 				Source: sourceEnv,
 			},
 		},
@@ -79,8 +75,8 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 				env:    map[string]string{},
 				cgroup: cgroupFile("2147483648\n"),
 			},
-			Want: want{
-				Limit:  1408 << 20,
+			Want: memorySetting{
+				Bytes:  1408 << 20,
 				Source: sourceCgroup,
 			},
 		},
@@ -90,8 +86,8 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 				env:    map[string]string{},
 				cgroup: cgroupFile("1073741824\n"),
 			},
-			Want: want{
-				Limit:  704 << 20,
+			Want: memorySetting{
+				Bytes:  704 << 20,
 				Source: sourceCgroup,
 			},
 		},
@@ -101,8 +97,8 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 				env:    map[string]string{},
 				cgroup: cgroupFile("max\n"),
 			},
-			Want: want{
-				Limit:  1408 << 20,
+			Want: memorySetting{
+				Bytes:  1408 << 20,
 				Source: sourceDefault,
 			},
 		},
@@ -112,8 +108,8 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 				env:    map[string]string{},
 				cgroup: noCgroup,
 			},
-			Want: want{
-				Limit:  1408 << 20,
+			Want: memorySetting{
+				Bytes:  1408 << 20,
 				Source: sourceDefault,
 			},
 		},
@@ -125,8 +121,8 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 				},
 				cgroup: noCgroup,
 			},
-			Want: want{
-				Limit:  2 << 30,
+			Want: memorySetting{
+				Bytes:  2 << 30,
 				Source: sourceEnv,
 			},
 		},
@@ -138,8 +134,8 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 				},
 				cgroup: noCgroup,
 			},
-			Want: want{
-				Limit:  1408 << 20,
+			Want: memorySetting{
+				Bytes:  1408 << 20,
 				Source: sourceEnv,
 			},
 		},
@@ -151,8 +147,8 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 				},
 				cgroup: cgroupFile("2147483648\n"),
 			},
-			Want: want{
-				Limit:  2 << 30,
+			Want: memorySetting{
+				Bytes:  2 << 30,
 				Source: sourceEnv,
 			},
 		},
@@ -162,8 +158,8 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 				env:    map[string]string{},
 				cgroup: cgroupFile("garbage\n"),
 			},
-			Want: want{
-				Limit:  1408 << 20,
+			Want: memorySetting{
+				Bytes:  1408 << 20,
 				Source: sourceDefault,
 			},
 		},
@@ -173,8 +169,8 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 				env:    map[string]string{},
 				cgroup: cgroupFile("0\n"),
 			},
-			Want: want{
-				Limit:  1408 << 20,
+			Want: memorySetting{
+				Bytes:  1408 << 20,
 				Source: sourceDefault,
 			},
 		},
@@ -184,8 +180,8 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 				env:    map[string]string{},
 				cgroup: cgroupFile("9223372036854771712\n"),
 			},
-			Want: want{
-				Limit:  9223372036854771712 / 2048 * 1408,
+			Want: memorySetting{
+				Bytes:  9223372036854771712 / 2048 * 1408,
 				Source: sourceCgroup,
 			},
 		},
@@ -222,13 +218,9 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
-			limit, source, err := memoryLimit(environment(tt.Args.env), tt.Args.cgroup)
+			got, err := memoryLimit(environment(tt.Args.env), tt.Args.cgroup)
 			if !errors.Is(err, tt.WantErr) {
 				t.Fatalf("memoryLimit = %v, want %v", err, tt.WantErr)
-			}
-			got := want{
-				Limit:  limit,
-				Source: source,
 			}
 			if diff := cmp.Diff(tt.Want, got); diff != "" {
 				t.Errorf("limit (-want +got):\n%s", diff)

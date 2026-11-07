@@ -334,7 +334,7 @@ Gateway: `connectrpc.com/grpcreflect` включён, поэтому приём�
 | API, unary | Connect-интерсептор `context.WithTimeout(ctx, 30s)` → `DEADLINE_EXCEEDED`; ctx хэндлера отменяется | FR-API-007. Серверный `WriteTimeout` **не** используется: он не отменяет ctx и оборвёт поток `graph watch` в шаге 5. Вместо него `connectapi/limit` ставит дедлайн записи только на `GetGraph` и reflection: `RequestTimeout + SendTimeout` = 60 s от начала запроса, то есть 30 s на маршалинг и отправку после дедлайна ctx. Медленный клиент получает обрыв потока, слот освобождается |
 | HTTP-сервер API | `ReadHeaderTimeout 5s`, `ReadTimeout 30s`, `WriteTimeout 0`, `IdleTimeout 120s`; Connect `ReadMaxBytes = 1 MiB` | защита от Slowloris |
 | `faultctl` | `--timeout` (по умолчанию 10 s) → `context.WithTimeout` на весь вызов | |
-| Остановка | ≤ 10 s суммарно, этапы последовательно: OTLP 5 s → дренаж 3 s (2,5 s чтения + ≤ 0,5 s на выход итерации после отмены) → HTTP 2 s | см. «Жизненный цикл» |
+| Остановка | ≤ 10 s суммарно, этапы последовательно: OTLP 4,5 s → дренаж 3 s (2,5 s чтения + ≤ 0,5 s на выход итерации после отмены) → HTTP 2 s | см. «Жизненный цикл» |
 
 ## 5. Классификация ретраев
 
@@ -392,7 +392,7 @@ Circuit breaker не нужен: исходящих зависимостей н�
 | I2 (атомарность снимка) | Через интерфейс `Pipeline` (фейковый feed → настоящий `memgraph`). Фейк выдаёт пакеты, каждый из которых даёт **ровно k = 7 новых вызовов** на одном ребре. K читателей во время работы проверяют на каждом снимке: Σ`calls` mod k == 0 (частично применённый пакет дал бы остаток), Σ`calls` = `stats.matched − graph_overflow` по счётчикам **того же снимка**, ревизия монотонна; пакет без изменений графа не меняет ревизию. Цель `make test-stress`: `-race -count=200` для этого пакета (не входит в `make verify`, гоняется в CI отдельной job по ночам и перед тегом) |
 | I3 | Через `Builder`: неизменяемость снимка после последующих `Apply`; лимиты `maxNodes`/`maxEdges` → `graph_overflow`, `node_overflow`; новое ребро между существующими узлами при полном `maxEdges` → `graph_overflow` |
 | I4 (всё или ничего, retryable) | `TraceReceiver` с настоящим `memjournal`: кредит исчерпан → `RESOURCE_EXHAUSTED`, **в `status.Details()` есть `RetryInfo`**, журнал не изменился; пакет больше остатка кредита отклонён целиком; пакет больше **полной** ёмкости → `INVALID_ARGUMENT` без `RetryInfo`; журнал закрыт → `UNAVAILABLE` |
-| I4 при остановке | В журнале N = 1000 пакетов, приходит сигнал: все N учтены в графе до выхода процесса (а не один пакет — иначе тест не отличит дренаж от удачного тайминга). Отдельно: дренаж не успел за 2,5 s (медленный фейк) → `lifecycle.drain_incomplete` с `exact: true` и точным числом спанов, код 1 (фейк выходит по отмене за < 0,5 s, иначе `goleak` в e2e упадёт); итерация фейка дольше 0,5 s после отмены → `drain_incomplete` с `exact: false`, HTTP остановлен, код выхода 1 (проверяется на уровне процесса: зависшая горутина — ожидаемо, `goleak` здесь не применим) |
+| I4 при остановке | В журнале N = 1000 пакетов, приходит сигнал: все N учтены в графе до выхода процесса (а не один пакет — иначе тест не отличит дренаж от удачного тайминга). Отдельно: дренаж не успел за 2,5 s (медленный фейк) → `lifecycle.drain_incomplete` с `exact: true` и точным числом спанов, код 1 (фейк выходит по отмене за < 0,5 s, иначе `goleak` в e2e упадёт); итерация фейка дольше 0,5 s после отмены → `drain_incomplete` с `exact: false`, HTTP остановлен, `run` вернул ошибку (код 1); после проверки тест отпускает фейк и дожидается его выхода, поэтому `goleak` применим (срез 5b-2, тест порядка остановки) |
 | Снимок под нагрузкой | Бенчмарк итерации Pipeline на графе 50 000 рёбер: аллокации на итерацию и пропускная способность пакетов/с; дренаж полного журнала (по числу пакетов и по байтам) укладывается в 2,5 s, итерация после отмены — в 0,5 s |
 | Валидация (`AcceptBatch`) | Таблица на use case: каждое правило таблицы валидации → точные `AcceptResult.Rejected` и причины, включая невалидный UTF-8, превышение длины на 1 байт и границу ровно в лимит; пакет из одних невалидных спанов в журнал не попадает |
 | Маппинг OTLP | `ptrace` → `SpanSource`: виды спанов, атрибуты статуса, `service.name`, `k8s.namespace.name` против `service.namespace`; `AcceptResult` → `partial_success`; fuzz-тест маппинга (NFR-SEC-004): любой принятый спан проходит до `GetGraph`, и ответ маршалится в proto и protojson без ошибки |
@@ -413,7 +413,7 @@ Circuit breaker не нужен: исходящих зависимостей н�
 stateDiagram-v2
   [*] --> Starting
   Starting --> Exit2: невалидный конфиг (env, худший случай бюджета)
-  Starting --> Exit1: ошибка bind
+  Starting --> Exit1: сбой сборки компонентов или ошибка bind
   Starting --> Serving: конфиг валиден, оба листенера открыты, компоненты запущены
   Serving --> Draining: SIGINT/SIGTERM
   Serving --> Draining: OTLP или HTTP вышел до сигнала (даже с nil) → итоговый код 1
@@ -425,29 +425,32 @@ stateDiagram-v2
 
 **Starting** (синхронно в `main`, до запуска горутин):
 1. Разбор и валидация env (таблица ниже). Ошибка → exit 2, в сообщении имя переменной, значение и ожидаемый формат: `FAULTLINE_PAIRING_TTL: invalid duration "10", want e.g. 10s`.
-2. `net.Listen` для OTLP и API. Ошибка → exit 1 с адресом: `listen otlp 127.0.0.1:4317: address already in use`.
-3. `run(ctx, cfg, otlpLis, apiLis) error`. Тест передаёт листенеры на `:0` и знает реальные адреса.
+2. Предел памяти и проверка бюджета (срез 5b-1) → логгер → `newSystem` (сбор компонентов). Ошибка `newSystem` → exit 1.
+3. `listen(cfg)`: `net.Listen` для OTLP (обёрнут `otlp.LimitListener`) и API. Ошибка → exit 1 с адресом: `listen otlp 127.0.0.1:4317: address already in use`; уже открытый листенер закрывается.
+4. `run(ctx, stop, sys, listeners, budget) error` (срез 5b-2, D3); ошибка → exit 1. Тест передаёт листенеры на `:0` и знает реальные адреса.
 
 **Чей ctx у какого компонента.** Это главное правило остановки, его легко нарушить «обычным» wiring'ом:
 - `signalCtx` от `signal.NotifyContext` слушает **только** `run`. Ни один компонент его не получает.
 - OTLP- и HTTP-серверы останавливаются явными вызовами (`GracefulStop`, `Shutdown`), а не отменой ctx.
 - `Pipeline.Run(pipelineCtx)`: `pipelineCtx, cancelPipeline := context.WithCancel(context.WithoutCancel(signalCtx))` — значения ctx (логгер, трейсинг) сохраняются, а отмена сигнала **не** наследуется. `context.Background()` не используется: его отметил бы `contextcheck`, и цепочка ctx оборвалась бы. Его отменяет только `run`: по дедлайну дренажа (2,5 s, ещё ≤ 0,5 s на выход текущей итерации) или при аварийном выходе. Штатный конец работы Pipeline — `ErrFeedClosed` после `memjournal.Close()`, а не отмена.
-- Компоненты запускаются через `sync.WaitGroup.Go` плюс канал `exited` **ёмкостью по числу компонентов** (3), куда каждый компонент неблокирующе пишет своё имя и ошибку при выходе; `run` читает первое событие. Ёмкость гарантирует, что поздние компоненты не зависнут на отправке и `goleak` чист. Не `errgroup.WithContext`: отмена ctx группы при выходе любого компонента оборвала бы дренаж. Порядок остановки ведёт `run`.
+- Компонентами владеет супервизор `components` (срез 5b-2, D4): у каждого свой канал `done` и флаг «остановка запрошена»; общий канал `exits` **ёмкостью по числу компонентов** (3) получает ровно одно событие от каждого обычной отправкой (не блокирует: ёмкость = число отправителей) и служит только для обнаружения первого выхода; непрочитанные события `run` проверяет в конце. Не `errgroup.WithContext`: отмена ctx группы при выходе любого компонента оборвала бы дренаж. Порядок остановки ведёт `run`.
 
 Если бы Pipeline получил `signalCtx`, по SIGTERM `Receive` сразу вернул бы `context.Canceled`, Pipeline вышел бы с `nil` до этапа дренажа, а пакеты, получившие OK, пропали бы — ровно то нарушение I4, которое дренаж должен предотвратить.
 
 **Serving.** Обёртка компонента превращает выход без команды остановки от `run` (в том числе `nil`) в `errUnexpectedExit`. Иначе Pipeline мог бы умереть молча, а приём продолжал бы отвечать OK в журнал без читателя («зомби»). `GET /healthz` на порту API: 200 в Serving, 503 в Draining и Aborting. Это readiness для манифеста.
 
 **Draining после сигнала** (последовательно, у каждого этапа свой ctx с дедлайном, сумма ≤ 10 s):
-1. `stop()` от `signal.NotifyContext`: второй SIGINT/SIGTERM убивает процесс сразу (поведение по умолчанию).
-2. OTLP: `GracefulStop` с дедлайном 5 s, потом `Stop()`. Новые RPC получают `UNAVAILABLE`.
+1. Если причина — сигнал, `stop()` от `signal.NotifyContext`: второй SIGINT/SIGTERM убивает процесс сразу (поведение по умолчанию). Если причина — выход OTLP или HTTP, `stop()` вызывается в конце: иначе первый SIGTERM от k8s во время такого дренажа убил бы процесс.
+2. OTLP: `GracefulStop` с дедлайном 4,5 s, потом `Stop()` (срез 5b-2, D9). Новые RPC получают `UNAVAILABLE`.
 3. `memjournal.Close()`: новых `Append` нет (после `Stop` поздние хэндлеры получат `ErrUnavailable`), канал закрыт владельцем.
-4. Дренаж: Pipeline дочитывает журнал до `ErrFeedClosed`. Если за 2,5 s не успел, `run` отменяет `pipelineCtx` и ждёт выхода `Run` ещё ≤ 0,5 s (отмена не прерывает текущую итерацию: до 64 `Apply` и один снимок; замер 5a — итерация на графе 50 000 рёбер ≈ 17 ms плюс `Apply`), и только после выхода читает `memjournal.Stats()` (худшая итерация — до 91 ms `Apply` + 17 ms снимок ≈ 110 ms, запас ≈ 4,5×). Если `Run` не вышел и за 0,5 s, `run` больше не ждёт: пишет `drain_incomplete` с `exact: false` (число — верхняя граница: итерация в полёте может ещё опубликоваться), продолжает остановку HTTP и завершается с кодом 1, не дожидаясь горутины Pipeline (финальный `wg.Wait` для неё пропускается); она умирает вместе с процессом. Недочитанное → Error-лог `lifecycle.drain_incomplete` с числом спанов. Любой `drain_incomplete` (точный или `exact: false`) — потеря принятых спанов, итоговый код выхода 1. Когда `Run` вышел, число точное (`exact: true`) по построению: Pipeline при отмене **не** вызывает `Release` для пакетов, полученных, но не вошедших в опубликованный снимок, поэтому остаток = все неосвобождённые кредиты журнала (и в очереди, и на руках у Pipeline).
-5. HTTP: `Shutdown` с дедлайном 2 s.
+4. Дренаж: Pipeline дочитывает журнал до `ErrFeedClosed`. Если за 2,5 s не успел, `run` отменяет `pipelineCtx` и ждёт выхода `Run` ещё ≤ 0,5 s (отмена не прерывает текущую итерацию: до 64 `Apply` и один снимок; замер 5a — итерация на графе 50 000 рёбер ≈ 17 ms плюс `Apply`), и только после выхода читает `memjournal.Stats()` (исключение — `exact: false` ниже: тогда `Stats()` читается при живом Pipeline, `memjournal` это допускает) (худшая итерация — до 91 ms `Apply` + 17 ms снимок ≈ 110 ms, запас ≈ 4,5×). Если `Run` не вышел и за 0,5 s, `run` больше не ждёт: пишет `drain_incomplete` с `exact: false` (число — верхняя граница: итерация в полёте может ещё опубликоваться), продолжает остановку HTTP и завершается с кодом 1, не дожидаясь горутины Pipeline (её `done` не ждётся; OTLP и HTTP ждутся всегда); она умирает вместе с процессом. Недочитанное → Error-лог `lifecycle.drain_incomplete` с числом спанов. Любой `drain_incomplete` (точный или `exact: false`) — потеря принятых спанов, итоговый код выхода 1. Когда `Run` вышел, число точное (`exact: true`) по построению: Pipeline при отмене **не** вызывает `Release` для пакетов, полученных, но не вошедших в опубликованный снимок, поэтому остаток = все неосвобождённые кредиты журнала (и в очереди, и на руках у Pipeline).
+5. HTTP: `Shutdown` с дедлайном 2 s; не уложился — `Close()` (Warn `lifecycle.forced_stop`, код не меняется).
+
+Если Pipeline выходит неожиданно, пока идёт шаг 2, `run` сразу закрывает журнал (как в Aborting), доводит остановку OTLP и пропускает дренаж: остаток → `drain_incomplete` с `exact: true` (срез 5b-2, D7).
 
 **Aborting — неожиданный выход Pipeline** (порядок другой — читателя уже нет):
 1. Сначала `memjournal.Close()`: с этого момента `Append` возвращает `ErrUnavailable`, и OTLP отвечает `UNAVAILABLE` (клиент повторит позже), а не OK в журнал без читателя.
-2. OTLP: `GracefulStop` 5 s → `Stop()`.
+2. OTLP: `GracefulStop` 4,5 s → `Stop()`.
 3. Дренаж пропускается; остаток журнала → `lifecycle.drain_incomplete`.
 4. HTTP: `Shutdown` 2 s. Итоговый код 1.
 
@@ -498,7 +501,7 @@ stateDiagram-v2
 | Жив ли конвейер? | `/healthz`, `lifecycle.state`, неожиданный выход компонента → код 1 |
 
 Решения:
-- **Логи:** `slog.NewJSONHandler` в stderr (FR-OPS-004), уровень из `FAULTLINE_LOG_LEVEL`, стабильные имена событий (`pipeline.stats`, `otlp.export.rejected`, `otlp.export.overloaded`, `lifecycle.state`, `lifecycle.drain_incomplete`, `otlp.export.too_large`, `otlp.export.failed`, `otlp.export.decode_rejected`, `rpc.panic`, `api.panic`, `api.get_graph_failed`, `api.busy`, `api.reject_write_failed`, `api.io_deadline_unsupported`). Ошибки логируются только на границах: интерсепторы, Pipeline, `run`. Корреляция: `trace_id` входящего `traceparent` (если есть) в атрибутах лога RPC.
+- **Логи:** `slog.NewJSONHandler` в stderr (FR-OPS-004), уровень из `FAULTLINE_LOG_LEVEL`, стабильные имена событий (`pipeline.stats`, `otlp.export.rejected`, `otlp.export.overloaded`, `lifecycle.state`, `lifecycle.drain_incomplete`, `lifecycle.component_exit`, `lifecycle.forced_stop`, `lifecycle.start_failed`, `config.memory_limit`, `otlp.export.too_large`, `otlp.export.failed`, `otlp.export.decode_rejected`, `rpc.panic`, `api.panic`, `api.get_graph_failed`, `api.busy`, `api.reject_write_failed`, `api.io_deadline_unsupported`). Ошибки логируются только на границах: интерсепторы, Pipeline, `run`. Корреляция: `trace_id` входящего `traceparent` (если есть) в атрибутах лога RPC.
 - **`pipeline.stats`:** Info-лог раз в 30 s со всеми счётчиками `PairingStats` и `GraphStats` (`graph_overflow`, `unanswered_overflow`, `node_overflow`), ingest-счётчиками, ревизией и глубиной журнала. Пишет его отдельная горутина в `cmd/faultline` (тикер + `ctx.Done()`), которая читает **опубликованный снимок** через `memgraph` и ingest-счётчики и глубину журнала через атомарные счётчики `AcceptBatch` и `memjournal`; состояние горутины Pipeline она не трогает, поэтому гонки нет и лог идёт и в простое. Метрики Prometheus — шаг 6.
 - **Self-tracing:** спаны стартуют только на пути API (`GetGraph`). Путь приёма и обработки (`Export`, `AcceptBatch`, `Pipeline`) **не трассируется** вовсе: иначе каждый принятый пакет порождал бы новые спаны, и при экспорте через Collector, который шлёт трейсы обратно в faultline, возникла бы петля с самоусилением. Сравнение адресов (`localhost` против `127.0.0.1`, DNS сервиса, Collector посередине) петлю не ловит, поэтому защита — в отсутствии спанов на пути приёма, а не в валидации адреса. По умолчанию глобальный `TracerProvider` — no-op; экспорт включается через `FAULTLINE_SELF_TRACING_ENDPOINT`.
 
@@ -615,7 +618,7 @@ stateDiagram-v2
 - **Никогда:**
   - `recover` в Pipeline;
   - спаны self-tracing на пути приёма и обработки;
-  - ctx Pipeline, производный от сигнала или от `errgroup`;
+  - ctx Pipeline, производный от сигнала;
   - `WriteTimeout` на API-сервере;
   - типы pdata/grpc/connect в `domain` и `application`;
   - закрытие канала журнала не владельцем.
@@ -652,8 +655,8 @@ stateDiagram-v2
 | 5a | `processing.Pipeline` (итерации до 64 пакетов, `Publish` → `Release`) | I2 «k вызовов на пакет» под `test-stress`, бенчмарк итерации на 50 000 рёбер, goleak |
 | ✔ | **Контрольная точка 1:** OTLP → журнал → Pipeline → `GetGraph` в одном процессе (тест на настоящих компонентах, без `cmd/`) | |
 | 5b-1 | `cmd/faultline`: конфиг из env, валидатор худшего случая памяти и размера ответа | таблица сообщений, golden вкладов, пробы модели, коды 0/2 |
-| 5b-2 | `run`, ctx-модель, жизненный цикл (Draining/Aborting), `/healthz`, коды выхода | e2e на `:0`, дренаж 1000 пакетов, `drain_incomplete`, неожиданный выход Pipeline → `UNAVAILABLE`, goleak |
-| 5b-3 | лог `pipeline.stats`, `lifecycle.state`, self-tracing no-op | фейковые часы, запись в простое, нет спанов на пути приёма |
+| 5b-2 | `run`, ctx-модель, жизненный цикл (Draining/Aborting), `/healthz`, коды выхода, `lifecycle.state` | e2e на `:0`, дренаж 1000 пакетов, `drain_incomplete`, неожиданный выход Pipeline → `UNAVAILABLE`, goleak |
+| 5b-3 | лог `pipeline.stats`, self-tracing no-op | фейковые часы, запись в простое, нет спанов на пути приёма |
 | 6 | `faultctl` + рендереры | golden DOT/JSON (`EmitUnpopulated`), злые имена, коды выхода, `WithReadMaxBytes` |
 | 7 | Dockerfile, манифесты, `make demo-1`, `hack/demo-check.sh` (ожидание готовности, опрос, списки, разбор `pipeline.stats`), `deploy/dev/README.md` | демо в kind проходит `required ⊆ граф ⊆ required ∪ optional` |
 | ✔ | **Контрольная точка 2 (15.11):** скелет ходит в kind | |
@@ -1082,7 +1085,7 @@ func (p *Pipeline) Run(ctx context.Context) error
   - адрес — `host:port` без пробелов, хост непустой (`:4317` молча слушал бы все интерфейсы), порт 1 … 65535 (тесты передают листенеры на `:0` прямо в `run`, а не через env); IPv6 в скобках;
   - перекрёстная проверка `TOMBSTONE_TTL ≥ PAIRING_TTL` — только если обе переменные разобраны;
   - сообщения: `FAULTLINE_PAIRING_TTL: invalid duration "10", want e.g. 10s`; `FAULTLINE_GRAPH_MAX_NODES: 30000 out of range, want 1 … 20000`; `FAULTLINE_JOURNAL_MAX_BYTES: 32MiB out of range, want 48MiB … 512MiB`.
-- **D7 — бинарник и передача в 5b-2.** `faultline all` — единственная подкоманда шага 1 (раздел «Команды»); без подкоманды или с неизвестной — exit 2 и строка использования. `main` = `os.Exit(realMain(process{Args, Lookup: os.LookupEnv, ReadCgroup: readCgroupMemoryMax, SetMemoryLimit: debug.SetMemoryLimit, Stderr: os.Stderr}))`: всё, что трогает процесс, передаётся явно, и тест не меняет предел памяти своего процесса. Порядок, который продолжит 5b-2: подкоманда → `Load` → `memoryLimit` → `debug.SetMemoryLimit` → `checkBudget` → (5b-2: логгер, `net.Listen`, `run(ctx, cfg, …)`). `run` получает `Config` и лимитов не строит, только читает его; `checkBudget` и вклады принимают `*Config` (`gocritic hugeParam`: 120 B) и его не меняют. Коды выхода: 0 — годен, 2 — подкоманда, конфиг, предел памяти или бюджет, 1 — не удалось написать причину в stderr. В 5b-1 `faultline all` с годным конфигом выходит с 0.
+- **D7 — бинарник и передача в 5b-2** (сигнатуры `run` и сборки уточнены срезом 5b-2, D1–D3: `newSystem(*Config)`, `run(ctx, stop, sys, listeners, budget) error`). `faultline all` — единственная подкоманда шага 1 (раздел «Команды»); без подкоманды или с неизвестной — exit 2 и строка использования. `main` = `os.Exit(realMain(process{Args, Lookup: os.LookupEnv, ReadCgroup: readCgroupMemoryMax, SetMemoryLimit: debug.SetMemoryLimit, Stderr: os.Stderr}))`: всё, что трогает процесс, передаётся явно, и тест не меняет предел памяти своего процесса. Порядок, который продолжит 5b-2: подкоманда → `Load` → `memoryLimit` → `debug.SetMemoryLimit` → `checkBudget` → (5b-2: логгер, `net.Listen`, `run(ctx, cfg, …)`). `run` получает `Config` и лимитов не строит, только читает его; `checkBudget` и вклады принимают `*Config` (`gocritic hugeParam`: 120 B) и его не меняют. Коды выхода: 0 — годен, 2 — подкоманда, конфиг, предел памяти или бюджет, 1 — не удалось написать причину в stderr. В 5b-1 `faultline all` с годным конфигом выходит с 0.
 - **D8 — `cmd/faultline` под гейтом покрытия.** В `cmd/faultline` остаётся логика (разбор env, выбор предела памяти), поэтому `cover-check` исключает только `cmd/faultline/main.go`, а не весь `cmd/` (≥ 70 %).
 
 **`cmd/faultline` (package main)**
@@ -1123,6 +1126,77 @@ func checkBudget(cfg *Config, limit int64) error
 
 **Makefile:** в `test-probes` — строка `go test -count=1 -run 'TestWorstCaseHeap' ./internal/domain/topology/... ./internal/infrastructure/memjournal/... ./internal/interfaces/connectapi/...`; `hack/cover-check.sh` исключает `cmd/faultline/main.go`, а не весь `cmd/`.
 
+### Срез 5b-2 — запуск и жизненный цикл: решения и Go-API (контракт тестов)
+
+Ред. 3: учтены два круга ревью спеки (pocock, osmani, pstack, concurrency-reviewer); ред. 2 учла первый круг и опыт osmani с `grpc` v1.85 и Go 1.27.3: `http.Server` с `Protocols` HTTP/1 + незашифрованный HTTP/2 обслуживает gRPC-клиента (unary и поток); `Shutdown` по дедлайну не закрывает активные HTTP/2-соединения — нужен `Close()`; `GracefulStop` блокирует, пока открыт поток, `Stop()` из другой горутины его отпускает. Модель ctx и порядок остановки — раздел «Жизненный цикл `faultline all`»; здесь — как это ложится в код и как проверяется.
+
+**Решения**
+
+- **D1 — старт и коды выхода решает `realMain`.** `start(process) (startup, error)`: подкоманда → `Load` → `memoryLimit(lookup, readCgroup) (memorySetting, error)` (тип `memorySetting{Bytes int64; Source limitSource}`, `limitSource` — тип, а не строка) → `SetMemoryLimit` → `checkBudget`. Дальше `realMain`: логгер `slog.NewJSONHandler(stderr)` с уровнем `Config.LogLevel` → Info `config.memory_limit` (bytes, source) → `newSystem(&cfg, logger)` (ошибка → код 1) → `listen(cfg) (listeners, error)`: `net.Listen` OTLP, обёрнутый `otlp.LimitListener` (одно соединение, бюджет I5 держится на этом), и API (ошибка → код 1, сообщение `listen otlp 127.0.0.1:4317: …`, уже открытый листенер закрывается, ошибки закрытия — `errors.Join`); e2e открывает листенеры тем же `listen` → `run`; `signal.NotifyContext(SIGINT, SIGTERM)` ставится сразу после логгера (сигнал во время сборки и привязки тоже ловится и не убивает процесс до `run`). Все ошибки после создания логгера пишутся JSON-логом (`lifecycle.start_failed`), до него — строкой в stderr. Коды: 0 — остановка по сигналу без потерь; 1 — `exitFailure`: `run` вернул ошибку, сбой `newSystem` или привязки, не удалось написать в stderr; 2 — `exitConfig`. `realMain` переводит ошибку `run` в код в одном месте.
+- **D2 — сборка провайдерами.** `newSystem` — линейно: `provideStorage(cfg)` (`memjournal`, `topology.Builder`, `memgraph` с начальным снимком), `provideIngest(journal, logger)` (`AcceptBatch`, `otlp.NewServer`), `providePipeline(feed, storage)` (`processing.NewPipeline`), `provideAPI(storage, lifecycle, logger)` (`query`, `graphservice`, `connectapi.NewMux` + `GET /healthz` → `connectapi.NewServer`). Каждая ≤ 30 строк. Сборка — `assemble(cfg, logger, feedOf)`: `newSystem` передаёт журнал как feed, e2e — шлюз над `Receive`; одна сборка на прод и тест, новый провайдер тест увидит сам.
+- **D3 — `run` зависит от портов.** `cmd/faultline` объявляет `ingestServer{Serve(net.Listener) error; GracefulStop(); Stop()}`, `apiServer{Serve(net.Listener) error; Shutdown(ctx) error; Close() error}`, `spanJournal{Close(); Stats() memjournal.Stats}`, `pipelineRunner{Run(ctx) error}`. Подпись: `run(ctx context.Context, stop context.CancelFunc, sys *system, listeners listeners, budget shutdownBudget) error`; `system{journal, ingest, api, pipeline, store, lifecycle}`, `listeners{OTLP, API net.Listener}`.
+- **D4 — супервизор компонентов — отдельный тип.** `components` владеет флагом остановки (`atomic.Bool`) и каналом `done` (закрывается при выходе, ошибка записывается до закрытия) **на каждый компонент**; `WaitGroup` не нужен: ожидание — через `done`, а горутину Pipeline при `exact: false` никто не ждёт по определению, плюс общим каналом `exits` ёмкости 3 — только для обнаружения первого выхода; каждый компонент пишет в него ровно один раз обычной отправкой (ёмкость 3 = 3 компонента, отправка не блокирует). API: `start(name, serve func() error)`, `firstExit() <-chan componentExit`, `stopping(name)` — флаг ставится **до** команды остановки (`GracefulStop`, `journal.Close`, `Shutdown`): `Store` до вызова даёт happens-before, и обёртка не прочтёт «не просили» при выходе по команде; `exited(name) <-chan struct{}` — канал `done` компонента для `select` вместе с другими событиями (этап OTLP в D7 ждёт сразу `stopped`, ctx этапа и выход Pipeline); `wait(ctx, name) bool` — ждёт `done` или конец ctx этапа (один механизм времени — ctx, D6); ошибка и флаг «неожиданно» едут только в событии `exits`, и обёртка **сначала** отправляет событие (ёмкость = число компонентов, не блокирует), **потом** закрывает `done`: кто дождался `done`, найдёт событие в `exits` неблокирующим чтением в конце `run` (иначе падение API во время дренажа или ошибка Pipeline после `journal.Close` терялись бы, ревью кода). Выход без флага (в том числе `nil`) — неожиданный; выход по команде с ошибкой, кроме `grpc.ErrServerStopped`, `http.ErrServerClosed` и `nil`, — тоже сбой (код 1, Error-лог). В конце `run` непрочитанные события `exits` проверяются: любое неожиданное — код 1 (например, API упал, пока шёл дренаж).
+- **D5 — машина состояний — тип `lifecycle`.** `transition(state, reason)` пишет `lifecycle.state` (Info) и атомарно хранит только то, что читается снаружи, — готовность: `Ready() bool` — порт `readiness` для `/healthz` (true только в `serving`). Состояния — строковый тип: `serving`, `draining`, `aborting`, `stopped`. Error `lifecycle.component_exit` пишет `run` при разборе события выхода. `/healthz` = 503 в Aborting проверяется тестом `Ready` по всем состояниям: Aborting длится миллисекунды, снаружи его не поймать без гонки.
+- **D6 — каждый этап — свой ctx от `context.WithoutCancel`.** К началу остановки ctx сигнала уже отменён; `Shutdown(ctx)` с ним вернулся бы сразу. Каждый этап: `stageCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), budget.X)`, `defer cancel()`. `pipelineCtx := context.WithCancel(context.WithoutCancel(ctx))` (раздел «Жизненный цикл»), `defer cancelPipeline()` на всех путях.
+- **D7 — Draining** (сигнал или неожиданный выход OTLP/API): `transition(draining)`; `stop()` — **только** если причина — сигнал (иначе первый SIGTERM от k8s во время дренажа после сбоя компонента убил бы процесс и дренаж); при выходе компонента `stop` вызывается в `defer` → OTLP: `stopping(otlp)`, горутина `GracefulStop` → `close(stopped)`, `select` на `stopped`, ctx этапа (`OTLPGrace`) и `done` Pipeline; по дедлайну — `Stop()` и `<-stopped` (не зависает: `Stop` отпускает `GracefulStop`, опыт osmani), Warn `lifecycle.forced_stop`; если за это время Pipeline вышел без команды — сразу `journal.Close()` (дальше `Append` → `UNAVAILABLE`), дренаж пропускается, остаток журнала → `drain_incomplete` `exact: true`, ошибка; иначе → `stopping(pipeline)`, `journal.Close()` → `wait(pipeline, Drain)`; нет — `cancelPipeline()`, `wait(pipeline, CancelGrace)`; нет и тогда — `exact: false` → `journal.Stats()`: непустой — Error `lifecycle.drain_incomplete` (`spans`, `batches`, `bytes`, `exact`) → API: `stopping(api)`, `Shutdown(stageCtx HTTPGrace)`; ошибка ctx — `Close()`, Warn `lifecycle.forced_stop` → `wait` OTLP и API с отдельным коротким ctx `ExitGrace` (100 ms; возврат `Shutdown`/`Stop` не гарантирует, что обёртка уже закрыла `done`, а зависший хэндлер не должен съесть бюджет 10 s; не дождались — Warn `lifecycle.forced_stop`, ошибка) и Pipeline, если он вышел; `journal.Stats()` читается при живом Pipeline только в случае `exact: false` — порт требует, чтобы `Stats` был безопасен параллельно (`memjournal` берёт мьютекс); горутина Pipeline в этом случае принадлежит процессу и умирает вместе с ним → `transition(stopped)`. Принудительные `Stop`/`Close` на код не влияют. Результат: `nil`, если причина — сигнал, потерь нет и все выходы штатные; иначе ошибка (`errUnexpectedExit`, `errDrainIncomplete`, ошибка компонента — `errors.Join`).
+- **D7a — сигнал и выход Pipeline одновременно.** `select` в Serving выбирает случайно, поэтому после отмены ctx сигнала `run` неблокирующе проверяет `exited(pipeline)`: Pipeline уже вышел — путь Aborting (D8), иначе Draining. Тест принимает оба исхода только там, где они неразличимы по времени.
+- **D8 — Aborting** (неожиданный выход Pipeline): `transition(aborting)`, `defer stop()` → `journal.Close()` **до** остановки OTLP (`Append` → `ErrUnavailable` → `UNAVAILABLE`, а не OK в журнал без читателя) → OTLP как в D7 → дренаж пропускается → `drain_incomplete` (`exact: true`: Pipeline уже вышел), если журнал непуст → API как в D7 → `transition(stopped)` → ошибка.
+- **D9 — бюджеты времени — значение.** `shutdownBudget{OTLPGrace, Drain, CancelGrace, HTTPGrace, ExitGrace}` = 4,5 s / 2,5 s / 0,5 s / 2 s / 0,1 s (сумма 9,6 s: остаток до 10 s — на `Stop`, `Close` и логи; раздел «Жизненный цикл» обновлён с 5 s на 4,5 s). Таймеры — через ctx этапов (D6).
+- **D10 — HTTP-сервер и `/healthz` — в адаптере.** `connectapi.NewServer(handler http.Handler) *http.Server`: `ReadHeaderTimeout 5s`, `ReadTimeout 30s`, `WriteTimeout 0`, `IdleTimeout 120s` (раздел «Дедлайны»), `Protocols` HTTP/1 + незашифрованный HTTP/2. `connectapi.Health(ready readiness) http.Handler`: 200 `ok` или 503 `not ready`; `readiness` — неэкспортированный порт потребителя: вызывающий передаёт любой тип с `Ready() bool`, имя порта ему не нужно.
+- **D11 — `lifecycle.state` и `config.memory_limit` — в 5b-2.** Они описывают старт и машину состояний, которые вводит этот срез; список стабильных событий в «Наблюдаемости» дополнен (`config.memory_limit`, `lifecycle.component_exit`, `lifecycle.forced_stop`, `lifecycle.start_failed`). В 5b-3 остаются `pipeline.stats` и self-tracing.
+
+**`cmd/faultline` (package main)**
+
+```go
+type limitSource string
+
+type memorySetting struct {
+	Bytes  int64
+	Source limitSource
+}
+
+type startup struct {
+	Config Config
+	Memory memorySetting
+}
+
+type shutdownBudget struct {
+	OTLPGrace   time.Duration
+	Drain       time.Duration
+	CancelGrace time.Duration
+	HTTPGrace   time.Duration
+	ExitGrace   time.Duration
+}
+
+func memoryLimit(lookup lookupFunc, readCgroup cgroupReader) (memorySetting, error)
+func newSystem(cfg *Config, logger *slog.Logger) (*system, error)
+func run(ctx context.Context, stop context.CancelFunc, sys *system, listeners listeners, budget shutdownBudget) error
+```
+
+**`internal/interfaces/connectapi` (добавление)**
+
+```go
+const (
+	ReadHeaderTimeout = 5 * time.Second
+	ReadTimeout       = 30 * time.Second
+	IdleTimeout       = 120 * time.Second
+)
+
+func NewServer(handler http.Handler) *http.Server
+func Health(ready readiness) http.Handler
+```
+
+**Тесты**
+
+| Где | Что |
+|---|---|
+| `cmd/faultline` порядок остановки (`TestShutdown…`; фейки портов и фейковые листенеры пишут вызовы в общий журнал; случаи с истечением бюджета — в `synctest.Test` с настоящими 4,5 / 2,5 / 0,5 / 2 s; в пузыре нет `net.Listen` и `grpc` — сетевое ожидание не считается блокировкой, и фейковые часы не идут (опыт osmani); все горутины пузыря, включая отпущенный фейк `exact: false`, выходят до его конца) | сигнал: `stop` → `otlp.GracefulStop` → `journal.Close` → Pipeline вышел → `api.Shutdown`, `nil`; неожиданный выход OTLP или API: тот же порядок, `stop` в конце, ошибка; неожиданный выход Pipeline (`nil` и ошибка): `journal.Close` раньше `otlp.GracefulStop`, дренажа нет, ошибка; Pipeline вышел, пока OTLP останавливался по сигналу: `journal.Close` сразу, `drain_incomplete` `exact: true`, ошибка; Pipeline вернул ошибку после `journal.Close` → ошибка; OTLP не остановился за 4,5 s → `Stop`, `nil`; `Shutdown` не уложился в 2 s → `Close`, `nil`; Pipeline не вышел за 2,5 s → отмена его ctx, вышел за 0,5 s → `drain_incomplete` `exact: true` с числами настоящего `memjournal`, ошибка; не вышел и за 0,5 s → `exact: false`, ошибка, `run` вернулся — затем тест открывает канал фейка и дожидается его выхода (goleak); второй компонент упал во время дренажа → ошибка; сигнал во время Aborting не меняет порядок. Каждый случай проверяет и последовательность `lifecycle.state`. Ровно одно событие `exits` на компонент |
+| `cmd/faultline` e2e (настоящие компоненты, листенеры через `listen` на `127.0.0.1:0`, goleak) | первый случай собран `newSystem` целиком: `Export` пары A→B → `GetGraph` по gRPC через h2c видит ребро; отмена ctx → `nil`, выход ≤ 10 s. Дренаж 1000 пакетов: feed-шлюз держит Pipeline; 1000 `Export` с разными trace id приняты; отмена ctx; тест ждёт `/healthz` = 503 и только тогда открывает шлюз; после `run` снимок `memgraph` содержит 1000 вызовов, `nil`. Неожиданный выход Pipeline (feed возвращает ошибку) → ошибка, `/healthz` = 503 в Aborting. `/healthz` 200 в Serving по HTTP/1.1 и HTTP/2 без TLS. Второе соединение OTLP ждёт, пока первое открыто: `LimitListener` из `listen`, а не обёрнутый тестом |
+| `cmd/faultline` `realMain` | занятый порт OTLP или API (порт занят тестом заранее и передан через env) → код 1, адрес в выводе; после этого адрес первого листенера снова свободен (он закрыт); `config.memory_limit` в логе с источником; второй сигнал — проверяется через то, что `run` вызывает `stop` при Draining по сигналу (порядок остановки), а поведение «второй сигнал убивает» — штатное поведение `signal.NotifyContext` после `stop` |
+| `connectapi` | `NewServer`: таймауты и протоколы как в D10; `Health`: 200/503 и тело |
+
+**Makefile:** в `test-stress` — строка `go test -race -count=$(STRESS_COUNT) -run '$(SHUTDOWN_TESTS)' ./cmd/faultline/`, где `SHUTDOWN_TESTS` — тесты на фейках: порядок остановки, остаток журнала, сигнал после выхода Pipeline, одно событие на компонент (e2e и повторный запуск процесса — нет).
+
 ## Критерии приёмки (Definition of Done шага)
 
 **Гейты качества**
@@ -1152,7 +1226,7 @@ func checkBudget(cfg *Config, limit int64) error
 **Жизненный цикл**
 - [ ] Невалидный env → код 2 с именем переменной и форматом; занятый порт → код 1 с адресом, до старта компонентов.
 - [ ] e2e на `:0`: ребро A→B видно, выход ≤ 10 s, goleak чистый.
-- [ ] Остановка: сигнал при 1000 пакетах в журнале → все учтены; дренаж дольше 2,5 s → `drain_incomplete` с точным числом и кодом 1; итерация дольше 0,5 s после отмены → `exact: false`, код 1; второй сигнал убивает сразу.
+- [ ] Остановка: сигнал при 1000 пакетах в журнале → все учтены; дренаж дольше 2,5 s → `drain_incomplete` с точным числом и кодом 1; итерация дольше 0,5 s после отмены → `exact: false`, код 1; при дренаже по сигналу первым шагом вызывается `stop()` (дальше второй сигнал убивает процесс штатным поведением `signal.NotifyContext`).
 - [ ] Неожиданный выход Pipeline → журнал закрыт до остановки OTLP (`UNAVAILABLE`, не OK), код 1; выход другого компонента → код 1 с дренажом.
 
 **Наблюдаемость**
@@ -1178,7 +1252,7 @@ func checkBudget(cfg *Config, limit int64) error
 | `connectrpc.com/connect` | Apache 2.0 | API (порт 8080); HTTP/2 без TLS — штатный `http.Protocols` (Go 1.24+), без `x/net/h2c` |
 | `connectrpc.com/grpcreflect` | Apache 2.0 | Reflection для `grpcurl` (FR-API-001) |
 | `golang.org/x/net/netutil` | BSD-3 | `LimitListener(…, 1)` для OTLP (I5, срез 4b D2) |
-| `golang.org/x/sync` (`semaphore`) | BSD-3 | Ограничение одновременных `GetGraph` в `connectapi/limit` (журнал считает кредит под своим мьютексом; жизненный цикл — `sync.WaitGroup.Go`, без `errgroup`, см. «Жизненный цикл») |
+| `golang.org/x/sync` (`semaphore`) | BSD-3 | Ограничение одновременных `GetGraph` в `connectapi/limit` (журнал считает кредит под своим мьютексом; жизненный цикл — канал `done` на каждый компонент (срез 5b-2, D4), без `errgroup`) |
 | `go.opentelemetry.io/otel` (+ `sdk`, `otlptracegrpc`) | Apache 2.0 | Self-tracing, по умолчанию no-op |
 | `github.com/spf13/cobra` | Apache 2.0 | CLI `faultline`, `faultctl` |
 | `github.com/google/go-cmp`, `go.uber.org/goleak` | BSD-3 / MIT | Тесты |
