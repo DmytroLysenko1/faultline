@@ -43,16 +43,21 @@ func contributions(cfg *Config) []contribution {
 
 func checkBudget(cfg *Config, limit int64) error {
 	parts := contributions(cfg)
-	var total int64
-	for _, part := range parts {
-		total += part.bytes
-	}
+	worst := total(parts)
 	allowed := limit / percent * budgetSharePercent
-	if total <= allowed {
+	if worst <= allowed {
 		return nil
 	}
-	return fmt.Errorf("%w: %s > %d%% of GOMEMLIMIT %s (%s)", errOverBudget, inMiB(total), budgetSharePercent,
+	return fmt.Errorf("%w: %s > %d%% of GOMEMLIMIT %s (%s)", errOverBudget, inMiB(worst), budgetSharePercent,
 		inMiB(limit), breakdown(parts))
+}
+
+func total(parts []contribution) int64 {
+	var sum int64
+	for _, part := range parts {
+		sum += part.bytes
+	}
+	return sum
 }
 
 func breakdown(parts []contribution) string {

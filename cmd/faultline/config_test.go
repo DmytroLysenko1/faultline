@@ -107,7 +107,7 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 			Want: defaultConfig(),
 		},
 		{
-			Name: "sizes accept every unit at the range edges",
+			Name: "size at the upper range edge in MiB",
 			Args: map[string]string{
 				envJournalMaxBytes: "512MiB",
 			},
@@ -116,12 +116,21 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 			}),
 		},
 		{
-			Name: "sizes in bytes and KiB are the same unit system",
+			Name: "size at the lower range edge in plain bytes",
 			Args: map[string]string{
 				envJournalMaxBytes: "50331648B",
 			},
 			Want: configWith(func(cfg *Config) {
 				cfg.Journal.MaxBytes = 48 << 20
+			}),
+		},
+		{
+			Name: "size in KiB and GiB",
+			Args: map[string]string{
+				envJournalMaxBytes: "131072KiB",
+			},
+			Want: configWith(func(cfg *Config) {
+				cfg.Journal.MaxBytes = 128 << 20
 			}),
 		},
 		{

@@ -7,24 +7,18 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi"
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
 )
 
 const (
 	defaultWorstCaseBytes = 1_143_522_800
 	manifestMemoryLimit   = 1408 << 20
-	formerMemoryLimit     = 1280 << 20
+	tightMemoryLimit      = defaultWorstCaseBytes/budgetSharePercent*percent - mib
+	applyProbeSpans       = 148_470
 )
 
-func totalOf(cfg *Config) int64 {
-	var total int64
-	for _, part := range contributions(cfg) {
-		total += part.bytes
-	}
-	return total
-}
-
 func TestDefaultWorstCaseIsPinned(t *testing.T) {
-	if got := totalOf(new(defaultConfig())); got != defaultWorstCaseBytes {
+	if got := total(contributions(new(defaultConfig()))); got != defaultWorstCaseBytes {
 		t.Errorf("default worst case = %d bytes (%s), pinned %d: update the I5 table in the design doc",
 			got, inMiB(got), defaultWorstCaseBytes)
 	}
@@ -48,10 +42,10 @@ func TestBudgetAtTheMemoryLimit(t *testing.T) {
 			},
 		},
 		{
-			Name: "defaults do not fit the former 1280 MiB limit",
+			Name: "defaults do not fit a limit one MiB below what they need",
 			Args: args{
 				cfg:   defaultConfig(),
-				limit: formerMemoryLimit,
+				limit: tightMemoryLimit,
 			},
 			WantErr: errOverBudget,
 		},
@@ -101,5 +95,12 @@ func TestBreakdownListsContributionsLargestFirstInMiB(t *testing.T) {
 func TestLargestAllowedGraphResponseFitsTheSendLimit(t *testing.T) {
 	if got := connectapi.WorstResponseBytes(maxGraphMaxNodes, maxGraphMaxEdges); got > connectapi.SendMaxBytes {
 		t.Errorf("worst response at the range limits = %s, SendMaxBytes %s", inMiB(got), inMiB(connectapi.SendMaxBytes))
+	}
+}
+
+func TestApplyProbeUsesTheLargestRequest(t *testing.T) {
+	if otlp.MaxSpansPerRequest != applyProbeSpans {
+		t.Errorf("otlp.MaxSpansPerRequest = %d, the topology Apply probe still uses %d: update largestRequestSpans",
+			otlp.MaxSpansPerRequest, applyProbeSpans)
 	}
 }

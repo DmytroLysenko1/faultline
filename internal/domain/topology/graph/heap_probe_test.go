@@ -3,6 +3,7 @@
 package graph_test
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 
@@ -57,26 +58,30 @@ func shapes() []graph.Limits {
 
 func TestWorstCaseHeapCoversAFullGraphWithTheLongestStrings(t *testing.T) {
 	for _, limits := range shapes() {
-		grown := telemetrytest.HeapGrowth(func() any {
-			return fullGraph(t, limits)
+		t.Run(fmt.Sprintf("%d nodes, %d edges", limits.MaxNodes, limits.MaxEdges), func(t *testing.T) {
+			grown := telemetrytest.HeapGrowth(func() any {
+				return fullGraph(t, limits)
+			})
+			if model := uint64(limits.WorstCaseHeapBytes()); grown > model {
+				t.Errorf("%+v: heap grew %d bytes, model %d", limits, grown, model)
+			}
 		})
-		if model := uint64(limits.WorstCaseHeapBytes()); grown > model {
-			t.Errorf("%+v: heap grew %d bytes, model %d", limits, grown, model)
-		}
 	}
 }
 
 func TestViewHeapCoversOneCopyOfTheView(t *testing.T) {
 	for _, limits := range shapes() {
-		view := fullGraph(t, limits).CurrentView()
-		grown := telemetrytest.HeapGrowth(func() any {
-			return graph.View{
-				Nodes: slices.Clone(view.Nodes),
-				Edges: slices.Clone(view.Edges),
+		t.Run(fmt.Sprintf("%d nodes, %d edges", limits.MaxNodes, limits.MaxEdges), func(t *testing.T) {
+			view := fullGraph(t, limits).CurrentView()
+			grown := telemetrytest.HeapGrowth(func() any {
+				return graph.View{
+					Nodes: slices.Clone(view.Nodes),
+					Edges: slices.Clone(view.Edges),
+				}
+			})
+			if model := uint64(limits.ViewHeapBytes()); grown > model {
+				t.Errorf("%+v: a view copy took %d bytes, model %d", limits, grown, model)
 			}
 		})
-		if model := uint64(limits.ViewHeapBytes()); grown > model {
-			t.Errorf("%+v: a view copy took %d bytes, model %d", limits, grown, model)
-		}
 	}
 }

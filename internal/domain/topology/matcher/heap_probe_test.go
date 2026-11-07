@@ -3,6 +3,7 @@
 package matcher_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -58,12 +59,14 @@ func TestWorstCaseHeapCoversSteadyEvictionOfPendingHalves(t *testing.T) {
 		ServiceName: sharedServiceName,
 	}
 	for _, pending := range []int{1_000, 100_000, 1_000_000} {
-		grown := steadyGrowth(t, pending, func(int) resource.Resource {
-			return shared
+		t.Run(fmt.Sprintf("pending %d", pending), func(t *testing.T) {
+			grown := steadyGrowth(t, pending, func(int) resource.Resource {
+				return shared
+			})
+			if model := uint64(limitsOf(pending).WorstCaseHeapBytes()); grown > model {
+				t.Errorf("heap grew %d bytes, model %d", grown, model)
+			}
 		})
-		if model := uint64(limitsOf(pending).WorstCaseHeapBytes()); grown > model {
-			t.Errorf("pending %d: heap grew %d bytes, model %d", pending, grown, model)
-		}
 	}
 }
 

@@ -32,14 +32,14 @@ func (r *recordedLimit) setLimit(limit int64) int64 {
 type outcome struct {
 	Code   int
 	Limits []int64
+	Stderr string
 }
 
 func TestRealMain(t *testing.T) {
 	tests := []struct {
-		Name       string
-		Args       process
-		Want       outcome
-		WantStderr string
+		Name string
+		Args process
+		Want outcome
 	}{
 		{
 			Name: "no subcommand prints usage",
@@ -47,9 +47,9 @@ func TestRealMain(t *testing.T) {
 				Lookup: environment(map[string]string{}),
 			},
 			Want: outcome{
-				Code: exitConfig,
+				Code:   exitConfig,
+				Stderr: "usage: faultline all\n",
 			},
-			WantStderr: "usage: faultline all\n",
 		},
 		{
 			Name: "unknown subcommand prints usage",
@@ -60,9 +60,9 @@ func TestRealMain(t *testing.T) {
 				Lookup: environment(map[string]string{}),
 			},
 			Want: outcome{
-				Code: exitConfig,
+				Code:   exitConfig,
+				Stderr: "usage: faultline all\n",
 			},
-			WantStderr: "usage: faultline all\n",
 		},
 		{
 			Name: "invalid variable names the variable",
@@ -76,9 +76,9 @@ func TestRealMain(t *testing.T) {
 			},
 			Want: outcome{
 				Code: exitConfig,
+				Stderr: `FAULTLINE_GRAPH_MAX_NODES: invalid integer "abc" (not an unsigned decimal integer), ` +
+					"want e.g. 10000\n",
 			},
-			WantStderr: `FAULTLINE_GRAPH_MAX_NODES: invalid integer "abc" (not an unsigned decimal integer), ` +
-				"want e.g. 10000\n",
 		},
 		{
 			Name: "memory limit off is refused before the budget",
@@ -91,9 +91,9 @@ func TestRealMain(t *testing.T) {
 				}),
 			},
 			Want: outcome{
-				Code: exitConfig,
+				Code:   exitConfig,
+				Stderr: "GOMEMLIMIT=off disables the memory budget\n",
 			},
-			WantStderr: "GOMEMLIMIT=off disables the memory budget\n",
 		},
 		{
 			Name: "over budget keeps the limit set and lists the contributions",
@@ -102,18 +102,18 @@ func TestRealMain(t *testing.T) {
 					commandAll,
 				},
 				Lookup: environment(map[string]string{
-					envMemoryLimit: "1280MiB",
+					envMemoryLimit: "1GiB",
 				}),
 			},
 			Want: outcome{
 				Code: exitConfig,
 				Limits: []int64{
-					formerMemoryLimit,
+					1 << 30,
 				},
+				Stderr: "worst-case memory exceeds the budget: 1090.5 MiB > 85% of GOMEMLIMIT 1024.0 MiB " +
+					"(otlp requests 440.0 MiB, api responses 343.3 MiB, pairing and graph 222.5 MiB, journal 64.2 MiB, " +
+					"batch apply 14.7 MiB, snapshots 5.8 MiB)\n",
 			},
-			WantStderr: "worst-case memory exceeds the budget: 1090.5 MiB > 85% of GOMEMLIMIT 1280.0 MiB " +
-				"(otlp requests 440.0 MiB, api responses 343.3 MiB, pairing and graph 222.5 MiB, journal 64.2 MiB, " +
-				"batch apply 14.7 MiB, snapshots 5.8 MiB)\n",
 		},
 		{
 			Name: "valid config sets the memory limit and exits cleanly",
@@ -139,15 +139,14 @@ func TestRealMain(t *testing.T) {
 			current.ReadCgroup = noCgroup
 			current.SetMemoryLimit = limits.setLimit
 			current.Stderr = &stderr
+			code := realMain(current)
 			got := outcome{
-				Code:   realMain(current),
+				Code:   code,
 				Limits: limits.set,
+				Stderr: stderr.String(),
 			}
 			if diff := cmp.Diff(tt.Want, got); diff != "" {
 				t.Errorf("realMain (-want +got):\n%s", diff)
-			}
-			if diff := cmp.Diff(tt.WantStderr, stderr.String()); diff != "" {
-				t.Errorf("stderr (-want +got):\n%s", diff)
 			}
 		})
 	}

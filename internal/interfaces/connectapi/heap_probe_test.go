@@ -126,29 +126,51 @@ func discardResponse(t *testing.T, address string, client *http.Client, encoding
 }
 
 func TestWorstCaseHeapCoversOneGetGraphOnTheRealHandler(t *testing.T) {
+	type args struct {
+		naming   serviceNaming
+		encoding string
+	}
 	model := connectapi.WorstHeapBytes(probeNodes, probeEdges, 0) / connectapi.MaxConcurrentGetGraph
-	cases := []struct {
-		name   string
-		naming serviceNaming
+	tests := []struct {
+		Name string
+		Args args
 	}{
 		{
-			name:   "longest json",
-			naming: telemetrytest.WorstService,
+			Name: "longest json, gzip",
+			Args: args{
+				naming:   telemetrytest.WorstService,
+				encoding: encodingGzip,
+			},
 		},
 		{
-			name:   "incompressible gzip",
-			naming: randomServices(),
+			Name: "longest json, identity",
+			Args: args{
+				naming:   telemetrytest.WorstService,
+				encoding: encodingIdentity,
+			},
+		},
+		{
+			Name: "incompressible strings, gzip",
+			Args: args{
+				naming:   randomServices(),
+				encoding: encodingGzip,
+			},
+		},
+		{
+			Name: "incompressible strings, identity",
+			Args: args{
+				naming:   randomServices(),
+				encoding: encodingIdentity,
+			},
 		},
 	}
-	for _, shape := range cases {
-		snapshot := snapshotOf(shape.naming)
-		for _, encoding := range []string{encodingGzip, encodingIdentity} {
-			peak := serverPeak(t, snapshot, encoding)
-			t.Logf("%s, %s: server held %.1f MiB, model %.1f MiB", shape.name, encoding, float64(peak)/mebibyte,
-				float64(model)/mebibyte)
+	for _, tt := range tests {
+		t.Run(tt.Name, func(t *testing.T) {
+			peak := serverPeak(t, snapshotOf(tt.Args.naming), tt.Args.encoding)
+			t.Logf("server held %.1f MiB, model %.1f MiB", float64(peak)/mebibyte, float64(model)/mebibyte)
 			if peak > model {
-				t.Errorf("%s, %s: server held %d bytes for one GetGraph, model %d", shape.name, encoding, peak, model)
+				t.Errorf("server held %d bytes for one GetGraph, model %d", peak, model)
 			}
-		}
+		})
 	}
 }

@@ -3,6 +3,7 @@
 package tombstone_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -27,11 +28,13 @@ func steadySet(t *testing.T, limit int) any {
 
 func TestWorstCaseHeapCoversSteadyEviction(t *testing.T) {
 	for _, limit := range []int{1_000, 100_000, 900_000, 1_000_000} {
-		grown := telemetrytest.HeapGrowth(func() any {
-			return steadySet(t, limit)
+		t.Run(fmt.Sprintf("limit %d", limit), func(t *testing.T) {
+			grown := telemetrytest.HeapGrowth(func() any {
+				return steadySet(t, limit)
+			})
+			if model := uint64(tombstone.WorstCaseHeapBytes(limit)); grown > model {
+				t.Errorf("limit %d: heap grew %d bytes, model %d", limit, grown, model)
+			}
 		})
-		if model := uint64(tombstone.WorstCaseHeapBytes(limit)); grown > model {
-			t.Errorf("limit %d: heap grew %d bytes, model %d", limit, grown, model)
-		}
 	}
 }
