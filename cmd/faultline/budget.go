@@ -10,6 +10,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/application/processing"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memgraph"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/selftrace"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
 )
@@ -30,6 +31,10 @@ type contribution struct {
 }
 
 func contributions(cfg *Config) []contribution {
+	return append(coreContributions(cfg), selfTracingContribution(cfg)...)
+}
+
+func coreContributions(cfg *Config) []contribution {
 	view := cfg.Topology.ViewHeapBytes()
 	return []contribution{
 		{name: "journal", bytes: cfg.Journal.WorstCaseHeapBytes()},
@@ -38,6 +43,18 @@ func contributions(cfg *Config) []contribution {
 		{name: "batch apply", bytes: topology.ApplyHeapBytes(otlp.MaxSpansPerRequest)},
 		{name: "api responses", bytes: connectapi.WorstHeapBytes(cfg.Topology.MaxNodes, cfg.Topology.MaxEdges, view)},
 		{name: "otlp requests", bytes: otlp.WorstHeapBytes()},
+	}
+}
+
+func selfTracingContribution(cfg *Config) []contribution {
+	if cfg.SelfTracingEndpoint == "" {
+		return nil
+	}
+	return []contribution{
+		{
+			name:  "self-tracing",
+			bytes: selftrace.WorstHeapBytes(),
+		},
 	}
 }
 

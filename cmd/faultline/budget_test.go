@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/selftrace"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
 )
@@ -102,5 +103,32 @@ func TestApplyProbeUsesTheLargestRequest(t *testing.T) {
 	if otlp.MaxSpansPerRequest != applyProbeSpans {
 		t.Errorf("otlp.MaxSpansPerRequest = %d, the topology Apply probe still uses %d: update largestRequestSpans",
 			otlp.MaxSpansPerRequest, applyProbeSpans)
+	}
+}
+
+func TestSelfTracingAddsItsQueueOnlyWhenEnabled(t *testing.T) {
+	tests := []struct {
+		Name string
+		Args string
+		Want int64
+	}{
+		{
+			Name: "disabled",
+		},
+		{
+			Name: "enabled",
+			Args: "collector:4317",
+			Want: selftrace.WorstHeapBytes(),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.Name, func(t *testing.T) {
+			cfg := configWith(func(cfg *Config) {
+				cfg.SelfTracingEndpoint = tt.Args
+			})
+			if got := total(contributions(&cfg)) - defaultWorstCaseBytes; got != tt.Want {
+				t.Errorf("self-tracing contribution = %d, want %d", got, tt.Want)
+			}
+		})
 	}
 }

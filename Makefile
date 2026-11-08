@@ -92,7 +92,7 @@ endif
 
 PROBE_PACKAGES := ./internal/interfaces/otlp/decodelimit/...
 BUDGET_PACKAGES := ./internal/domain/topology/... ./internal/infrastructure/memjournal/... \
-	./internal/interfaces/connectapi/...
+	./internal/interfaces/connectapi/... ./internal/infrastructure/selftrace/...
 DRAIN_PACKAGES := ./test/pipeline/...
 
 .PHONY: test-probes
@@ -104,7 +104,8 @@ test-probes: ## Heap and time probes without -race: decode limit, memory budget 
 STRESS_PACKAGES := ./internal/application/ingest/... ./internal/application/processing/... \
 	./internal/infrastructure/memjournal/... ./internal/infrastructure/memgraph/... ./test/pipeline/...
 STRESS_COUNT := 200
-SHUTDOWN_TESTS := TestShutdownOrder|TestDrainIncomplete|TestSignalAfterPipelineExit|TestEveryComponent|TestOTLPStuckAfterStop
+SHUTDOWN_TESTS := TestShutdownOrder|TestDrainIncomplete|TestSignalAfterPipelineExit|TestEveryComponent|TestOTLPStuckAfterStop|\
+	TestSlowComponentsAtTheEndOfShutdown|TestStatsReporter|TestStopOnATick
 
 .PHONY: test-stress
 test-stress: ## Repeat concurrency-sensitive tests under the race detector (nightly CI, before a tag)

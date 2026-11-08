@@ -337,6 +337,14 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			WantErr: errPort,
 		},
 		{
+			Name: "self-tracing endpoint equal to the otlp address",
+			Args: map[string]string{
+				envSelfTracing: defaultOTLPAddr,
+			},
+			Want:    `FAULTLINE_SELF_TRACING_ENDPOINT: "127.0.0.1:4317" must differ from FAULTLINE_OTLP_GRPC_ADDR`,
+			WantErr: errSameAddress,
+		},
+		{
 			Name: "unknown log level",
 			Args: map[string]string{
 				envLogLevel: "Info",

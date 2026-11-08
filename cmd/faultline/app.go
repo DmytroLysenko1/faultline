@@ -86,13 +86,14 @@ func serve(stderr io.Writer, setup *startup) int {
 }
 
 func launch(ctx context.Context, stop context.CancelFunc, setup *startup, logger *slog.Logger) error {
-	sys, err := newSystem(&setup.Config, logger)
+	sys, err := newSystem(ctx, &setup.Config, logger)
 	if err != nil {
 		logger.Error("lifecycle.start_failed", "error", err)
 		return err
 	}
 	open, err := listen(ctx, &setup.Config)
 	if err != nil {
+		err = errors.Join(err, discardTracing(ctx, sys.tracing))
 		logger.Error("lifecycle.start_failed", "error", err)
 		return err
 	}

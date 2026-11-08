@@ -20,6 +20,7 @@ import (
 	"connectrpc.com/grpcreflect"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"go.opentelemetry.io/otel/trace/noop"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -370,6 +371,7 @@ func TestDefaultOptions(t *testing.T) {
 		MaxConcurrent:           4,
 		MaxConcurrentReflection: 2,
 		Logger:                  logger,
+		TracerProvider:          noop.NewTracerProvider(),
 	}
 	got := connectapi.DefaultOptions(logger)
 	if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(connectapi.Options{}, "Logger")); diff != "" {

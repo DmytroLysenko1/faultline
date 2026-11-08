@@ -50,7 +50,11 @@ func (d *shutdown) awaitForcedStop(stopped <-chan struct{}) {
 func (d *shutdown) drainJournal(ctx context.Context) {
 	d.parts.stopping(componentPipeline)
 	d.sys.journal.Close()
-	d.reportRemainder(d.awaitPipeline(ctx))
+	exited := d.awaitPipeline(ctx)
+	if !exited {
+		d.forced(componentPipeline, errNotStopped)
+	}
+	d.reportRemainder(exited)
 }
 
 func (d *shutdown) awaitPipeline(ctx context.Context) bool {
@@ -93,13 +97,26 @@ func (d *shutdown) stopAPI(ctx context.Context) {
 	}
 }
 
-func (d *shutdown) awaitServers(ctx context.Context) {
+func (d *shutdown) stopReporting() {
+	d.parts.stopping(componentStats)
+	d.cancelReport()
+}
+
+func (d *shutdown) awaitExits(ctx context.Context) {
 	stageCtx, cancel := context.WithTimeout(ctx, d.budget.ExitGrace)
 	defer cancel()
-	for _, name := range []string{componentOTLP, componentAPI} {
+	for _, name := range []string{componentOTLP, componentAPI, componentStats} {
 		if !d.parts.wait(stageCtx, name) {
 			d.forced(name, stageCtx.Err())
 			d.failures = append(d.failures, fmt.Errorf("%s: %w", name, errNotStopped))
 		}
+	}
+}
+
+func (d *shutdown) flushTracing(ctx context.Context) {
+	stageCtx, cancel := context.WithTimeout(ctx, d.budget.TraceFlush)
+	defer cancel()
+	if err := d.sys.tracing.Shutdown(stageCtx); err != nil {
+		d.forced(componentTracing, err)
 	}
 }

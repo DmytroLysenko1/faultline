@@ -9,6 +9,8 @@ const (
 	componentOTLP     = "otlp"
 	componentAPI      = "api"
 	componentPipeline = "pipeline"
+	componentStats    = "stats"
+	componentTracing  = "tracing"
 )
 
 type componentExit struct {
@@ -70,7 +72,7 @@ func (c *components) wait(ctx context.Context, name string) bool {
 	case <-c.exited(name):
 		return true
 	case <-ctx.Done():
-		return false
+		return c.hasExited(name)
 	}
 }
 

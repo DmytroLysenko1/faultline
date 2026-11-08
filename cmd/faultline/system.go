@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"time"
+
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
 	"github.com/DmytroLysenko1/faultline/internal/application/processing"
@@ -13,6 +16,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memgraph"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/selftrace"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/graphservice"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
@@ -45,6 +49,15 @@ type spanFeed interface {
 	Receive(ctx context.Context, limit int) ([]processing.Delivery, error)
 }
 
+type statsRunner interface {
+	Run(ctx context.Context) error
+}
+
+type selfTracing interface {
+	TracerProvider() trace.TracerProvider
+	Shutdown(ctx context.Context) error
+}
+
 type systemClock struct{}
 
 func (systemClock) Now() time.Time {
@@ -62,6 +75,8 @@ type system struct {
 	ingest    ingestServer
 	api       apiServer
 	pipeline  pipelineRunner
+	stats     statsRunner
+	tracing   selfTracing
 	store     *memgraph.Store
 	lifecycle *lifecycle
 	logger    *slog.Logger
@@ -69,29 +84,65 @@ type system struct {
 
 type feedSource func(stored storage) spanFeed
 
-func newSystem(cfg *Config, logger *slog.Logger) (*system, error) {
-	return assemble(cfg, logger, journalFeed)
+type wiring struct {
+	feedOf  feedSource
+	tracing selfTracing
+}
+
+func newSystem(ctx context.Context, cfg *Config, logger *slog.Logger) (*system, error) {
+	tracing, err := provideTracing(ctx, cfg.SelfTracingEndpoint, logger)
+	if err != nil {
+		return nil, err
+	}
+	sys, err := assemble(cfg, logger, wiring{
+		feedOf:  journalFeed,
+		tracing: tracing,
+	})
+	if err != nil {
+		return nil, errors.Join(err, discardTracing(ctx, tracing))
+	}
+	return sys, nil
+}
+
+func provideTracing(ctx context.Context, endpoint string, logger *slog.Logger) (selfTracing, error) {
+	if endpoint == "" {
+		return selftrace.Disabled(), nil
+	}
+	tracing, err := selftrace.New(ctx, endpoint, logger)
+	if err != nil {
+		return nil, fmt.Errorf("build self-tracing: %w", err)
+	}
+	return tracing, nil
+}
+
+func discardTracing(ctx context.Context, tracing selfTracing) error {
+	flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), traceFlush)
+	defer cancel()
+	return tracing.Shutdown(flushCtx)
 }
 
 func journalFeed(stored storage) spanFeed {
 	return stored.journal
 }
 
-func assemble(cfg *Config, logger *slog.Logger, feedOf feedSource) (*system, error) {
+func assemble(cfg *Config, logger *slog.Logger, seams wiring) (*system, error) {
 	stored, err := provideStorage(cfg)
 	if err != nil {
 		return nil, err
 	}
 	state := newLifecycle(logger)
-	api, err := provideAPI(stored.store, state, logger)
+	api, err := provideAPI(stored.store, state, seams.tracing.TracerProvider(), logger)
 	if err != nil {
 		return nil, err
 	}
+	server, counters := provideIngest(stored.journal, logger)
 	return &system{
 		journal:   stored.journal,
-		ingest:    provideIngest(stored.journal, logger),
+		ingest:    server,
 		api:       api,
-		pipeline:  providePipeline(feedOf(stored), stored),
+		pipeline:  providePipeline(seams.feedOf(stored), stored),
+		stats:     provideStats(stored, counters, logger),
+		tracing:   seams.tracing,
 		store:     stored.store,
 		lifecycle: state,
 		logger:    logger,
@@ -118,13 +169,29 @@ func provideStorage(cfg *Config) (storage, error) {
 	}, nil
 }
 
-func provideIngest(journal *memjournal.Journal, logger *slog.Logger) ingestServer {
+func provideIngest(journal *memjournal.Journal, logger *slog.Logger) (ingestServer, *ingest.AcceptBatch) {
 	accept := ingest.NewAcceptBatch(journal, systemClock{})
-	return otlp.NewServer(accept, otlp.DefaultOptions(logger, systemClock{}))
+	return otlp.NewServer(accept, otlp.DefaultOptions(logger, systemClock{})), accept
 }
 
-func provideAPI(store *memgraph.Store, state *lifecycle, logger *slog.Logger) (apiServer, error) {
+func provideStats(stored storage, counters ingestCounters, logger *slog.Logger) *statsReporter {
+	return &statsReporter{
+		snapshots: stored.store,
+		ingest:    counters,
+		journal:   stored.journal,
+		logger:    logger,
+		interval:  statsInterval,
+	}
+}
+
+func provideAPI(
+	store *memgraph.Store,
+	state *lifecycle,
+	tracer trace.TracerProvider,
+	logger *slog.Logger,
+) (apiServer, error) {
 	options := connectapi.DefaultOptions(logger)
+	options.TracerProvider = tracer
 	mux, err := connectapi.NewMux(graphservice.NewHandler(query.NewGetGraph(store), logger), options)
 	if err != nil {
 		return nil, fmt.Errorf("build api: %w", err)

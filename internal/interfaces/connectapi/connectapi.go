@@ -8,11 +8,14 @@ import (
 
 	"connectrpc.com/connect"
 	"connectrpc.com/grpcreflect"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/DmytroLysenko1/faultline/internal/gen/proto/faultline/v1/faultlinev1connect"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/limit"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/recovery"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/timeout"
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/tracing"
 )
 
 const (
@@ -22,6 +25,8 @@ const (
 	ReadMaxBytes            = 1 << 20
 	MaxConcurrentGetGraph   = 4
 	MaxConcurrentReflection = 2
+
+	tracerName = "github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi"
 )
 
 type Options struct {
@@ -32,6 +37,7 @@ type Options struct {
 	MaxConcurrent           int64
 	MaxConcurrentReflection int64
 	Logger                  *slog.Logger
+	TracerProvider          trace.TracerProvider
 }
 
 type reflectionHandler func(*grpcreflect.Reflector, ...connect.HandlerOption) (string, http.Handler)
@@ -45,6 +51,7 @@ func DefaultOptions(logger *slog.Logger) Options {
 		MaxConcurrent:           MaxConcurrentGetGraph,
 		MaxConcurrentReflection: MaxConcurrentReflection,
 		Logger:                  logger,
+		TracerProvider:          noop.NewTracerProvider(),
 	}
 }
 
@@ -88,7 +95,10 @@ func mountLimited(mux *http.ServeMux, pattern string, next http.Handler, maxConc
 
 func graphOptions(options Options) []connect.HandlerOption {
 	return []connect.HandlerOption{
-		connect.WithInterceptors(timeout.Interceptor(options.Timeout)),
+		connect.WithInterceptors(
+			tracing.Interceptor(options.TracerProvider.Tracer(tracerName)),
+			timeout.Interceptor(options.Timeout),
+		),
 		connect.WithSendMaxBytes(options.SendMaxBytes),
 		connect.WithReadMaxBytes(options.ReadMaxBytes),
 		connect.WithRecover(recovery.Handler(options.Logger)),

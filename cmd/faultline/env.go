@@ -24,6 +24,7 @@ var (
 	errInvalid      = errors.New("invalid")
 	errOutOfRange   = errors.New("out of range")
 	errBelow        = errors.New("must not be below")
+	errSameAddress  = errors.New("must differ from")
 	errAddress      = errors.New("invalid address")
 	errUnknownLevel = errors.New("unknown log level")
 	errEmptyHost    = errors.New("host is empty")
@@ -141,6 +142,13 @@ func (r *envReader) notBelow(name string, value time.Duration, floorName string,
 		return
 	}
 	r.fail(name, fmt.Errorf("%s %w %s (%s)", value, errBelow, floorName, floor))
+}
+
+func (r *envReader) distinct(name, value, otherName, other string) {
+	if r.failed[name] || r.failed[otherName] || value != other {
+		return
+	}
+	r.fail(name, fmt.Errorf("%q %w %s", value, errSameAddress, otherName))
 }
 
 func within[T ~int64](r *envReader, name string, value, fallback, low, high T, format func(T) string) T {

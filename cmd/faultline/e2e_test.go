@@ -20,6 +20,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/application/processing/processingtest"
 	faultlinev1 "github.com/DmytroLysenko1/faultline/internal/gen/proto/faultline/v1"
 	"github.com/DmytroLysenko1/faultline/internal/gen/proto/faultline/v1/faultlinev1connect"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/selftrace"
 )
 
 const (
@@ -189,7 +190,10 @@ func healthStatus(t *testing.T, client *http.Client, open listeners) int {
 
 func gatedSystem(t *testing.T, cfg *Config, feedOf feedSource) *system {
 	t.Helper()
-	sys, err := assemble(cfg, testLogger(&logBuffer{}), feedOf)
+	sys, err := assemble(cfg, testLogger(&logBuffer{}), wiring{
+		feedOf:  feedOf,
+		tracing: selftrace.Disabled(),
+	})
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}
@@ -217,7 +221,8 @@ func broken(stored storage) spanFeed {
 
 func TestExportedCallIsVisibleAndStopsCleanly(t *testing.T) {
 	cfg := e2eConfig(t)
-	sys, err := newSystem(&cfg, testLogger(&logBuffer{}))
+	logs := &logBuffer{}
+	sys, err := newSystem(t.Context(), &cfg, testLogger(logs))
 	if err != nil {
 		t.Fatalf("newSystem: %v", err)
 	}
@@ -230,6 +235,10 @@ func TestExportedCallIsVisibleAndStopsCleanly(t *testing.T) {
 	})
 	if err := started.stop(t); err != nil {
 		t.Errorf("run = %v, want nil", err)
+	}
+	if diff := cmp.Diff(finalStats{Observed: 2, Matched: 1, Accepted: 2, Batches: 0, Balanced: true},
+		finalStatsOf(t, logs)); diff != "" {
+		t.Errorf("final pipeline.stats (-want +got):\n%s", diff)
 	}
 }
 
@@ -274,7 +283,7 @@ func TestPipelineExitIsAFailure(t *testing.T) {
 
 func TestHealthIsOKWhileServing(t *testing.T) {
 	cfg := e2eConfig(t)
-	sys, err := newSystem(&cfg, testLogger(&logBuffer{}))
+	sys, err := newSystem(t.Context(), &cfg, testLogger(&logBuffer{}))
 	if err != nil {
 		t.Fatalf("newSystem: %v", err)
 	}

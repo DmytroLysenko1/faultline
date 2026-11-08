@@ -129,6 +129,18 @@ func TestBusyPortFailsWithItsAddress(t *testing.T) {
 			Want: want,
 		},
 		{
+			Name: "busy port with self-tracing leaves no exporter behind",
+			Args: func(t *testing.T) (map[string]string, string) {
+				busy := occupy(t)
+				return map[string]string{
+					envOTLPAddr:    busy,
+					envAPIAddr:     freeAddress(t),
+					envSelfTracing: freeAddress(t),
+				}, busy
+			},
+			Want: want,
+		},
+		{
 			Name: "busy api port closes the otlp listener",
 			Args: func(t *testing.T) (map[string]string, string) {
 				busy := occupy(t)

@@ -98,7 +98,7 @@ linters:
             - pkg: connectrpc.com
               desc: transport stays in interfaces
             - pkg: go.opentelemetry.io
-              desc: OTLP/pdata types stay in interfaces; self-tracing is wired in application/cmd
+              desc: OTLP/pdata types stay in interfaces; self-tracing lives in infrastructure/selftrace and the API adapter
         layer-application:
           files:
             - "**/internal/application/**"
@@ -127,6 +127,20 @@ linters:
               desc: only topology.Builder keeps the expire → match → apply order (I1, I3)
             - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/clock
               desc: only topology.Builder keeps the expire → match → apply order (I1, I3)
+        # Spans on the ingest path would loop back through a Collector into faultline (step 1, slice 5b-3, D6).
+        no-self-tracing-on-ingest:
+          files:
+            - "**/internal/application/**"
+            - "**/internal/interfaces/otlp/**"
+            - "**/internal/infrastructure/memjournal/**"
+            - "**/internal/infrastructure/memgraph/**"
+          deny:
+            - pkg: go.opentelemetry.io/otel
+              desc: the ingest and processing path is never traced
+            - pkg: go.opentelemetry.io/contrib
+              desc: the ingest and processing path is never traced
+            - pkg: connectrpc.com/otelconnect
+              desc: the ingest and processing path is never traced
         layer-infrastructure:
           files:
             - "**/internal/infrastructure/**"

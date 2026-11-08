@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"testing/synctest"
 
@@ -10,6 +11,7 @@ import (
 
 	"github.com/DmytroLysenko1/faultline/internal/application/processing"
 	"github.com/DmytroLysenko1/faultline/internal/application/processing/processingtest"
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memgraph"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
 )
@@ -26,6 +28,7 @@ type harness struct {
 	ingest  *fakeServer
 	api     *fakeServer
 	journal recordingJournal
+	tracing *fakeTracing
 	crash   chan error
 	release chan struct{}
 	sys     *system
@@ -55,6 +58,7 @@ func newHarness(t *testing.T, kind pipelineKind, preload int) *harness {
 		ingest:  newFakeIngest(events),
 		api:     newFakeAPI(events),
 		journal: recordingJournal{Journal: journal, events: events},
+		tracing: &fakeTracing{events: events},
 		crash:   make(chan error, 1),
 		release: make(chan struct{}),
 	}
@@ -62,12 +66,26 @@ func newHarness(t *testing.T, kind pipelineKind, preload int) *harness {
 		journal:   h.journal,
 		ingest:    h.ingest,
 		api:       h.api,
+		stats:     recordingRunner{inner: harnessStats(h), events: events, exit: eventStatsExit},
+		tracing:   h.tracing,
 		store:     nil,
 		lifecycle: newLifecycle(testLogger(logs)),
 		logger:    testLogger(logs),
 	}
-	h.sys.pipeline = recordingRunner{inner: kind(t, h), events: events}
+	h.sys.pipeline = recordingRunner{inner: kind(t, h), events: events, exit: eventPipelineExit}
 	return h
+}
+
+func harnessStats(h *harness) *statsReporter {
+	return &statsReporter{
+		snapshots: fixedSnapshots{
+			snapshot: &topology.Snapshot{},
+		},
+		ingest:   fixedCounters{},
+		journal:  h.journal,
+		logger:   testLogger(h.logs),
+		interval: statsInterval,
+	}
 }
 
 func (h *harness) stop() {
@@ -120,8 +138,20 @@ func failingAfterDrainPipeline(_ *testing.T, h *harness) pipelineRunner {
 }
 
 type shutdownOutcome struct {
-	Events []string
-	States []string
+	Events          []string
+	Timeline        []string
+	ReporterInOrder bool
+}
+
+func reporterInOrder(events []string) bool {
+	stats := slices.Index(events, eventStatsExit)
+	return stats > slices.Index(events, eventPipelineExit) && stats < slices.Index(events, eventTraceFlush)
+}
+
+func withoutReporter(events []string) []string {
+	return slices.DeleteFunc(slices.Clone(events), func(event string) bool {
+		return event == eventStatsExit
+	})
 }
 
 func runHarness(t *testing.T, h *harness, trigger func(h *harness)) (shutdownOutcome, error) {
@@ -137,8 +167,9 @@ func runHarness(t *testing.T, h *harness, trigger func(h *harness)) (shutdownOut
 	trigger(h)
 	err := <-result
 	return shutdownOutcome{
-		Events: h.events.list(),
-		States: h.logs.states(t),
+		Events:          withoutReporter(h.events.list()),
+		Timeline:        h.logs.timeline(t),
+		ReporterInOrder: reporterInOrder(h.events.list()),
 	}, err
 }
 
@@ -183,8 +214,10 @@ func TestShutdownOrder(t *testing.T) {
 				trigger:  signalled,
 			},
 			Want: shutdownOutcome{
-				Events: []string{eventSignalStop, eventIngestGraceful, eventJournalClose, eventPipelineExit, eventAPIShutdown},
-				States: []string{"serving", "draining", "stopped"},
+				Events: []string{eventSignalStop, eventIngestGraceful, eventJournalClose, eventPipelineExit,
+					eventAPIShutdown, eventTraceFlush},
+				Timeline:        []string{"serving", "draining", timelineFinalStats, "stopped"},
+				ReporterInOrder: true,
 			},
 		},
 		{
@@ -194,8 +227,10 @@ func TestShutdownOrder(t *testing.T) {
 				trigger:  otlpCrashes,
 			},
 			Want: shutdownOutcome{
-				Events: []string{eventIngestGraceful, eventJournalClose, eventPipelineExit, eventAPIShutdown, eventSignalStop},
-				States: []string{"serving", "draining", "stopped"},
+				Events: []string{eventIngestGraceful, eventJournalClose, eventPipelineExit, eventAPIShutdown,
+					eventTraceFlush, eventSignalStop},
+				Timeline:        []string{"serving", "draining", timelineFinalStats, "stopped"},
+				ReporterInOrder: true,
 			},
 			WantErr: errUnexpectedExit,
 		},
@@ -206,8 +241,10 @@ func TestShutdownOrder(t *testing.T) {
 				trigger:  apiCrashes,
 			},
 			Want: shutdownOutcome{
-				Events: []string{eventIngestGraceful, eventJournalClose, eventPipelineExit, eventAPIShutdown, eventSignalStop},
-				States: []string{"serving", "draining", "stopped"},
+				Events: []string{eventIngestGraceful, eventJournalClose, eventPipelineExit, eventAPIShutdown,
+					eventTraceFlush, eventSignalStop},
+				Timeline:        []string{"serving", "draining", timelineFinalStats, "stopped"},
+				ReporterInOrder: true,
 			},
 			WantErr: errCrash,
 		},
@@ -218,8 +255,10 @@ func TestShutdownOrder(t *testing.T) {
 				trigger:  pipelineReturnsNil,
 			},
 			Want: shutdownOutcome{
-				Events: []string{eventPipelineExit, eventJournalClose, eventIngestGraceful, eventAPIShutdown, eventSignalStop},
-				States: []string{"serving", "aborting", "stopped"},
+				Events: []string{eventPipelineExit, eventJournalClose, eventIngestGraceful, eventAPIShutdown,
+					eventTraceFlush, eventSignalStop},
+				Timeline:        []string{"serving", "aborting", timelineFinalStats, "stopped"},
+				ReporterInOrder: true,
 			},
 			WantErr: errUnexpectedExit,
 		},
@@ -230,8 +269,10 @@ func TestShutdownOrder(t *testing.T) {
 				trigger:  pipelineCrashes,
 			},
 			Want: shutdownOutcome{
-				Events: []string{eventPipelineExit, eventJournalClose, eventIngestGraceful, eventAPIShutdown, eventSignalStop},
-				States: []string{"serving", "aborting", "stopped"},
+				Events: []string{eventPipelineExit, eventJournalClose, eventIngestGraceful, eventAPIShutdown,
+					eventTraceFlush, eventSignalStop},
+				Timeline:        []string{"serving", "aborting", timelineFinalStats, "stopped"},
+				ReporterInOrder: true,
 			},
 			WantErr: errCrash,
 		},
@@ -242,8 +283,10 @@ func TestShutdownOrder(t *testing.T) {
 				trigger:  signalled,
 			},
 			Want: shutdownOutcome{
-				Events: []string{eventSignalStop, eventIngestGraceful, eventJournalClose, eventPipelineExit, eventAPIShutdown},
-				States: []string{"serving", "draining", "stopped"},
+				Events: []string{eventSignalStop, eventIngestGraceful, eventJournalClose, eventPipelineExit,
+					eventAPIShutdown, eventTraceFlush},
+				Timeline:        []string{"serving", "draining", timelineFinalStats, "stopped"},
+				ReporterInOrder: true,
 			},
 			WantErr: errCrash,
 		},
@@ -257,9 +300,10 @@ func TestShutdownOrder(t *testing.T) {
 				trigger: signalled,
 			},
 			Want: shutdownOutcome{
-				Events: []string{eventSignalStop, eventIngestGraceful, eventIngestStop, eventJournalClose, eventPipelineExit,
-					eventAPIShutdown},
-				States: []string{"serving", "draining", "stopped"},
+				Events: []string{eventSignalStop, eventIngestGraceful, eventIngestStop, eventJournalClose,
+					eventPipelineExit, eventAPIShutdown, eventTraceFlush},
+				Timeline:        []string{"serving", "draining", timelineFinalStats, "stopped"},
+				ReporterInOrder: true,
 			},
 		},
 		{
@@ -272,9 +316,10 @@ func TestShutdownOrder(t *testing.T) {
 				trigger: signalled,
 			},
 			Want: shutdownOutcome{
-				Events: []string{eventSignalStop, eventIngestGraceful, eventJournalClose, eventPipelineExit, eventAPIShutdown,
-					eventAPIClose},
-				States: []string{"serving", "draining", "stopped"},
+				Events: []string{eventSignalStop, eventIngestGraceful, eventJournalClose, eventPipelineExit,
+					eventAPIShutdown, eventAPIClose, eventTraceFlush},
+				Timeline:        []string{"serving", "draining", timelineFinalStats, "stopped"},
+				ReporterInOrder: true,
 			},
 		},
 		{
@@ -285,8 +330,10 @@ func TestShutdownOrder(t *testing.T) {
 				trigger:  signalled,
 			},
 			Want: shutdownOutcome{
-				Events: []string{eventSignalStop, eventIngestGraceful, eventJournalClose, eventPipelineExit, eventAPIShutdown},
-				States: []string{"serving", "draining", "stopped"},
+				Events: []string{eventSignalStop, eventIngestGraceful, eventJournalClose, eventPipelineExit,
+					eventAPIShutdown, eventTraceFlush},
+				Timeline:        []string{"serving", "draining", timelineFinalStats, "stopped"},
+				ReporterInOrder: true,
 			},
 			WantErr: errDrainIncomplete,
 		},
@@ -305,9 +352,10 @@ func TestShutdownOrder(t *testing.T) {
 				},
 			},
 			Want: shutdownOutcome{
-				Events: []string{eventSignalStop, eventIngestGraceful, eventPipelineExit, eventJournalClose, eventIngestStop,
-					eventAPIShutdown},
-				States: []string{"serving", "draining", "stopped"},
+				Events: []string{eventSignalStop, eventIngestGraceful, eventPipelineExit, eventJournalClose,
+					eventIngestStop, eventAPIShutdown, eventTraceFlush},
+				Timeline:        []string{"serving", "draining", timelineFinalStats, "stopped"},
+				ReporterInOrder: true,
 			},
 			WantErr: errDrainIncomplete,
 		},
@@ -322,8 +370,10 @@ func TestShutdownOrder(t *testing.T) {
 				},
 			},
 			Want: shutdownOutcome{
-				Events: []string{eventSignalStop, eventIngestGraceful, eventJournalClose, eventPipelineExit, eventAPIShutdown},
-				States: []string{"serving", "draining", "stopped"},
+				Events: []string{eventSignalStop, eventIngestGraceful, eventJournalClose, eventPipelineExit,
+					eventAPIShutdown, eventTraceFlush},
+				Timeline:        []string{"serving", "draining", timelineFinalStats, "stopped"},
+				ReporterInOrder: true,
 			},
 			WantErr: errCrash,
 		},

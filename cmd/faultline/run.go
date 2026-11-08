@@ -16,6 +16,7 @@ const (
 	cancelGrace = 500 * time.Millisecond
 	httpGrace   = 2 * time.Second
 	exitGrace   = 100 * time.Millisecond
+	traceFlush  = 200 * time.Millisecond
 )
 
 var (
@@ -30,6 +31,7 @@ type shutdownBudget struct {
 	CancelGrace time.Duration
 	HTTPGrace   time.Duration
 	ExitGrace   time.Duration
+	TraceFlush  time.Duration
 }
 
 func defaultShutdownBudget() shutdownBudget {
@@ -39,6 +41,7 @@ func defaultShutdownBudget() shutdownBudget {
 		CancelGrace: cancelGrace,
 		HTTPGrace:   httpGrace,
 		ExitGrace:   exitGrace,
+		TraceFlush:  traceFlush,
 	}
 }
 
@@ -47,6 +50,7 @@ type shutdown struct {
 	parts          *components
 	budget         shutdownBudget
 	cancelPipeline context.CancelFunc
+	cancelReport   context.CancelFunc
 	failures       []error
 }
 
@@ -59,18 +63,21 @@ func run(
 ) error {
 	pipelineCtx, cancelPipeline := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelPipeline()
+	reportCtx, cancelReport := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelReport()
 	down := &shutdown{
 		sys:            sys,
-		parts:          startComponents(pipelineCtx, sys, open),
+		parts:          startComponents(pipelineCtx, reportCtx, sys, open),
 		budget:         budget,
 		cancelPipeline: cancelPipeline,
+		cancelReport:   cancelReport,
 	}
 	sys.lifecycle.transition(stateServing, reasonStarted)
 	return down.await(ctx, stop)
 }
 
-func startComponents(pipelineCtx context.Context, sys *system, open listeners) *components {
-	parts := newComponents(componentOTLP, componentAPI, componentPipeline)
+func startComponents(pipelineCtx, reportCtx context.Context, sys *system, open listeners) *components {
+	parts := newComponents(componentOTLP, componentAPI, componentPipeline, componentStats)
 	parts.start(componentOTLP, func() error {
 		return withoutSentinel(sys.ingest.Serve(open.OTLP), grpc.ErrServerStopped)
 	})
@@ -79,6 +86,9 @@ func startComponents(pipelineCtx context.Context, sys *system, open listeners) *
 	})
 	parts.start(componentPipeline, func() error {
 		return sys.pipeline.Run(pipelineCtx)
+	})
+	parts.start(componentStats, func() error {
+		return sys.stats.Run(reportCtx)
 	})
 	return parts
 }
@@ -133,11 +143,13 @@ func (d *shutdown) abort(ctx context.Context) error {
 }
 
 func (d *shutdown) finish(ctx context.Context) error {
+	d.stopReporting()
 	d.stopAPI(ctx)
-	d.awaitServers(ctx)
+	d.awaitExits(ctx)
 	for _, exit := range d.parts.remainingExits() {
 		d.record(exit)
 	}
+	d.flushTracing(ctx)
 	d.sys.lifecycle.transition(stateStopped, reasonShutdown)
 	return errors.Join(d.failures...)
 }

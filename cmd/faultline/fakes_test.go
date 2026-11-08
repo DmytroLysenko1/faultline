@@ -13,9 +13,13 @@ import (
 	"sync"
 	"testing"
 
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 	"google.golang.org/grpc"
 
+	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
 	"github.com/DmytroLysenko1/faultline/internal/application/processing"
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
 )
 
@@ -27,6 +31,9 @@ const (
 	eventPipelineExit   = "pipeline.exit"
 	eventAPIShutdown    = "api.shutdown"
 	eventAPIClose       = "api.close"
+	eventTraceFlush     = "tracing.shutdown"
+	eventStatsExit      = "stats.exit"
+	timelineFinalStats  = "final_stats"
 )
 
 var errCrash = errors.New("component crashed")
@@ -131,11 +138,12 @@ func (j recordingJournal) Close() {
 type recordingRunner struct {
 	inner  pipelineRunner
 	events *eventLog
+	exit   string
 }
 
 func (r recordingRunner) Run(ctx context.Context) error {
 	err := r.inner.Run(ctx)
-	r.events.add(eventPipelineExit)
+	r.events.add(r.exit)
 	return err
 }
 
@@ -178,15 +186,29 @@ func (b *logBuffer) records(t *testing.T) []map[string]any {
 	return records
 }
 
-func (b *logBuffer) states(t *testing.T) []string {
+func (b *logBuffer) timeline(t *testing.T) []string {
 	t.Helper()
-	var states []string
+	var timeline []string
 	for _, record := range b.records(t) {
-		if record["msg"] == "lifecycle.state" {
-			states = append(states, record["state"].(string))
+		switch {
+		case record["msg"] == "lifecycle.state":
+			timeline = append(timeline, record["state"].(string))
+		case record["msg"] == "pipeline.stats" && record["final"] == true:
+			timeline = append(timeline, timelineFinalStats)
 		}
 	}
-	return states
+	return timeline
+}
+
+func (b *logBuffer) all(t *testing.T, name string) []map[string]any {
+	t.Helper()
+	var matched []map[string]any
+	for _, record := range b.records(t) {
+		if record["msg"] == name {
+			matched = append(matched, record)
+		}
+	}
+	return matched
 }
 
 func (b *logBuffer) event(t *testing.T, name string) map[string]any {
@@ -211,4 +233,47 @@ func newFakeIngest(events *eventLog) *fakeServer {
 
 func newFakeAPI(events *eventLog) *fakeServer {
 	return newFakeServer(events, componentAPI, http.ErrServerClosed)
+}
+
+type fakeTracing struct {
+	events *eventLog
+	hang   bool
+}
+
+func (f *fakeTracing) TracerProvider() trace.TracerProvider {
+	return noop.NewTracerProvider()
+}
+
+func (f *fakeTracing) Shutdown(ctx context.Context) error {
+	f.events.add(eventTraceFlush)
+	if f.hang {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return nil
+}
+
+type fixedSnapshots struct {
+	snapshot *topology.Snapshot
+	err      error
+}
+
+func (f fixedSnapshots) Latest(context.Context) (*topology.Snapshot, error) {
+	return f.snapshot, f.err
+}
+
+type fixedCounters struct {
+	stats ingest.Stats
+}
+
+func (f fixedCounters) Stats() ingest.Stats {
+	return f.stats
+}
+
+type fixedJournal struct {
+	stats memjournal.Stats
+}
+
+func (f fixedJournal) Stats() memjournal.Stats {
+	return f.stats
 }

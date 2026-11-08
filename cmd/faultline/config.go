@@ -67,6 +67,7 @@ func Load(lookup lookupFunc) (Config, error) {
 		SelfTracingEndpoint: reader.endpoint(envSelfTracing),
 	}
 	reader.notBelow(envTombstoneTTL, cfg.Topology.TombstoneTTL, envPairingTTL, cfg.Topology.PairingTTL)
+	reader.distinct(envSelfTracing, cfg.SelfTracingEndpoint, envOTLPAddr, cfg.OTLPAddr)
 	return cfg, errors.Join(reader.errs...)
 }
 
