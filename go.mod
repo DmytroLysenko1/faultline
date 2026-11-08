@@ -24,6 +24,7 @@ require (
 	go.uber.org/goleak v1.3.0
 	golang.org/x/net v0.61.0
 	golang.org/x/sync v0.24.0
+	gonum.org/v1/gonum v0.17.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261104224025-d1e00e9f33ab
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12

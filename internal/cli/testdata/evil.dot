@@ -1,0 +1,25 @@
+digraph faultline {
+	"svc:/bare" [label="bare"];
+	"svc:team%2Fa/svc" [label="team/a/svc"];
+	"svc:demo/say%20%22hi%22" [label="demo/say \"hi\""];
+	"svc:demo/back%5Cslash" [label="demo/back\\slash"];
+	"svc:demo/ends%5C" [label="demo/ends\\"];
+	"svc:demo/slash%5C%0Anewline" [label="demo/slash\\\nnewline"];
+	"svc:demo/%5CN" [label="demo/\\N"];
+	"svc:demo/%5CG" [label="demo/\\G"];
+	"svc:demo/%5Cl" [label="demo/\\l"];
+	"svc:demo/line%0Abreak" [label="demo/line\nbreak"];
+	"svc:demo/car%0Driage" [label="demo/car\\x0Driage"];
+	"svc:demo/%1B%5B31mred" [label="demo/\\x1B[31mred"];
+	"svc:demo/%7B%7D%3B-%3E--" [label="demo/{};->--"];
+	"svc:demo/a%3Cb%3E" [label="demo/a<b>"];
+	"svc:demo/%D0%BF%D1%80%D0%BE%D0%B1%D0%B5%D0%BB%20%E2%9C%93" [label="demo/пробел ✓"];
+	"svc:demo/back%5Cnslash" [label="demo/back\\nslash"];
+	"svc:demo/a&amp%3Bb" [label="demo/a&amp;amp;b"];
+	"svc:demo/&%23x1B%3B%5B31m" [label="demo/&amp;#x1B;[31m"];
+	"svc:demo/&lt%3Bb&gt%3B" [label="demo/&amp;lt;b&amp;gt;"];
+	"svc:demo/&" [label="demo/&amp;"];
+	"svc:demo/rtl%E2%80%AEevil" [label="demo/rtl\\u202Eevil"];
+	"svc:demo/line%E2%80%A8sep" [label="demo/line\\u2028sep"];
+	"svc:demo/say%20%22hi%22" -> "svc:demo/back%5Cslash" [label="calls 1, failed 0"];
+}

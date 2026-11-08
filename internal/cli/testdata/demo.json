@@ -1,0 +1,47 @@
+{
+  "revision": "42",
+  "generated_at": "2026-11-08T00:00:00Z",
+  "nodes": [
+    {
+      "id": "svc:demo/cart",
+      "service": {
+        "namespace": "demo",
+        "name": "cart"
+      },
+      "unanswered_calls": "3",
+      "unanswered_failed_calls": "1"
+    },
+    {
+      "id": "svc:demo/checkout",
+      "service": {
+        "namespace": "demo",
+        "name": "checkout"
+      },
+      "unanswered_calls": "0",
+      "unanswered_failed_calls": "0"
+    },
+    {
+      "id": "svc:demo/frontend",
+      "service": {
+        "namespace": "demo",
+        "name": "frontend"
+      },
+      "unanswered_calls": "0",
+      "unanswered_failed_calls": "0"
+    }
+  ],
+  "edges": [
+    {
+      "source_index": 2,
+      "target_index": 1,
+      "calls": "12",
+      "failed_calls": "2"
+    },
+    {
+      "source_index": 1,
+      "target_index": 0,
+      "calls": "5",
+      "failed_calls": "0"
+    }
+  ]
+}

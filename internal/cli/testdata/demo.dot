@@ -1,0 +1,7 @@
+digraph faultline {
+	"svc:demo/cart" [label="demo/cart\nunanswered 3 (failed 1)"];
+	"svc:demo/checkout" [label="demo/checkout"];
+	"svc:demo/frontend" [label="demo/frontend"];
+	"svc:demo/frontend" -> "svc:demo/checkout" [label="calls 12, failed 2"];
+	"svc:demo/checkout" -> "svc:demo/cart" [label="calls 5, failed 0"];
+}

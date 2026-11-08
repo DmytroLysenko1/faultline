@@ -100,6 +100,7 @@ test-probes: ## Heap and time probes without -race: decode limit, memory budget 
 	go test -count=1 -run 'TestWeightBounds' $(PROBE_PACKAGES)
 	go test -count=1 -run 'TestWorstCaseHeap|TestViewHeap' $(BUDGET_PACKAGES)
 	go test -count=1 -run 'TestDrainFullJournal' $(DRAIN_PACKAGES)
+	go test -count=1 -run 'TestLargestAllowedGraph' ./cmd/faultctl/
 
 STRESS_PACKAGES := ./internal/application/ingest/... ./internal/application/processing/... \
 	./internal/infrastructure/memjournal/... ./internal/infrastructure/memgraph/... ./test/pipeline/...

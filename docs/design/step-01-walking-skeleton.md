@@ -317,7 +317,7 @@ message Edge {
 - Удалённые поля только `reserved`. Переименование и перенумерация запрещены.
 - Узлы: все `ServiceRef`, от которых пришёл хотя бы один валидный CLIENT/SERVER-спан, включая сервисы без рёбер.
 - **Id узла — контракт** (стабилен между ревизиями и рестартами, UI будет хранить его в ссылках; индекс узла — нет, он действителен только внутри одного ответа). Обе части экранируются `url.PathEscape`, поэтому `/` внутри `service.namespace` не склеивает разные сервисы: `{a/b, c}` → `svc:a%2Fb/c`, `{a, b/c}` → `svc:a/b%2Fc`. Правило фиксируется тестом на коллизии и не меняется после тега.
-- **JSON-формат `faultctl -o json`** — protojson сообщения `Graph` с `protojson.MarshalOptions{EmitUnpopulated: true, UseProtoNames: true}`: пустой граф выводится как `{"revision":"0","generated_at":…,"nodes":[],"edges":[]}`, а не `{}`; имена полей — snake_case как в proto; `uint64` по правилам protojson — строки. Рёбра в JSON несут индексы, как в proto; DOT-рендерер разрешает их в id узлов. Контракт по закону Хайрума, закреплён golden-тестом.
+- **JSON-формат `faultctl -o json`** — protojson сообщения `Graph` с `protojson.MarshalOptions{EmitUnpopulated: true, UseProtoNames: true}`, нормализованный `json.Indent` (пробелы protojson намеренно нестабильны, срез 6 D9): пустой граф выводится как `{"revision":"0","generated_at":…,"nodes":[],"edges":[]}`, а не `{}`; имена полей — snake_case как в proto; `uint64` по правилам protojson — строки. Рёбра в JSON несут индексы, как в proto; DOT-рендерер разрешает их в id узлов. Контракт по закону Хайрума, закреплён golden-тестом.
 - **`generated_at`** — `ReceivedAt` последнего пакета, изменившего граф (см. `Builder`). Меняется только вместе с ревизией и не зависит от часов процесса: снимок с теми же данными несёт то же время, replay того же журнала даёт то же время, golden-тесты детерминированы. До первого изменения — момент старта процесса.
 - **Индексы рёбер действительны только внутри одного ответа.** Всё, что переживает ответ, ссылается на узлы по **id**: поток изменений `graph watch` (FR-API-003, шаг 5) — отдельное сообщение дельты с `source_id`/`target_id` (дельты маленькие, экономия на строках там не нужна), ссылки UI, эталоны демо. Индексы — только формат передачи полного снимка: при максимально допустимом конфиге (100 000 рёбер, худшие id ≈ 1,5 KiB) строковые id в рёбрах дали бы ≈ 300 MiB на ответ против ≈ 2 MiB с индексами. Для людей и `jq` `faultctl -o dot` выводит id; `-o json` — контракт API, его диффы по ревизиям делаются по `nodes`, а не по позициям рёбер.
 
@@ -535,8 +535,8 @@ stateDiagram-v2
 `faultctl graph export -o dot|json [--server URL] [--timeout 10s]`
 - `--server`, env `FAULTCTL_SERVER`, по умолчанию `http://127.0.0.1:8080`; протокол Connect (protobuf) поверх HTTP.
 - Данные в stdout, ошибки в stderr. Код выхода: 0 — успех, 1 — ошибка вызова (с причиной; недоступный сервер виден за ≤ `--timeout`), 2 — ошибка использования.
-- Пустой граф: валидный пустой DOT (`digraph faultline {}`) и `{"revision":"0","generated_at":…,"nodes":[],"edges":[]}` в JSON (см. «Внешний контракт»).
-- DOT: все id в кавычках с экранированием `\`, `"` и переводов строк. Из данных выводится только экранированный `label`, другие атрибуты из данных не выводятся.
+- Пустой граф: валидный пустой DOT (`digraph faultline {` и `}` на отдельных строках) и `{"revision": "0", "generated_at": …, "nodes": [], "edges": []}` в JSON (см. «Внешний контракт», срез 6 D8–D9).
+- DOT: все id в кавычках с экранированием `\`, `"` и переводов строк, прочие управляющие символы заменяются на `U+FFFD`. Из данных выводится только экранированный `label`, другие атрибуты из данных не выводятся (срез 6, D8).
 
 ## Демо и путь деплоя (DoD №3)
 
@@ -1297,6 +1297,112 @@ func assemble(cfg *Config, logger *slog.Logger, seams wiring) (*system, error)
 
 **Зависимости:** `go.opentelemetry.io/otel`, `otel/trace`, `otel/sdk`, `otel/exporters/otlp/otlptrace/otlptracegrpc` v1.47.0 (Apache 2.0, уже в таблице зависимостей шага). `otelconnect` не берётся: тянет `connectrpc.com/connect/v2` и метрики, а нужен один серверный спан (D5).
 
+### Срез 6 — `faultctl`: решения и Go-API (контракт тестов)
+
+Ред. 4: учтено ревью кода — `&` в label → `&amp;` (Graphviz расшифровывает HTML-сущности и в обычных label: `&#x1B;` давал настоящий ESC), значения `--server` и лишних аргументов не печатаются, ошибки — одной строкой через `%w`, второй Ctrl-C завершает процесс, текст ошибок сервера проходит через `cli.Printable`. Ред. 3 (по реализации): управляющие символы в label — видимый текст `\xHH`, а не `U+FFFD` (лексер gonum отвергает `U+FFFD`); отрисовка проверена настоящим Graphviz 16.1 (тест пропускается без `dot`); худший DOT — 344 MiB, JSON — 66,6 MiB; тест худшего графа — `!race`, в `make test-probes` (под `-race` ≈ 60 s). Ред. 2: учтён круг ревью спеки (pocock, osmani, pstack). Опыт osmani: protojson v1.36 намеренно меняет пробелы в зависимости от хэша бинарника (8 сборок одного кода дали два разных вывода) — побайтный golden на нём невозможен (D9); `cmd/faultctl`, импортирующий `connectapi`, тянет в CLI ≈ 130 серверных пакетов (D4); `connect.WithReadMaxBytes` ограничивает и распакованный размер (подтверждено по исходникам connect v1.21.1).
+
+**Решения**
+
+- **D1 — без cobra.** Одна команда `faultctl graph export` и три флага разбираются stdlib `flag.FlagSet` с `ContinueOnError`, как подкоманда `faultline all` в `cmd/faultline`. cobra вычеркнута из таблицы зависимостей шага: дерево команд появится с `graph watch` (шаг 5) — тогда и решать. Разбор флагов и env — в `cmd/faultctl` (конфиг живёт в composition root).
+- **D2 — раскладка.** `cmd/faultctl`: `main.go` (только `os.Exit(realMain(process{…}))`), `app.go` — `realMain(process) int`: разбор аргументов → `exportOptions` → клиент → `cli.Export` → код выхода. `internal/cli` (пакет `cli`): `Export` — получить граф, проверить, отрендерить в writer; рендереры `DOT` и `JSON`. Правило depguard `layer-cli` (deny-список) запрещает `domain`, `application`, `infrastructure` и `interfaces`; сторонние библиотеки — только connect и protobuf, это проверяет ревью, не линтер.
+- **D3 — формат выбирает реестр (Strategy).** `type Renderer func(w io.Writer, graph *faultlinev1.Graph) error`. Реестр `map[string]cli.Renderer{"dot": cli.DOT, "json": cli.JSON}` собирает `cmd/faultctl`; `-o` — ключ реестра, неизвестный ключ → ошибка использования (код 2) с перечнем ключей по алфавиту, **до** сетевого вызова. Новый формат = функция + строка в реестре.
+- **D4 — клиент.** `faultlinev1connect.NewGraphServiceClient(&http.Client{Transport: &http.Transport{DisableKeepAlives: true}}, server, connect.WithReadMaxBytes(readMaxBytes))`: протокол Connect, кодек protobuf, HTTP/1.1, одно соединение на один вызов — после `realMain` нет простаивающих соединений и их горутин (goleak в e2e). `readMaxBytes = 80 << 20` — константа `cmd/faultctl`, а не импорт `connectapi.SendMaxBytes`: серверный адаптер не попадает в бинарник CLI. Согласие с сервером закрепляет тест (`readMaxBytes ≥ connectapi.SendMaxBytes`, тестовый код серверный пакет импортировать может). Ретраев нет (раздел 5: CLI падает быстро).
+- **D5 — сервер и время.** `--server` > env `FAULTCTL_SERVER` > `defaultServer = "http://127.0.0.1:8080"`; валиден, если `url.Parse` без ошибки, схема `http` или `https`, хост не пуст, нет userinfo, query (в том числе пустого `?`) и fragment — иначе код 2 с именем флага и подсказкой `want http://host:port`; само значение `--server` и лишние позиционные аргументы в сообщениях не печатаются (в них может оказаться пароль или токен). userinfo запрещён: аутентификации в шаге 1 нет, а адрес печатается в сообщениях об ошибках. `--timeout` — `time.ParseDuration`, `> 0` и `≤ maxTimeout = 5 * time.Minute` (иначе код 2), по умолчанию `defaultTimeout = 10 * time.Second`: `context.WithTimeout` на весь вызов `GetGraph`, включая чтение ответа. Ctx — от `signal.NotifyContext(SIGINT, SIGTERM)` с `context.AfterFunc(ctx, stop)`: первый Ctrl-C обрывает вызов и возвращает обработку сигналов по умолчанию, второй (например, во время вывода 344 MiB в медленный pipe) завершает процесс; код 1 (вызов не удался; отдельный код 130 не вводится — скрипты демо отличают только успех).
+- **D6 — проверка ответа до вывода.** Неэкспортированная `validate(response) (*faultlinev1.Graph, error)` внутри `Export`: нет `graph` → `ErrMissingGraph`; узел без `service`, с пустым или повторяющимся id → `ErrMalformedNode` с номером узла (Graphviz молча склеил бы одинаковые id); `source_index` или `target_index` ≥ `len(nodes)` → `ErrDanglingEdge` с номером ребра. Индексы — формат передачи, битый ответ не должен ни паниковать, ни давать полвывода.
+- **D7 — вывод.** Сначала `validate`, только потом вывод: ошибка данных — stdout пуст, причина в stderr, код 1. После проверки рендер может упасть только на записи. DOT пишется потоком через `bufio.Writer` поверх stdout (худший DOT — 344 MiB по замеру: id обоих концов на каждом ребре — буфер целиком недопустим); JSON — один `Write` уже готовых байт (≤ 2 × 67 MiB на маршалинг и нормализацию). Ошибка записи — `faultctl: write output: …`, код 1. Запись в закрытый pipe (`faultctl … | head`) завершает процесс по SIGPIPE, как у любой Unix-утилиты; это не обрабатывается.
+- **D8 — DOT.**
+  ```
+  digraph faultline {
+  	"svc:shop/checkout" [label="shop/checkout"];
+  	"svc:shop/cart" [label="shop/cart\nunanswered 3 (failed 1)"];
+  	"svc:shop/checkout" -> "svc:shop/cart" [label="calls 12, failed 2"];
+  }
+  ```
+  Узлы в порядке ответа (отсортированы по id), затем рёбра в порядке ответа. Id и label — в кавычках, экранирование посимвольно (за один проход): `\` → `\\` (поэтому `\N`, `\G`, `\l` из данных — текст, а не подстановки Graphviz), `"` → `\"`, перевод строки → `\n`; в label ещё `&` → `&amp;` (в id — нет: Graphviz расшифровывает сущности только в label, а id обязан совпадать с JSON); остальные управляющие символы (`unicode.IsControl`, включая `\r` — у Graphviz это выравнивание вправо, и ESC — управление терминалом) → видимый текст `\xHH`, символы форматирования Юникода (`Cf`, `Zl`, `Zp`: разворот текста `U+202E`, `U+2028`, нулевой ширины) → `\uXXXX`; это делает `cli.Printable` (он же чистит stderr), а DOT дополнительно экранирует его `\`, поэтому Graphviz рисует текст буквально. Label узла — `namespace/name` (`name`, если namespace пуст), вторая строка `unanswered N (failed M)` — только если `unanswered_calls > 0`. Label ребра — `calls N, failed M`. Других атрибутов из данных нет. Пустой граф — `digraph faultline {\n}\n` (одна ветка кода для любого графа). Id узла сервер уже экранирует `url.PathEscape`, поэтому опасные символы бывают только в label.
+- **D9 — JSON.** `protojson.MarshalOptions{EmitUnpopulated: true, UseProtoNames: true}` от `Graph` в компактном виде, затем `json.Indent(…, "", "  ")` и перевод строки: protojson намеренно делает пробелы нестабильными, нормализация stdlib — детерминирована и сохраняет порядок ключей (по номерам полей). Контракт — имена и значения полей, их порядок и вид после `json.Indent`; golden сравнивает байты нормализованного вывода и дополнительно `protojson.Unmarshal` обратно в равный `Graph` (`protocmp`). Пустой граф: `{"revision": "0", "generated_at": …, "nodes": [], "edges": []}` в многострочном виде.
+- **D10 — коды и сообщения.** 0 — успех; 1 — одной строкой `faultctl: server <server>: get graph: <причина>` (недоступный сервер, дедлайн, код Connect, битый ответ) или `faultctl: write output: <причина>`; причина проходит через `cli.Printable` (управляющие символы → `\xHH`, символы форматирования → `\uXXXX`): текст ошибки приходит от сервера и не должен управлять терминалом; 2 — `faultctl: <причина>` и строка `usage: faultctl graph export -o dot|json [--server URL] [--timeout 10s]`; `-h` и `--help` печатают только usage в stdout с кодом 0. stderr — обычный текст: это инструмент человека, а не сервис. Проверять коды выхода — по собранному бинарнику: `go run` превращает любой ненулевой код в 1.
+
+**`internal/cli`**
+
+```go
+var (
+	ErrMissingGraph = errors.New("response carries no graph")
+	ErrMalformedNode = errors.New("malformed node")
+	ErrDanglingEdge = errors.New("edge refers to a missing node")
+)
+
+type Renderer func(w io.Writer, graph *faultlinev1.Graph) error
+
+type graphClient interface {
+	GetGraph(ctx context.Context, req *connect.Request[faultlinev1.GetGraphRequest]) (*connect.Response[faultlinev1.GetGraphResponse], error)
+}
+
+func Export(ctx context.Context, graphs graphClient, render Renderer, out io.Writer) error
+func DOT(w io.Writer, graph *faultlinev1.Graph) error
+func JSON(w io.Writer, graph *faultlinev1.Graph) error
+```
+
+`Export` возвращает ошибку вызова и ошибку записи разными sentinel-обёртками (`ErrFetch`, `ErrWrite`), чтобы `cmd` выбрал сообщение D10 без разбора текста.
+
+**`cmd/faultctl`**
+
+```go
+type process struct {
+	Args   []string
+	Lookup func(name string) (string, bool)
+	Stdout io.Writer
+	Stderr io.Writer
+}
+
+type exportOptions struct {
+	Server  string
+	Timeout time.Duration
+	Render  cli.Renderer
+}
+
+func realMain(current process) int
+func parseExport(args []string, lookup func(string) (string, bool), renderers map[string]cli.Renderer) (exportOptions, error)
+```
+
+**Тесты**
+
+| Где | Что |
+|---|---|
+| `internal/cli` рендереры (golden в `internal/cli/testdata`, обновление через `FAULTLINE_UPDATE_GOLDEN=1`, как `test/replay`) | пустой граф, граф демо-формы (3 узла, 2 ребра, один узел с `unanswered`), граф со злыми именами в `ServiceRef`: `"`, `\`, `\` в конце, `\` перед переводом строки, `\N`, `\G`, `\l`, `\n` текстом и переводом строки, `\r`, ESC, `&`, `a&amp;b`, `&#x1B;[31m`, `&lt;b&gt;`, `{`, `}`, `;`, `->`, `--`, `a<b>`, пробелы, юникод, пустой namespace, namespace со `/`. DOT разбирается `gonum.org/v1/gonum/graph/encoding/dot` с узлами и рёбрами, реализующими `encoding.AttributeSetter`: id и пары рёбер равны исходным, у каждого узла и ребра ровно один атрибут `label`, и после снятия кавычек он равен ожидаемому тексту (gonum снимает кавычки по правилам Go; для четырёх используемых экранирований они совпадают с escString Graphviz; label целиком вида `<…>` gonum оставляет в кавычках — в данных теста его нет; сущности gonum не расшифровывает, поэтому его ожидаемый label — с `&amp;`, а нарисованный текст проверяет Graphviz). JSON: байты равны golden, `protojson.Unmarshal` даёт равный `Graph` (`protocmp`); тот же `Graph` дважды → одинаковые байты |
+| `internal/cli` `Export` (фейк клиента) | нет `graph` → `ErrMissingGraph`; узел без `service`, с пустым и с повторяющимся id → `ErrMalformedNode`; индекс источника или цели = `len(nodes)` → `ErrDanglingEdge`; ошибка клиента → `ErrFetch` с причиной; во всех этих случаях stdout пуст; ошибка writer → `ErrWrite`; успех → ровно вывод рендерера |
+| `cmd/faultctl` разбор (таблица) | без аргументов, неизвестная команда, лишний аргумент, нет `-o`, `-o xml`, `--timeout 0`, `--timeout abc`, `--timeout 6m`, `--server ftp://x`, `--server localhost:8080`, `--server http://`, `--server http://u:p@h`, `--server http://h?x=1` → код 2, usage в stderr, stdout пуст, пароль из URL в stderr не попадает; env `FAULTCTL_SERVER` используется без флага и перекрывается флагом; по умолчанию — `defaultServer` и `defaultTimeout`; `readMaxBytes ≥ connectapi.SendMaxBytes` |
+| `internal/cli` Graphviz (`dot -Tsvg`, пропуск без `dot` в PATH) | каждый label и подпись ребра из golden-случаев Graphviz рисует ровно ожидаемым текстом: `\N`, `\G`, `\l` не подставляются, `\` в конце не съедает кавычку, управляющие символы видны как `\xHH` |
+| `cmd/faultctl` e2e (`httptest` с настоящим `faultlinev1connect` хэндлером и `connect.WithSendMaxBytes(connectapi.SendMaxBytes)`, goleak; худший граф — `!race`, в `make test-probes`) | `-o json` и `-o dot` → код 0, stdout равен рендеру того же графа; хэндлер вернул `CodeUnavailable` → код 1, причина в stderr, stdout пуст; закрытый порт → код 1 не позже `--timeout`; хэндлер ждёт дольше `--timeout 200ms` → код 1 с `deadline_exceeded`; **граф при максимально допустимом конфиге с худшими строками** (20 000 узлов, 100 000 рёбер, счётчики `MaxUint64`) с `--timeout 2m` проходит и `-o json`, и `-o dot` → код 0 (stdout — считающий writer, а не буфер) |
+
+**Makefile:** в `test-probes` — `go test -count=1 -run 'TestLargestAllowedGraph' ./cmd/faultctl/` (`cmd/*/main.go` исключён из `cover-check`). **Зависимости:** `gonum.org/v1/gonum` — только в тестах; cobra вычеркнута (D1).
+
+### Срез 7 — образ, манифесты и `make demo-1`: решения и контракт проверки
+
+Ред. 1. Прод-кода на Go в срезе нет: Dockerfile, kustomize, Helm-values, bash-скрипты, Makefile и документация. Скрипты проверяются Go-тестом на фикстурах; весь путь — одним прогоном `make demo-1` в kind.
+
+**Решения**
+
+- **D1 — кластер демо — однонодовый профиль `faultline-demo`.** Открытый вопрос 1 закрыт срезом 0: OTel Demo и faultline живут в `deploy/kind/kind-config-demo.yaml` (одна нода, образ по digest), тот же кластер, что у `make demo-capture`. Если кластер `faultline-demo` есть, но число нод или образ ноды не совпадают с профилем (`kubectl get nodes -o jsonpath`), `demo-1` пересоздаёт его, а не переиспользует молча. Память Docker VM ≥ 7 GiB — проверка как в `demo-capture.sh` (общая функция переезжает в `hack/lib.sh`).
+- **D2 — образ.** Многостадийный `Dockerfile`: сборщик `golang:<версия из go.mod toolchain>` по digest, `CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" ./cmd/faultline`; рантайм `gcr.io/distroless/static-debian12:nonroot` по digest; `USER 65532:65532`, `ENTRYPOINT ["/faultline", "all"]`, порты 4317 и 8080. Модули качаются отдельным слоем (`go mod download` по `go.mod`/`go.sum`) — кэш между сборками. `.dockerignore` оставляет в контексте только `go.mod`, `go.sum`, `cmd/`, `internal/`, `api/`. `faultctl` в образ не входит: это клиент разработчика. `make image` → `faultline:dev`; `make kind-load` → `kind load docker-image faultline:dev --name faultline-demo`. Digests — в `hack/versions.env` (`GO_BUILDER_IMAGE`, `RUNTIME_IMAGE`) и в `Dockerfile` через `ARG` с этими значениями по умолчанию.
+- **D3 — манифесты `deploy/dev/skeleton` (kustomize).** `Namespace faultline`; `Deployment faultline`: 1 реплика, `strategy: Recreate` (состояние в памяти и одно OTLP-соединение: две копии одновременно бессмысленны), `image: faultline:dev`, `imagePullPolicy: Never`, env `FAULTLINE_OTLP_GRPC_ADDR=0.0.0.0:4317`, `FAULTLINE_API_ADDR=0.0.0.0:8080`, `GOMEMLIMIT=1408MiB`; requests 512Mi/250m, limits 2Gi/2 CPU; `securityContext`: `runAsNonRoot`, `runAsUser: 65532`, `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`, `seccompProfile: RuntimeDefault`; `automountServiceAccountToken: false`; readiness `GET /healthz :8080` (период 5 s), liveness нет — процесс сам выходит при отказе компонента, перезапускает kubelet; `terminationGracePeriodSeconds: 15` (остановка ≤ 10 s, срез 5b-3 D7, плюс запас на SIGKILL). `Service faultline` ClusterIP: `otlp-grpc 4317` (`appProtocol: grpc`), `http 8080`.
+- **D4 — OTel Demo смотрит в faultline.** Новый файл `deploy/dev/otel-demo-faultline-values.yaml` поверх `otel-demo-values.yaml` (как capture-overlay среза 0): экспортер `otlp/faultline` — `endpoint: faultline.faultline.svc:4317`, `tls.insecure: true`, `timeout: 5s`, `retry_on_failure.enabled: true`, `sending_queue: {enabled: true, num_consumers: 10}` (= `MaxConcurrentStreams`, срез 4b D3); пайплайн `traces.exporters: [debug, otlp/faultline]`. Self-tracing faultline в демо выключен: иначе узел `faultline` попал бы в граф и в `demo-check` как фантом.
+- **D5 — `hack/demo-1.sh` — порядок и идемпотентность.** `check-versions` (новый `hack/check-versions.sh`: kind, kubectl, helm и чарт против `versions.env`; несовпадение — предупреждение, не отказ: версии инструментов разработчика не должны блокировать демо, но расхождение видно) → память Docker → кластер (D1) → `make image` + `kind-load` → `kubectl apply -k deploy/dev/skeleton` + `kubectl rollout restart` (тот же тег `:dev`, новый образ) + `rollout status --timeout=2m` → `helm upgrade --install otel-demo … -n otel-demo --create-namespace --version $OTEL_DEMO_CHART_VERSION -f otel-demo-values.yaml -f otel-demo-faultline-values.yaml` → `kubectl wait --for=condition=available deployment --all -n otel-demo --timeout=10m` → `kubectl port-forward svc/faultline 18080:8080` в фоне (свободный локальный порт по умолчанию 18080, `trap` убивает его на любом выходе) → ждать `/healthz` = 200 через форвард (≤ 30 s) → `go build -o tmp/bin/faultctl ./cmd/faultctl` → опрос раз в 10 s, ≤ 5 min: `faultctl graph export -o json --server http://127.0.0.1:18080 > tmp/demo/graph.json`, пока `demo-check.sh --required-only` не пройдёт → последний опрос: полный `demo-check.sh` с последним `pipeline.stats` из `kubectl logs deploy/faultline`. Каждый шаг пишет строку `demo-1: <шаг>` в stderr; при провале скрипт печатает вывод `demo-check.sh` и `kubectl logs --tail=50`. Повторный запуск поверх работающего демо проходит без пересоздания кластера.
+- **D6 — `hack/demo-check.sh` — проверка графа.** Вход: `--graph tmp/demo/graph.json` (вывод `faultctl -o json`), `--stats <файл со строкой лога>`, `--required`, `--optional` (по умолчанию `test/demo/otel-demo/*-edges.txt`), `--required-only` (только «required ⊆ рёбра», для цикла опроса). Рёбра графа: `jq` по `edges[]` → `nodes[source_index].id nodes[target_index].id`. Проверки по порядку: (1) разбор эталонов — пустые строки и `#`-комментарии пропускаются, строка ребра — ровно два id с префиксом `svc:`, у `optional` обязательно ` # <обоснование>` → иначе код 2 с номером строки; (2) namespace: каждый id эталона и графа начинается с `svc:otel-demo/` — иначе код 1 «demo installed in another namespace?»; (3) `required ⊆ рёбра` — недостающие печатаются; (4) `рёбра ⊆ required ∪ optional` — фантомы печатаются; (5) I1 по `.pairing` последней записи `pipeline.stats`: `observed = 2·matched + duplicate + unpairable + evicted + expired + pending` — иначе код 1 с обеими частями (в логе slog счётчики — числа JSON, а не строки, как в protojson). Выход: 0 — всё сошлось (печатает «N required, M optional of K, I1 ok»), 1 — граф не прошёл, 2 — ошибка входа (нет файла, битый JSON, битый эталон). Инструменты — только `bash`, `jq`, `sort`, `comm`.
+- **D7 — где живёт эталон.** Без изменений: `test/demo/otel-demo/{required,optional}-edges.txt` (срез 0). `demo-check.sh` их только читает.
+- **D8 — документация `deploy/dev/README.md`.** Предусловия (Docker ≥ 7 GiB, версии из `versions.env`), `make demo-1`, ожидаемый вывод, ручной экспорт графа (`faultctl … -o dot | dot -Tsvg`), `grpcurl -max-msg-sz 83886080` для больших графов, `--timeout` у `faultctl` через `port-forward`, разбор провала (недостающее ребро, фантом, I1, namespace), `make demo-down`.
+- **D9 — CI.** В `ci.yml` шаг `docker build .` после `make verify` (BUILD-гейт DoD). Демо в kind в CI не гоняется.
+
+**Тесты**
+
+| Где | Что |
+|---|---|
+| `test/demo/democheck_test.go` (Go, `exec` `bash hack/demo-check.sh` на фикстурах в `t.TempDir()`, пропуск без `bash`/`jq`) | граф = все `required` + часть `optional` → 0; нет одного `required` → 1, ребро в выводе; фантомное ребро → 1, ребро в выводе; ребро в другом namespace → 1 с подсказкой; `optional` без обоснования → 2 с номером строки; битый JSON графа → 2; I1 не сходится → 1; `--required-only` игнорирует фантомы и I1; настоящие эталоны `test/demo/otel-demo/*` разбираются без ошибок; `replay.golden.json`, переведённый в формат `faultctl -o json`, проходит полную проверку (связка «replay ⊆ эталон» из DoD) |
+| `test/demo` манифесты (Go, `kubectl kustomize deploy/dev/skeleton`, пропуск без `kubectl`) | рендер без ошибок; у контейнера все поля `securityContext` из D3, `imagePullPolicy: Never`, readiness на `/healthz`, limits 2Gi/2, `GOMEMLIMIT=1408MiB`, адреса `0.0.0.0`; `terminationGracePeriodSeconds` > суммы бюджета остановки (≥ 10 s) |
+| ручной прогон `make demo-1` (приёмка среза, записывается в DoD) | на чистом кластере и повторно поверх работающего; время до прохождения проверки в README |
+| CI | `docker build` |
+
+**Makefile:** `image`, `kind-load`, `demo-1` (→ `hack/demo-1.sh`), `demo-check` (→ `hack/demo-check.sh` по `tmp/demo/graph.json`); `demo-down` уже есть.
+
 ## Критерии приёмки (Definition of Done шага)
 
 **Гейты качества**
@@ -1321,7 +1427,7 @@ func assemble(cfg *Config, logger *slog.Logger, seams wiring) (*system, error)
 **API и CLI**
 - [ ] `GetGraph` семантически одинаков через `grpcurl` (reflection) и `curl -H 'Content-Type: application/json'`.
 - [ ] Unary-дедлайн 30 s → `DEADLINE_EXCEEDED`.
-- [ ] `faultctl graph export -o dot|json`: golden-тесты, DOT разбирается gonum, ошибки → stderr и код 1.
+- [ ] `faultctl graph export -o dot|json`: golden-тесты, DOT разбирается gonum, ошибки вызова → stderr и код 1, ошибки использования → код 2.
 
 **Жизненный цикл**
 - [ ] Невалидный env → код 2 с именем переменной и форматом; занятый порт → код 1 с адресом, до старта компонентов.
@@ -1354,7 +1460,6 @@ func assemble(cfg *Config, logger *slog.Logger, seams wiring) (*system, error)
 | `golang.org/x/net/netutil` | BSD-3 | `LimitListener(…, 1)` для OTLP (I5, срез 4b D2) |
 | `golang.org/x/sync` (`semaphore`) | BSD-3 | Ограничение одновременных `GetGraph` в `connectapi/limit` (журнал считает кредит под своим мьютексом; жизненный цикл — канал `done` на каждый компонент (срез 5b-2, D4), без `errgroup`) |
 | `go.opentelemetry.io/otel` (+ `sdk`, `otlptracegrpc`) | Apache 2.0 | Self-tracing, по умолчанию no-op |
-| `github.com/spf13/cobra` | Apache 2.0 | CLI `faultline`, `faultctl` |
 | `github.com/google/go-cmp`, `go.uber.org/goleak` | BSD-3 / MIT | Тесты |
 | `gonum.org/v1/gonum/graph/encoding/dot` | BSD-3 | Только тесты: проверка, что DOT разбирается |
 
