@@ -1410,45 +1410,45 @@ func parseExport(args []string, lookup func(string) (string, bool), renderers ma
 ## Критерии приёмки (Definition of Done шага)
 
 **Гейты качества**
-- [ ] `make verify` зелёный в CI, включая `cover-check` (≥ 70 % по пакетам шага, ≥ 80 % для `internal/domain/topology`; без `cmd/faultline/main.go` и `internal/gen`) и шаг `docker build`.
-- [ ] depguard-правила слоёв действуют: временный импорт grpc в `internal/domain` ломает `make lint`.
-- [ ] `buf lint` по `graph.proto`; `make proto-breaking` работает против последнего тега.
+- [x] `make verify` зелёный в CI, включая `cover-check` (≥ 70 % по пакетам шага, ≥ 80 % для `internal/domain/topology`; без `cmd/faultline/main.go` и `internal/gen`) и шаг `docker build`. — CI `ci.yml` (`make verify` + `docker build -f deploy/dev/Dockerfile .`), прогон 42441538003 на `8e6dfc1` зелёный
+- [x] depguard-правила слоёв действуют: временный импорт grpc в `internal/domain` ломает `make lint`. — проверено 08.11: `layer-domain … transport stays in interfaces`
+- [x] `buf lint` по `graph.proto`; `make proto-breaking` работает против последнего тега. — до первого тега цель пропускается с сообщением; заработает после `v0.1.1`
 
 **Ядро**
-- [ ] I1: property-тест ≥ 10⁴ сценариев, включая повтор пакета с обеими половинками.
-- [ ] Таблицы сопоставления, `failed` и валидации покрыты построчно.
-- [ ] Оракул правильности пар: граф совпадает с эталоном генератора при перестановках и повторах.
-- [ ] I2: тест «k вызовов на пакет» под `make test-stress`, ревизия растёт только при изменении графа.
-- [ ] I3 с лимитами графа, `node_overflow`.
-- [ ] Id узла: тест коллизий с `/` и `%`.
+- [x] I1: property-тест ≥ 10⁴ сценариев, включая повтор пакета с обеими половинками. — `matcher/property_test.go` (`propertyScenarios = 10_000`)
+- [x] Таблицы сопоставления, `failed` и валидации покрыты построчно. — таблицы в `matcher`, `call`, `telemetry/span`
+- [x] Оракул правильности пар: граф совпадает с эталоном генератора при перестановках и повторах. — `topology/builder_property_test.go`
+- [x] I2: тест «k вызовов на пакет» под `make test-stress`, ревизия растёт только при изменении графа. — `test/pipeline` `TestSnapshotAtomicity` в `STRESS_PACKAGES`
+- [x] I3 с лимитами графа, `node_overflow`. — `topology/builder_test.go`
+- [x] Id узла: тест коллизий с `/` и `%`. — `graph/node_test.go`
 
 **Приём**
-- [ ] Перегрузка → `RESOURCE_EXHAUSTED` с `RetryInfo`, всё или ничего; закрытый журнал → `UNAVAILABLE`; пакет больше полной ёмкости → `INVALID_ARGUMENT` без `RetryInfo`.
-- [ ] Лимит журнала в байтах по `Footprint()`; бюджет памяти и нижняя граница `journalMaxBytes` подтверждены бенчмарками.
-- [ ] Невалидные спаны (включая UTF-8 и длины строк) → точное `partial_success.rejected_spans`; fuzz: любой принятый спан маршалится в ответе `GetGraph`.
-- [ ] Паника в хэндлере → `INTERNAL`, процесс жив.
+- [x] Перегрузка → `RESOURCE_EXHAUSTED` с `RetryInfo`, всё или ничего; закрытый журнал → `UNAVAILABLE`; пакет больше полной ёмкости → `INVALID_ARGUMENT` без `RetryInfo`. — `test/ingest/backpressure_test.go`, `ingest_test.go`
+- [x] Лимит журнала в байтах по `Footprint()`; бюджет памяти и нижняя граница `journalMaxBytes` подтверждены бенчмарками. — пробы `make test-probes`, раздел «Бюджет памяти»
+- [x] Невалидные спаны (включая UTF-8 и длины строк) → точное `partial_success.rejected_spans`; fuzz: любой принятый спан маршалится в ответе `GetGraph`. — `ingest_test.go`, `test/replay/fuzz_test.go`
+- [x] Паника в хэндлере → `INTERNAL`, процесс жив. — `otlp/recovery`, `connectapi/recovery`
 
 **API и CLI**
-- [ ] `GetGraph` семантически одинаков через `grpcurl` (reflection) и `curl -H 'Content-Type: application/json'`.
-- [ ] Unary-дедлайн 30 s → `DEADLINE_EXCEEDED`.
-- [ ] `faultctl graph export -o dot|json`: golden-тесты, DOT разбирается gonum, ошибки вызова → stderr и код 1, ошибки использования → код 2.
+- [x] `GetGraph` семантически одинаков через `grpcurl` (reflection) и `curl -H 'Content-Type: application/json'`. — `connectapi` `TestProtocolsReturnTheSameGraph`
+- [x] Unary-дедлайн 30 s → `DEADLINE_EXCEEDED`. — `TestSlowRequestEndsWithDeadlineExceeded`
+- [x] `faultctl graph export -o dot|json`: golden-тесты, DOT разбирается gonum, ошибки вызова → stderr и код 1, ошибки использования → код 2. — `internal/cli`, `cmd/faultctl` (срез 6)
 
 **Жизненный цикл**
-- [ ] Невалидный env → код 2 с именем переменной и форматом; занятый порт → код 1 с адресом, до старта компонентов.
-- [ ] e2e на `:0`: ребро A→B видно, выход ≤ 10 s, goleak чистый.
-- [ ] Остановка: сигнал при 1000 пакетах в журнале → все учтены; дренаж дольше 2,5 s → `drain_incomplete` с точным числом и кодом 1; итерация дольше 0,5 s после отмены → `exact: false`, код 1; при дренаже по сигналу первым шагом вызывается `stop()` (дальше второй сигнал убивает процесс штатным поведением `signal.NotifyContext`).
-- [ ] Неожиданный выход Pipeline → журнал закрыт до остановки OTLP (`UNAVAILABLE`, не OK), код 1; выход другого компонента → код 1 с дренажом.
+- [x] Невалидный env → код 2 с именем переменной и форматом; занятый порт → код 1 с адресом, до старта компонентов. — `config_test.go`, `TestBusyPortFailsWithItsAddress`
+- [x] e2e на `:0`: ребро A→B видно, выход ≤ 10 s, goleak чистый. — `TestExportedCallIsVisibleAndStopsCleanly`
+- [x] Остановка: сигнал при 1000 пакетах в журнале → все учтены; дренаж дольше 2,5 s → `drain_incomplete` с точным числом и кодом 1; итерация дольше 0,5 s после отмены → `exact: false`, код 1; при дренаже по сигналу первым шагом вызывается `stop()` (дальше второй сигнал убивает процесс штатным поведением `signal.NotifyContext`). — `TestSignalDrainsEveryAcceptedExport`, `TestDrainIncomplete…`, `TestShutdownOrder`
+- [x] Неожиданный выход Pipeline → журнал закрыт до остановки OTLP (`UNAVAILABLE`, не OK), код 1; выход другого компонента → код 1 с дренажом. — `TestPipelineExitIsAFailure`, `TestShutdownOrder`
 
 **Наблюдаемость**
-- [ ] JSON-логи, `pipeline.stats` раз в 30 s из опубликованного снимка (в том числе в простое); `demo-check.sh` разбирает последний `pipeline.stats` и проверяет формулу I1.
-- [ ] Self-tracing: no-op по умолчанию; на пути приёма и обработки спанов нет (тест).
+- [x] JSON-логи, `pipeline.stats` раз в 30 s из опубликованного снимка (в том числе в простое); `demo-check.sh` разбирает последний `pipeline.stats` и проверяет формулу I1. — `stats_test.go`; разбор и I1 — `hack/democheck` (Go вместо `demo-check.sh`, срез 7 D6)
+- [x] Self-tracing: no-op по умолчанию; на пути приёма и обработки спанов нет (тест). — `TestIngestPathIsNotTraced` + depguard `no-self-tracing-on-ingest`
 
 **Ходячий скелет**
-- [ ] `make demo-1`: за ≤ 5 min выполняется `required ⊆ граф ⊆ required ∪ optional` по `test/demo/otel-demo/*-edges.txt`; формула I1 по последнему `pipeline.stats` сходится.
-- [ ] Replay дампа OTel Demo в `make verify` точно совпадает с `replay.golden.json` (рёбра и счётчики) и укладывается в `required ⊆ … ⊆ required ∪ optional`.
-- [ ] `failed` по обеим сторонам; вызовы без пары видны в `unanswered_calls` caller-узла.
-- [ ] Версии инструментов зафиксированы в `hack/versions.env`.
-- [ ] Матрица трассировки (requirements §9): FR-ING-001, FR-ING-005, FR-ING-006 (лимит 4 MiB, `partial_success`), FR-TOP-001, FR-TOP-002 (признак ошибки вызова), FR-API-001, FR-API-002, FR-API-007 (дедлайн 30 s, исключение `GetGraph`), FR-CLI-002 отмечены «частично, шаг 1» с перечнем непокрытого.
+- [x] `make demo-1`: за ≤ 5 min выполняется `required ⊆ граф ⊆ required ∪ optional` по `test/demo/otel-demo/*-edges.txt`; формула I1 по последнему `pipeline.stats` сходится. — прогоны 08.11: с нуля и дважды поверх, 15/15 required, I1 ok; граф готов за 35 s–2,5 min после готовности демо
+- [x] Replay дампа OTel Demo в `make verify` точно совпадает с `replay.golden.json` (рёбра и счётчики) и укладывается в `required ⊆ … ⊆ required ∪ optional`. — `TestReplayOfTheDemoDumpMatchesTheGolden`, `TestReplayEdgesStayWithinTheReference`
+- [x] `failed` по обеим сторонам; вызовы без пары видны в `unanswered_calls` caller-узла. — `call_test.go`, `topology/builder_test.go`
+- [x] Версии инструментов зафиксированы в `hack/versions.env`. — плюс `hack/check-versions.sh`
+- [x] Матрица трассировки (requirements §9): FR-ING-001, FR-ING-005, FR-ING-006 (лимит 4 MiB, `partial_success`), FR-TOP-001, FR-TOP-002 (признак ошибки вызова), FR-API-001, FR-API-002, FR-API-007 (дедлайн 30 s, исключение `GetGraph`), FR-CLI-002 отмечены «частично, шаг 1» с перечнем непокрытого. — `requirements.md`, раздел 9.3
 - [ ] Тег `v0.1.1` на `dev`.
 
 ---

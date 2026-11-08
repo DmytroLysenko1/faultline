@@ -142,7 +142,7 @@ faultline/
 | ClickHouse | `github.com/ClickHouse/clickhouse-go/v2` | Apache 2.0 | FR-STO-* |
 | Kubernetes | `k8s.io/client-go` (informers) | Apache 2.0 | FR-AGT-005, FR-TOP-003, FR-RCA-004 |
 | API | `connectrpc.com/connect`, `buf` | Apache 2.0 | FR-API-* |
-| CLI | `github.com/spf13/cobra` | Apache 2.0 | FR-CLI-* |
+| CLI | stdlib `flag` в шаге 1 (одна команда); `github.com/spf13/cobra` — когда появится дерево команд (`graph watch`, шаг 5) | Apache 2.0 | FR-CLI-* |
 | Тесты | `github.com/google/go-cmp`, `go.uber.org/goleak`, `testcontainers-go` | BSD-3 / MIT / MIT | NFR-MAINT-001 |
 
 Drain пишем сами (FR-LAD-005/006 требуют лимитов, стабильных ID и чекпоинта), а Go-порт Drain3 используем только как эталон в E5.
@@ -155,7 +155,7 @@ Drain пишем сами (FR-LAD-005/006 требуют лимитов, ста�
 
 1. `make verify` зелёный: `golangci-lint` по `~/.claude/golangci-reference.yml`, `go test -race ./...`, `buf lint` + `buf breaking`.
 2. В пакетах с долгоживущими горутинами есть `goleak.VerifyTestMain`.
-3. Демо шага воспроизводится одной командой `make demo-<шаг>` и описано в `docs/demo/<шаг>.md`.
+3. Демо шага воспроизводится одной командой `make demo-<шаг>` и описано в версионируемой инструкции рядом с манифестами (шаг 1 — `deploy/dev/README.md`; `docs/` не публикуется).
 4. В матрице трассировки (`requirements.md`, раздел 9) у закрытых FR отмечен статус.
 5. Покрытие пакетов шага ≥ порогов NFR-MAINT-001.
 6. Тег `v0.<этап>.<шаг>` на ветке `dev`; слияние в `main` — на границе этапа.
