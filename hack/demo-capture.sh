@@ -15,53 +15,13 @@ cd "$repo_root"
 # shellcheck source=hack/versions.env
 source hack/versions.env
 
-cluster=faultline-demo
-context="kind-${cluster}"
-node="${cluster}-control-plane"
+# shellcheck source=hack/lib.sh
+source hack/lib.sh
+script=demo-capture
+
 duration="${CAPTURE_DURATION:-600}"
 capture_dir="${CAPTURE_DIR:-tmp/capture}"
-min_docker_mem_gib=7
-
-log() { printf '%s demo-capture: %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; }
-
-check_docker_memory() {
-	local bytes gib
-	bytes="$(docker info --format '{{.MemTotal}}')"
-	gib=$((bytes / 1024 / 1024 / 1024))
-	log "Docker VM memory: ${gib} GiB"
-	if ((gib < min_docker_mem_gib)); then
-		log "need at least ${min_docker_mem_gib} GiB for OTel Demo"
-		exit 1
-	fi
-}
-
-ensure_cluster() {
-	if kind get clusters | grep -qx "$cluster"; then
-		log "reusing kind cluster $cluster"
-		return
-	fi
-	log "creating kind cluster $cluster (deploy/kind/kind-config-demo.yaml)"
-	kind create cluster --name "$cluster" --config deploy/kind/kind-config-demo.yaml --wait 120s
-}
-
-install_demo() {
-	log "installing OTel Demo chart $OTEL_DEMO_CHART_VERSION into namespace $OTEL_DEMO_NAMESPACE"
-	helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts >/dev/null 2>&1 || true
-	helm repo update open-telemetry >/dev/null
-	helm upgrade --install otel-demo open-telemetry/opentelemetry-demo \
-		--kube-context "$context" \
-		--version "$OTEL_DEMO_CHART_VERSION" \
-		--namespace "$OTEL_DEMO_NAMESPACE" --create-namespace \
-		-f deploy/dev/otel-demo-values.yaml \
-		-f deploy/dev/otel-demo-capture-values.yaml
-}
-
-wait_ready() {
-	log "waiting for all Deployments in $OTEL_DEMO_NAMESPACE (up to 15 min: ~25 images to pull)"
-	kubectl --context "$context" -n "$OTEL_DEMO_NAMESPACE" wait \
-		--for=condition=available deployment --all --timeout=15m
-	kubectl --context "$context" -n "$OTEL_DEMO_NAMESPACE" rollout status daemonset/otel-collector-agent --timeout=5m
-}
+min_docker_mem_mib=7168
 
 reset_capture_files() {
 	# A previous run may have left files on the node; the window must start after readiness.
@@ -87,9 +47,9 @@ EOF
 	log "done: $(wc -l <"$capture_dir/traces.jsonl") trace exports in $capture_dir"
 }
 
-check_docker_memory
+check_docker_memory "$min_docker_mem_mib"
 ensure_cluster
-install_demo
-wait_ready
+install_demo deploy/dev/otel-demo-capture-values.yaml
+wait_demo_ready
 reset_capture_files
 record

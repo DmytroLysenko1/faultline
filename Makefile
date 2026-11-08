@@ -70,6 +70,7 @@ mod-check: ## Fail if go.mod/go.sum are not tidy
 lint: $(GOLANGCI_LINT) ## Run golangci-lint
 ifneq ($(GO_PACKAGES),)
 	$(GOLANGCI_LINT) run ./...
+	@if command -v shellcheck >/dev/null; then shellcheck -x hack/*.sh; else echo "lint: shellcheck not installed, skipping hack/*.sh"; fi
 else
 	@echo "lint: no Go packages yet, skipping"
 endif
@@ -163,6 +164,22 @@ kind-up: ## Create local kind cluster (profile L)
 .PHONY: kind-down
 kind-down: ## Delete local kind cluster
 	kind delete cluster --name $(KIND_CLUSTER)
+
+.PHONY: image
+image: ## Build the faultline server image faultline:dev
+	docker build -f deploy/dev/Dockerfile -t faultline:dev .
+
+.PHONY: kind-load
+kind-load: ## Load faultline:dev into the demo kind cluster
+	kind load docker-image faultline:dev --name faultline-demo
+
+.PHONY: demo-1
+demo-1: ## Step 1 demo: OTel Demo in kind -> faultline -> graph checked against the reference (DEMO_PORT=18080)
+	./hack/demo-1.sh
+
+.PHONY: demo-check
+demo-check: ## Re-check tmp/demo/graph.json against the reference and the faultline log
+	go run ./hack/democheck -graph tmp/demo/graph.json < tmp/demo/faultline.log
 
 .PHONY: demo-capture
 demo-capture: ## Step 1 slice 0: record OTel Demo traces in kind (CAPTURE_DURATION=600)

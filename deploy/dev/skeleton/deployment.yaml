@@ -1,0 +1,59 @@
+# One replica with Recreate: the graph lives in memory and OTLP takes one connection, so two pods
+# at once would split the traffic into two partial graphs.
+# No liveness probe: the process exits on its own when a component fails (lifecycle, slice 5b-2).
+# The grace period covers the 9.9 s worst-case shutdown (slice 5b-3, D7).
+# FAULTLINE_SELF_TRACING_ENDPOINT stays unset: a faultline node in the graph would be a phantom
+# edge for hack/democheck.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: faultline
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  template:
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 15
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: faultline
+          image: faultline:dev
+          imagePullPolicy: Never
+          env:
+            - name: FAULTLINE_OTLP_GRPC_ADDR
+              value: 0.0.0.0:4317
+            - name: FAULTLINE_API_ADDR
+              value: 0.0.0.0:8080
+            - name: GOMEMLIMIT
+              value: 1408MiB
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

@@ -1,0 +1,13 @@
+# faultline all in one pod for the step 1 demo (design step 1, slice 7, D3).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: faultline
+labels:
+  - pairs:
+      app.kubernetes.io/name: faultline
+      app.kubernetes.io/part-of: faultline
+    includeSelectors: true
+resources:
+  - namespace.yaml
+  - deployment.yaml
+  - service.yaml

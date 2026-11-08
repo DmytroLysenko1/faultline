@@ -34,6 +34,9 @@ jobs:
       - name: Verify
         run: make verify
 
+      - name: Image
+        run: docker build -f deploy/dev/Dockerfile .
+
       - name: API compatibility
         if: github.event_name == 'pull_request'
         run: make proto-breaking

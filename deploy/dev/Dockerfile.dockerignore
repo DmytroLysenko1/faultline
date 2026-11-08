@@ -1,0 +1,6 @@
+# Only what the server build needs (design step 1, slice 7, D2).
+*
+!go.mod
+!go.sum
+!cmd/
+!internal/

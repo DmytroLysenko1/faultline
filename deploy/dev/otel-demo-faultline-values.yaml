@@ -1,0 +1,28 @@
+# Overlay for the step 1 demo (make demo-1): the OTel Demo collector sends every trace to
+# faultline. Apply on top of otel-demo-values.yaml (design step 1, slice 7, D4).
+#
+# - otlp_grpc is the exporter type of the collector bundled with chart 0.42.6; the old name
+#   `otlp` is still rewritten by the chart, with a deprecation warning;
+# - timeout 5s is set on purpose: the retry window must stay known (design «Tombstones»);
+# - num_consumers 10 matches faultline's MaxConcurrentStreams (slice 4b, D3), so overload shows
+#   up as RESOURCE_EXHAUSTED and not as a client waiting for stream quota;
+# - the list below replaces the base pipeline's exporters: Helm replaces lists, it never merges.
+
+
+opentelemetry-collector:
+  config:
+    exporters:
+      otlp_grpc/faultline:
+        endpoint: faultline.faultline.svc:4317
+        tls:
+          insecure: true
+        timeout: 5s
+        retry_on_failure:
+          enabled: true
+        sending_queue:
+          enabled: true
+          num_consumers: 10
+    service:
+      pipelines:
+        traces:
+          exporters: [debug, otlp_grpc/faultline]

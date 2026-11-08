@@ -1,12 +1,10 @@
 package replay_test
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,23 +19,21 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/matcher"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/otlptest"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/spanmap"
+	"github.com/DmytroLysenko1/faultline/test/demo/reference"
 )
 
 const (
-	goldenPath       = "test/demo/otel-demo/replay.golden.json"
-	requiredPath     = "test/demo/otel-demo/required-edges.txt"
-	optionalPath     = "test/demo/otel-demo/optional-edges.txt"
-	updateGoldenEnv  = "FAULTLINE_UPDATE_GOLDEN"
-	commentPrefix    = "#"
-	reasonSeparator  = " # "
-	goldenFileMode   = 0o644
-	pairingTTL       = 10 * time.Second
-	maxPending       = 100_000
-	tombstoneTTL     = 60 * time.Second
-	maxTombstones    = 1_000_000
-	maxNodes         = 10_000
-	maxEdges         = 50_000
-	edgeFieldsInLine = 2
+	goldenPath      = "test/demo/otel-demo/replay.golden.json"
+	requiredPath    = "test/demo/otel-demo/required-edges.txt"
+	optionalPath    = "test/demo/otel-demo/optional-edges.txt"
+	updateGoldenEnv = "FAULTLINE_UPDATE_GOLDEN"
+	goldenFileMode  = 0o644
+	pairingTTL      = 10 * time.Second
+	maxPending      = 100_000
+	tombstoneTTL    = 60 * time.Second
+	maxTombstones   = 1_000_000
+	maxNodes        = 10_000
+	maxEdges        = 50_000
 )
 
 type collectingJournal struct {
@@ -207,67 +203,21 @@ func TestReplayAccountsForEverySpan(t *testing.T) {
 	}
 }
 
-type edgeKey struct {
-	Source string
-	Target string
-}
-
-func readEdges(t *testing.T, path string) map[edgeKey]bool {
-	t.Helper()
-	file, err := os.Open(path)
-	if err != nil {
-		t.Fatalf("open %s: %v", path, err)
-	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			t.Errorf("close %s: %v", path, err)
-		}
-	}()
-	edges := map[edgeKey]bool{}
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		if key, ok := parseEdge(t, scanner.Text()); ok {
-			edges[key] = true
-		}
-	}
-	return edges
-}
-
-func parseEdge(t *testing.T, line string) (edgeKey, bool) {
-	t.Helper()
-	line = strings.TrimSpace(line)
-	if line == "" || strings.HasPrefix(line, commentPrefix) {
-		return edgeKey{}, false
-	}
-	edge, _, _ := strings.Cut(line, reasonSeparator)
-	fields := strings.Fields(edge)
-	if len(fields) != edgeFieldsInLine {
-		t.Fatalf("edge line %q is not '<source> <target>'", line)
-	}
-	return edgeKey{
-		Source: fields[0],
-		Target: fields[1],
-	}, true
-}
-
 func TestReplayEdgesStayWithinTheReference(t *testing.T) {
 	root := otlptest.ModuleRoot(t)
-	required := readEdges(t, filepath.Join(root, requiredPath))
-	optional := readEdges(t, filepath.Join(root, optionalPath))
-	seen := map[edgeKey]bool{}
+	expected, err := reference.Load(filepath.Join(root, requiredPath), filepath.Join(root, optionalPath))
+	if err != nil {
+		t.Fatalf("load reference: %v", err)
+	}
+	var edges []reference.Edge
 	for _, edge := range replay(t, defaultLimits(), otlptest.DemoLines(t)).Edges {
-		key := edgeKey{
+		edges = append(edges, reference.Edge{
 			Source: edge.Source,
 			Target: edge.Target,
-		}
-		seen[key] = true
-		if !required[key] && !optional[key] {
-			t.Errorf("phantom edge %s -> %s is in neither reference list", key.Source, key.Target)
-		}
+		})
 	}
-	for key := range required {
-		if !seen[key] {
-			t.Errorf("required edge %s -> %s is missing from the replay", key.Source, key.Target)
-		}
+	if result := expected.Check(edges); !result.Passed() {
+		t.Errorf("replay against the reference: missing %v, phantoms %v, without namespace %v",
+			result.Missing, result.Phantoms, result.Unqualified)
 	}
 }
