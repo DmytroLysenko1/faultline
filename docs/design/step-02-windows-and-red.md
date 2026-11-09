@@ -174,7 +174,7 @@ Watermark — **функция журнала**: всё, что его двиг�
 - **только `ReceivedAt`** (ред. 2): после сбоя связи Collector досылает накопленное за минуты (очередь `sending_queue`, повторы после `RESOURCE_EXHAUSTED` 30–300 s) — всё старше 60 s было бы `late_dropped` целиком (ревью osmani). С гибридом пакет из старых событий даёт старый кандидат, watermark не прыгает вперёд, и догоняющие данные учитываются;
 - пакет, где смешаны старые и свежие события, двигает watermark по свежим — старые события этого пакета опоздали относительно свежих, это правильно.
 
-**Якорь пакета** (ред. 5, ревью pstack, прогон: 4 000 журналов, ≈ 1 000 событий оставались за горизонтом и ≈ 250 нарушений I6) — время, которое получают спан без времени и событие, переназначенное из-за горизонта: кандидат пакета; если у пакета кандидата нет — текущий наибольший кандидат (`watermark + delay`); до первого watermark — `ReceivedAt`. Раньше этим временем было `ReceivedAt`, а окно `ReceivedAt` лежит в горизонте, только пока кандидат пакета равен `ReceivedAt`: после пакета досылки (кандидат на 2 минуты в прошлом) спан без времени уходил за горизонт, и переназначение ничего не меняло. С якорем всякое размещаемое `t ≤ якорь ≤ кандидат + …`, и доказательство горизонта снова верно. Тест: пакет досылки → пакет с одним `end = 0` → пакет только из спанов без времени — все события размещены, I6 сходится.
+**Якорь пакета** (ред. 5, ревью pstack, прогон: 4 000 журналов, ≈ 1 000 событий оставались за горизонтом и ≈ 250 нарушений I6) — время, которое получают спан без времени и событие, переназначенное из-за горизонта: кандидат пакета; если у пакета кандидата нет — текущий наибольший кандидат (`watermark + delay`). **До первого watermark события в окна не попадают** (ревью кода среза 2, все трое, прогон: паника «window ring collision»): такой пакет состоит только из спанов без времени, их окна `ReceivedAt` лежали вне будущего горизонта и сталкивались в кольце с окнами досылки; теперь `PlacementDroppedNoWatermark`, счётчик `no_watermark`, граф их учитывает. Теряются только спаны без времени за первые ≤ `idle_advance_after` после старта. Якорь вне горизонта прижимается к его краю — паника из данных недостижима по построению. Раньше этим временем было `ReceivedAt`, а окно `ReceivedAt` лежит в горизонте, только пока кандидат пакета равен `ReceivedAt`: после пакета досылки (кандидат на 2 минуты в прошлом) спан без времени уходил за горизонт, и переназначение ничего не меняло. С якорем всякое размещаемое `t ≤ якорь ≤ кандидат + …`, и доказательство горизонта снова верно. Тест: пакет досылки → пакет с одним `end = 0` → пакет только из спанов без времени — все события размещены, I6 сходится.
 
 **Спаны без времени в кандидат не входят** (ред. 4, ревью pocock и osmani): иначе один спан с `end = 0` в пакете догоняющих данных делал кандидат равным `ReceivedAt`, watermark прыгал вперёд и вся досылка становилась `late_dropped`. Кандидат считается по всем спанам пакета с известным временем, а не только по участникам RED: источник, шлющий только INTERNAL-спаны с настоящими временами, двигает watermark честно.
 
@@ -210,6 +210,7 @@ Watermark — **функция журнала**: всё, что его двиг�
 
 | # | Условие | Решение |
 |---|---|---|
+| 0 | watermark ещё неизвестен | `DroppedNoWatermark`, `no_watermark++` |
 | 1 | `watermark − t > allowed_lateness` | `DroppedLate`, `late_dropped++` |
 | 2 | окно `id ≥ firstLive + Slots()` | `t := якорь пакета`, `clock_skew_reassigned++`, раскладка повторяется один раз (окно якоря всегда в горизонте) |
 | 3 | окно финальное (`watermark ≥ end`) | `Late`: учитывается, `lateDirty`, `late_accepted++` |
@@ -354,7 +355,7 @@ services:
 
 ```
 placement := ops.Classify(t)              — чистая функция (watermark и t у всех движков одни)
-если DroppedLate: ops.Drop(); выйти        — offered++ и late_dropped++; ни ссылок, ни серий
+если placement.Dropped(): ops.Drop(placement); выйти — offered++ и счётчик причины; ни ссылок, ни серий
 id, known := registry.Lookup(owner, op)
 если known и ops.Has(key(id)): ops.Locate(key(id), t)
 иначе если ops.Len() < ops.Capacity() и registry.Acquire(owner, op) → id:
@@ -414,7 +415,7 @@ func (b *Builder) Snapshot() *Snapshot
 
 Инварианты шага 1 действуют. I2 уточняется: ревизия растёт и при изменении любой сводки `live` / `final` (владелец ревизии — `Builder`). **Watermark и статистики окон в снимке — диагностика**, как `PairingStats`: обновляются каждую публикацию и ревизию не двигают. I1 и I4: пульс — не пакет спанов, в корзины и кредит не входит.
 
-- **I6 — учёт каждого события окна.** Для каждого движка: `offered = on_time + late_accepted + late_dropped`; `clock_skew_reassigned` — часть `on_time + late_accepted`. После полного сброса (пульсы далеко в будущем) `Σ requests ушедших на пенсию ячеек = on_time + late_accepted`.
+- **I6 — учёт каждого события окна.** Для каждого движка: `offered = on_time + late_accepted + late_dropped + no_watermark`; `clock_skew_reassigned` — часть `on_time + late_accepted`. После полного сброса (пульсы далеко в будущем) `Σ requests ушедших на пенсию ячеек = on_time + late_accepted`.
 - **I7 — окно = пакетный пересчёт.** Для любого порядка прихода, при котором опоздание каждого события в его пакете ≤ `allowed_lateness`, при достаточном бюджете скетчей: последняя финальная панель `(ключ, окно)` равна агрегату всех событий этого ключа и окна — точно по `requests`, `failed` и по записям скетча (`Arena.Equal`).
 - **I8 — финальные результаты — функция журнала.** Для `(ключ, окно)`: `EARLY` только до первой финальной; ревизии 1, 2, 3… без пропусков; после пенсии панелей нет. Глобальная последовательность финальных панелей одного журнала (с пульсами) **не зависит** от группировки пакетов в итерации, моментов и числа `Fire`, от процесса (повторный прогон в новом процессе даёт те же панели и те же `WindowStats`).
 - **I9 — watermark.** Не убывает; `watermark ≤ maxReceivedAt − delay`; событие из будущего его не двигает дальше часов приёма.
@@ -747,7 +748,7 @@ publish: Publish(Snapshot()) — ошибка → return (held не освобо
 | `BenchmarkSketchAddExistingBin` (широкая ячейка ≈ 120 записей, σ = 1) | ≤ 80 ns, 0 аллокаций (замер: 67 ns; разреженный скетч платит бинарным поиском за отказ от плотного массива — цена памяти, см. «Скетч латентности») |
 | `BenchmarkSketchCellLifecycle` (пустая → 10 событий → пенсия) | ≤ 500 ns, 0 аллокаций (замер: 400 ns) |
 | `BenchmarkSketchPercentiles` | ≤ 300 ns, 0 аллокаций |
-| `BenchmarkLocateRecord` (100 000 серий, случайный доступ) | по замеру среза 2, 0 аллокаций |
+| `BenchmarkLocateRecord` (100 000 серий, случайный доступ) | ≤ 50 ns (замер среза 2: 32 ns), 0 аллокаций |
 | `BenchmarkNormalize` / `BenchmarkRouteRulesWorst` | ≤ 400 ns / ≤ 10 µs, ≤ 1 аллокация |
 | `BenchmarkAcceptBatch` (512 спанов) | не хуже шага 1 + нормализация; аллокации — ≤ шага 1 + 1 на спан |
 | `BenchmarkBuilderApplyPerSpan` | ≤ 1 µs на спан, 0 аллокаций на спан |
@@ -924,7 +925,10 @@ func WorstCaseHeapBytes(maxEntries int) int64
 **`pkg/stream`** (срез 2)
 
 ```go
-var ErrInvalidConfig = errors.New("invalid window config")
+var (
+	ErrInvalidConfig  = errors.New("invalid window config")
+	ErrInvalidOptions = errors.New("invalid window options") // Capacity вне [1, 2²⁴] или sink == nil
+)
 
 type Config struct {
 	Size, Delay, AllowedLateness time.Duration
@@ -947,7 +951,8 @@ type Pane struct {
 	Revision uint32
 }
 
-type Placement uint8 // PlacementOnTime, PlacementLate, PlacementDroppedLate
+type Placement uint8 // PlacementOnTime, PlacementLate, PlacementDroppedLate, PlacementDroppedNoWatermark
+func (p Placement) Dropped() bool
 
 type Mark struct {
 	Time  time.Time
@@ -956,13 +961,13 @@ type Mark struct {
 
 type Watermark struct { /* unexported */ }
 func NewWatermark(cfg Config) (*Watermark, error)              // партиций до шага 3 нет
-func (w *Watermark) Advance(candidate Mark) Mark               // кандидат пакета или пульса; Known=false — пакет без спанов со временем, watermark не двигается
+func (w *Watermark) Advance(receivedAt time.Time, candidate Mark) Mark // кандидат пакета или пульса, прижатый к receivedAt (I9); Known=false — watermark не двигается
 func (w *Watermark) Current() Mark
 func (w *Watermark) MaxReceivedAt() Mark
 func (w *Watermark) CoverageStart() Mark                       // watermark первого пакета − lateness
 func (w *Watermark) Anchor(batchCandidate Mark, receivedAt time.Time) time.Time // кандидат пакета, иначе max кандидат, иначе receivedAt
 
-type Sink[K comparable, C any] interface {
+type Sink[K comparable, C any] interface { // вызывается при обходе корзин: обратно в тот же Windows не входить
 	Emit(key K, pane Pane, cell *C)       // *C действителен только во время вызова
 	Retire(key K, window Window, cell *C) // освободить ресурсы; затем движок обнуляет ячейку
 	Closed(key K)                         // серия удалена
@@ -976,6 +981,7 @@ type Options struct {
 type Stats struct {
 	Series, Capacity                            int
 	Offered, OnTime, LateAccepted, LateDropped  uint64
+	NoWatermark                                 uint64
 	Reassigned                                  uint64
 	PanesEarly, PanesOnTime, PanesLate, Retired uint64
 }
@@ -983,7 +989,7 @@ type Stats struct {
 func New[K comparable, C any](cfg Config, options Options, sink Sink[K, C]) (*Windows[K, C], error)
 func (w *Windows[K, C]) Begin(mark Mark, anchor time.Time)     // ON_TIME по возрастанию id, пенсии; фиксирует mark и якорь пакета
 func (w *Windows[K, C]) Classify(t time.Time) Placement
-func (w *Windows[K, C]) Drop()                                 // событие DroppedLate без ключа
+func (w *Windows[K, C]) Drop(placement Placement)              // отброшенное событие без ключа: offered++ и счётчик причины
 func (w *Windows[K, C]) Locate(key K, t time.Time) (cell *C, placement Placement, created bool)
 func (w *Windows[K, C]) End()                                  // LATE
 func (w *Windows[K, C]) FireEarly()                            // только если Options.Early
@@ -1254,3 +1260,17 @@ func ResponseWeight(nodes, edges int) int64                          // конс
 | Дорогое закрытие окон и снимок | работа ∝ панелям; публикация по 4 причинам; бенчмарки |
 | Изменение порта журнала (`Append(spans)`) задевает тесты шага 1 | срез 4 — отдельный, тесты `memjournal` и `ingest` переводятся в нём |
 | Объём шага | линия отсечения |
+
+### Разбор ревью кода среза 2 (`pkg/stream`)
+
+| Находка | Решение |
+|---|---|
+| Паника «window ring collision» из данных: спаны без времени до первого watermark (pocock, osmani, pstack HIGH) | до первого watermark — `DroppedNoWatermark`; якорь прижат к горизонту; регрессии обоих путей и ветка в генераторе |
+| `late` растёт сверх выделенного, оценка памяти занижена (osmani MEDIUM, pstack LOW) | ёмкость `Capacity × (ceil(L/size) + 1)`, тот же множитель в `WorstCaseHeapBytes`; оценка карты — худший случай групп; проба `HeapAlloc` с двумя границами |
+| Порядок `ON_TIME`, I8, `Classify`, края горизонта, генератор (pocock, osmani MEDIUM) | перенос по кольцу; I8 на 10⁴: `FireEarly`, новый движок, скачок против пульсов; `Classify = Locate` по всем правилам; генератор: без времени, из будущего, без кандидата |
+| `Advance` не держит I9 (pocock MEDIUM, osmani и pstack LOW) | кандидат прижат к `receivedAt` внутри `Advance`; сигнатура в контракте |
+| Переполнение `Slots()` в `Validate` (osmani, pstack LOW) | границы задержки, допуска и запаса до счёта; `Delay + Lateness` без переполнения; `ceil` без `span + size − 1`; время вне 1678–2262 — до `UnixNano` (раньше — `late_dropped`, позже — на якорь) |
+| Повторный вход из `Sink` (pstack LOW) | границы пакета до `closeWindows`; `Closed` после удаления серии; запрет в контракте `Sink` |
+| Дублирующие механизмы (osmani LOW) | поколения и состояния слота убраны; корзина опоздавшего окна создаётся финальной |
+| Тесты поле-за-полем (pocock MEDIUM) | `cmp.Diff` и таблицы `name/args/want/wantErr` |
+
