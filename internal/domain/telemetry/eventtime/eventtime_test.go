@@ -69,3 +69,27 @@ func TestZeroIntervalIsUntimedAndSixteenBytes(t *testing.T) {
 		t.Errorf("zero interval mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestIntervalEqualDistinguishesEndAndLatency(t *testing.T) {
+	const second = uint64(time.Second)
+	base := eventtime.FromUnixNanos(second, 3*second)
+	tests := []struct {
+		Name string
+		Args eventtime.Interval
+		Want bool
+	}{
+		{Name: "same interval", Args: eventtime.FromUnixNanos(second, 3*second), Want: true},
+		{Name: "another end", Args: eventtime.FromUnixNanos(2*second, 4*second)},
+		{Name: "another latency", Args: eventtime.FromUnixNanos(2*second, 3*second)},
+		{Name: "unknown latency", Args: eventtime.FromUnixNanos(0, 3*second)},
+		{Name: "untimed", Args: eventtime.Interval{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.Name, func(t *testing.T) {
+			got := [2]bool{base.Equal(tt.Args), cmp.Diff(base, tt.Args) == ""}
+			if diff := cmp.Diff([2]bool{tt.Want, tt.Want}, got); diff != "" {
+				t.Errorf("[Equal, cmp.Diff empty] mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

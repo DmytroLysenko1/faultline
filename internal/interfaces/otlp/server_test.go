@@ -18,8 +18,8 @@ import (
 
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
-	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/otlptest"
 )
@@ -318,8 +318,8 @@ func (h holdingSource) Len() int {
 	return h.inner.Len()
 }
 
-func (h holdingSource) All() iter.Seq2[resource.Resource, span.Fields] {
-	return func(yield func(resource.Resource, span.Fields) bool) {
+func (h holdingSource) All() iter.Seq2[resource.Resource, *ingest.Record] {
+	return func(yield func(resource.Resource, *ingest.Record) bool) {
 		remaining := h.inner.Len()
 		for source, fields := range h.inner.All() {
 			remaining--
@@ -357,7 +357,7 @@ func (discardJournal) Append(context.Context, batch.Batch) error {
 func TestHeldRequestsStayWithinTheMemoryBudget(t *testing.T) {
 	arrived := make(chan struct{}, heldRequests)
 	release := make(chan struct{})
-	accept := ingest.NewAcceptBatch(discardJournal{}, &fakeClock{})
+	accept := ingest.NewAcceptBatch(discardJournal{}, &fakeClock{}, operation.NewNormalizer(nil))
 	h := start(t, func(ctx context.Context, spans ingest.SpanSource) (ingest.AcceptResult, error) {
 		return accept.Execute(ctx, holdingSource{
 			inner:   spans,

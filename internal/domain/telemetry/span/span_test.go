@@ -9,6 +9,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/ids"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/kind"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/response"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
 )
@@ -72,7 +73,7 @@ func TestNewSpanRejects(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
-			_, err := span.New(tt.Args.Resource, tt.Args.Fields)
+			_, err := span.New(tt.Args.Resource, &tt.Args.Fields)
 			if !errors.Is(err, tt.WantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.WantErr)
 			}
@@ -209,8 +210,8 @@ func TestNewSpanAccepts(t *testing.T) {
 			Args: spanArgs{
 				Resource: telemetrytest.ValidResource(),
 				Fields: telemetrytest.FieldsWith(func(f *span.Fields) {
-					f.Attributes = map[string]string{
-						"http.response.status_code": "503",
+					f.Attributes = response.Attributes{
+						HTTPResponseStatusCode: "503",
 					}
 				}),
 			},
@@ -257,8 +258,8 @@ func TestNewSpanAccepts(t *testing.T) {
 			Args: spanArgs{
 				Resource: telemetrytest.ValidResource(),
 				Fields: telemetrytest.FieldsWith(func(f *span.Fields) {
-					f.Attributes = map[string]string{
-						"db.system.name": "postgresql",
+					f.Attributes = response.Attributes{
+						DBSystemName: "postgresql",
 					}
 				}),
 			},
@@ -280,7 +281,7 @@ func TestNewSpanAccepts(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
-			got, err := span.New(tt.Args.Resource, tt.Args.Fields)
+			got, err := span.New(tt.Args.Resource, &tt.Args.Fields)
 			if !errors.Is(err, tt.WantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.WantErr)
 			}
@@ -292,7 +293,8 @@ func TestNewSpanAccepts(t *testing.T) {
 }
 
 func TestSpanIdentityStrings(t *testing.T) {
-	got := telemetrytest.MustSpan(t, telemetrytest.ValidResource(), telemetrytest.ValidFields()).IdentityStrings()
+	created := telemetrytest.MustSpan(t, telemetrytest.ValidResource(), new(telemetrytest.ValidFields()))
+	got := created.IdentityStrings()
 	if diff := cmp.Diff([span.IdentityStringCount]string{
 		"otel-demo",
 		"checkout",

@@ -24,6 +24,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/application/processing"
 	"github.com/DmytroLysenko1/faultline/internal/application/processing/processingtest"
 	"github.com/DmytroLysenko1/faultline/internal/application/query"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation"
 	faultlinev1 "github.com/DmytroLysenko1/faultline/internal/gen/proto/faultline/v1"
 	"github.com/DmytroLysenko1/faultline/internal/gen/proto/faultline/v1/faultlinev1connect"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memgraph"
@@ -121,7 +122,7 @@ func startAPI(t *testing.T, store *memgraph.Store) faultlinev1connect.GraphServi
 func (s *system) startOTLP(t *testing.T) ptraceotlp.GRPCClient {
 	t.Helper()
 	settings := otlp.DefaultOptions(slog.New(slog.DiscardHandler), fixedClock{})
-	s.otlp = otlp.NewServer(ingest.NewAcceptBatch(s.journal, fixedClock{}), settings)
+	s.otlp = otlp.NewServer(ingest.NewAcceptBatch(s.journal, fixedClock{}, operation.NewNormalizer(nil)), settings)
 	listener := bufconn.Listen(bufferBytes)
 	s.serving.Go(func() {
 		if err := s.otlp.Serve(listener); err != nil && !errors.Is(err, grpc.ErrServerStopped) {

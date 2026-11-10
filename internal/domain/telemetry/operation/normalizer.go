@@ -11,44 +11,67 @@ type Normalizer struct {
 }
 
 func NewNormalizer(rules *Rules) *Normalizer {
-	return &Normalizer{rules: rules}
+	return &Normalizer{
+		rules: rules,
+	}
 }
 
 func (n *Normalizer) Normalize(service resource.ServiceRef, facts *Facts) Operation {
-	if facts.RPCMethod != "" {
-		return rpcOperation(facts)
-	}
-	if facts.Route != "" {
-		return n.httpOperation(service, facts.HTTPMethod, facts.Route)
-	}
-	if path, ok := facts.path(); ok {
-		return n.httpOperation(service, facts.HTTPMethod, path)
-	}
-	return Operation{}
+	return n.NormalizeShared(service, facts, nil)
 }
 
-func rpcOperation(facts *Facts) Operation {
+func (n *Normalizer) NormalizeShared(service resource.ServiceRef, facts *Facts, names Names) Operation {
 	var built name
+	protocol := n.write(&built, service, facts)
+	if protocol == ProtocolUnspecified {
+		return Operation{}
+	}
+	return Operation{
+		Protocol: protocol,
+		Name:     names.share(&built),
+	}
+}
+
+func (n *Normalizer) write(built *name, service resource.ServiceRef, facts *Facts) Protocol {
+	if facts.RPCMethod != "" {
+		writeRPC(built, facts)
+		return rpcProtocol(facts.RPCSystem)
+	}
+	if facts.Route != "" {
+		n.writeHTTP(built, service, facts.HTTPMethod, facts.Route)
+		return ProtocolHTTP
+	}
+	if path, ok := facts.path(); ok {
+		n.writeHTTP(built, service, facts.HTTPMethod, path)
+		return ProtocolHTTP
+	}
+	return ProtocolUnspecified
+}
+
+func writeRPC(built *name, facts *Facts) {
 	method := strings.TrimLeft(facts.RPCMethod, "/")
-	if service := strings.TrimLeft(facts.RPCService, "/"); service != "" && !strings.Contains(method, "/") {
-		built.writeString(service)
+	service := strings.TrimLeft(facts.RPCService, "/")
+	if service == "" || strings.Contains(method, "/") {
+		writeBareMethod(built, method)
+		return
+	}
+	built.writeString(service)
+	built.writeBytes("/")
+	built.writeString(method)
+}
+
+func writeBareMethod(built *name, method string) {
+	if method == "" || method == OverflowName {
 		built.writeBytes("/")
 	}
 	built.writeString(method)
-	result := built.String()
-	if result == OverflowName || result == "" {
-		result = "/" + result
-	}
-	return Operation{Protocol: rpcProtocol(facts.RPCSystem), Name: result}
 }
 
-func (n *Normalizer) httpOperation(service resource.ServiceRef, method, path string) Operation {
-	var built name
+func (n *Normalizer) writeHTTP(built *name, service resource.ServiceRef, method, path string) {
 	built.writeBytes(string(canonicalMethod(method)))
 	built.writeBytes(" ")
 	split := splitPath(path)
-	n.writePath(&built, service, split.items())
-	return Operation{Protocol: ProtocolHTTP, Name: built.String()}
+	n.writePath(built, service, split.items())
 }
 
 func (n *Normalizer) writePath(built *name, service resource.ServiceRef, items []string) {

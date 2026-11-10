@@ -247,7 +247,7 @@ func TestFailed(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
-			got := response.Attributes(tt.Args.Attributes).Failed(tt.Args.StatusError)
+			got := failed(tt.Args.Attributes, tt.Args.StatusError)
 			if diff := cmp.Diff(tt.Want, got); diff != "" {
 				t.Errorf("Failed mismatch (-want +got):\n%s", diff)
 			}
@@ -298,7 +298,7 @@ func TestCallsExternalSystem(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
-			if diff := cmp.Diff(tt.Want, response.Attributes(tt.Args).CallsExternalSystem()); diff != "" {
+			if diff := cmp.Diff(tt.Want, callsExternalSystem(tt.Args)); diff != "" {
 				t.Errorf("CallsExternalSystem mismatch (-want +got):\n%s", diff)
 			}
 		})
@@ -309,31 +309,32 @@ func TestFailedDoesNotAllocate(t *testing.T) {
 	const runs = 100
 	tests := []struct {
 		Name string
-		Args response.Attributes
+		Args map[string]string
 	}{
 		{
 			Name: "no response code attributes",
-			Args: response.Attributes{
+			Args: map[string]string{
 				"service.version": "1.0.0",
 			},
 		},
 		{
 			Name: "numeric gRPC code",
-			Args: response.Attributes{
+			Args: map[string]string{
 				"rpc.grpc.status_code": "14",
 			},
 		},
 		{
 			Name: "numeric HTTP code",
-			Args: response.Attributes{
+			Args: map[string]string{
 				"http.response.status_code": "503",
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
+			attributes := attributesOf(tt.Args)
 			allocations := testing.AllocsPerRun(runs, func() {
-				tt.Args.Failed(false)
+				attributes.Failed(false)
 			})
 			if allocations != 0 {
 				t.Errorf("Failed allocates %.0f times per span, want 0 on the ingest hot path", allocations)
@@ -417,10 +418,26 @@ func TestEveryRelevantAttributeChangesTheDecision(t *testing.T) {
 		if !response.Relevant(key) {
 			t.Errorf("%s decides Failed but Relevant(%q) is false: the adapter would drop it", key, key)
 		}
-		if !(response.Attributes{
-			key: value,
-		}).Failed(false) {
+		if !failed(map[string]string{key: value}, false) {
 			t.Errorf("%s=%s does not mark the call failed", key, value)
 		}
 	}
+}
+
+func attributesOf(values map[string]string) response.Attributes {
+	var attributes response.Attributes
+	for key, value := range values {
+		attributes.Set(key, value)
+	}
+	return attributes
+}
+
+func failed(values map[string]string, statusError bool) bool {
+	attributes := attributesOf(values)
+	return attributes.Failed(statusError)
+}
+
+func callsExternalSystem(values map[string]string) bool {
+	attributes := attributesOf(values)
+	return attributes.CallsExternalSystem()
 }

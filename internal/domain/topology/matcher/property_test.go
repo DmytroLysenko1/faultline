@@ -28,10 +28,10 @@ func TestPairingAccountsForEverySpan(t *testing.T) {
 			now := telemetrytest.Epoch().Add(step.At)
 			pairing.Expire(now)
 			for _, span := range step.Spans {
-				if _, side := role.Of(span); side != role.Ignored {
+				if _, side := role.Of(&span); side != role.Ignored {
 					fed++
 				}
-				if _, matched := pairing.Match(span, now); matched {
+				if _, matched := pairing.Match(&span, now); matched {
 					pairs++
 				}
 			}

@@ -1,7 +1,12 @@
 package memjournal
 
-const queueSlotBytes = 56
+import "unsafe"
+
+const (
+	queueSlotBytes     = int64(unsafe.Sizeof(entry{}))
+	queueOverheadBytes = 64 << 10
+)
 
 func (l Limits) WorstCaseHeapBytes() int64 {
-	return l.MaxBytes + int64(l.MaxBatches)*queueSlotBytes
+	return l.MaxBytes + int64(l.MaxBatches)*queueSlotBytes + queueOverheadBytes
 }

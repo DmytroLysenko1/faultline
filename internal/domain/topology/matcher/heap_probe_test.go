@@ -31,7 +31,7 @@ func limitsOf(pending int) matcher.Limits {
 
 func callerHalf(t *testing.T, index uint64, source resource.Resource) span.Span {
 	t.Helper()
-	return telemetrytest.MustSpan(t, source, span.Fields{
+	return telemetrytest.MustSpan(t, source, &span.Fields{
 		TraceID: telemetrytest.NumberedTrace(index),
 		SpanID: ids.SpanID{
 			1,
@@ -48,7 +48,8 @@ func steadyGrowth(t *testing.T, pending int, sourceOf func(index int) resource.R
 			t.Fatalf("matcher.New: %v", err)
 		}
 		for index := range telemetrytest.SteadyStateRounds * pending {
-			pairing.Match(callerHalf(t, uint64(index), sourceOf(index)), telemetrytest.Epoch())
+			half := callerHalf(t, uint64(index), sourceOf(index))
+			pairing.Match(&half, telemetrytest.Epoch())
 		}
 		return pairing
 	})

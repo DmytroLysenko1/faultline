@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/kind"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 )
@@ -32,7 +34,12 @@ type clock interface {
 
 type SpanSource interface {
 	Len() int
-	All() iter.Seq2[resource.Resource, span.Fields]
+	All() iter.Seq2[resource.Resource, *Record]
+}
+
+type Record struct {
+	Fields span.Fields
+	Facts  operation.Facts
 }
 
 type AcceptResult struct {
@@ -61,21 +68,26 @@ type Stats struct {
 type AcceptBatch struct {
 	journal    spanJournal
 	clock      clock
+	normalizer *operation.Normalizer
 	accepted   atomic.Int64
 	rejected   atomic.Int64
 	overloaded atomic.Int64
 	tooLarge   atomic.Int64
 }
 
-func NewAcceptBatch(journal spanJournal, clock clock) *AcceptBatch {
+func NewAcceptBatch(journal spanJournal, clock clock, normalizer *operation.Normalizer) *AcceptBatch {
+	if normalizer == nil {
+		panic("ingest: NewAcceptBatch needs an operation normalizer")
+	}
 	return &AcceptBatch{
-		journal: journal,
-		clock:   clock,
+		journal:    journal,
+		clock:      clock,
+		normalizer: normalizer,
 	}
 }
 
 func (a *AcceptBatch) Execute(ctx context.Context, spans SpanSource) (AcceptResult, error) {
-	valid, result := partition(spans)
+	valid, result := a.partition(spans)
 	if err := a.enqueue(ctx, valid); err != nil {
 		return AcceptResult{}, err
 	}
@@ -85,7 +97,7 @@ func (a *AcceptBatch) Execute(ctx context.Context, spans SpanSource) (AcceptResu
 }
 
 func (a *AcceptBatch) enqueue(ctx context.Context, valid []span.Span) error {
-	received, err := batch.NewOwning(valid, a.clock.Now())
+	received, err := batch.NewOwning(fitted(valid), a.clock.Now())
 	if errors.Is(err, batch.ErrEmpty) {
 		return nil
 	}
@@ -117,11 +129,13 @@ func (a *AcceptBatch) Stats() Stats {
 	}
 }
 
-func partition(spans SpanSource) ([]span.Span, AcceptResult) {
+func (a *AcceptBatch) partition(spans SpanSource) ([]span.Span, AcceptResult) {
 	valid := make([]span.Span, 0, max(spans.Len(), 0))
+	names := make(operation.Names)
 	var result AcceptResult
-	for source, fields := range spans.All() {
-		accepted, err := span.New(source, fields)
+	for source, record := range spans.All() {
+		a.nameOperation(source, record, names)
+		accepted, err := span.New(source, &record.Fields)
 		if err != nil {
 			result.reject(err)
 			continue
@@ -130,4 +144,18 @@ func partition(spans SpanSource) ([]span.Span, AcceptResult) {
 	}
 	result.Accepted = len(valid)
 	return valid, result
+}
+
+func (a *AcceptBatch) nameOperation(source resource.Resource, record *Record, names operation.Names) {
+	if record.Fields.Kind != kind.Client && record.Fields.Kind != kind.Server {
+		return
+	}
+	record.Fields.Operation = a.normalizer.NormalizeShared(source.ServiceRef(), &record.Facts, names)
+}
+
+func fitted(valid []span.Span) []span.Span {
+	if len(valid) > cap(valid)/2 {
+		return valid
+	}
+	return slices.Clone(valid)
 }

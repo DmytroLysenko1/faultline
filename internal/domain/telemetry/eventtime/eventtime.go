@@ -36,3 +36,7 @@ func (i Interval) Latency() (time.Duration, bool) {
 	}
 	return time.Duration(i.latencyPlusOne - 1), true
 }
+
+func (i Interval) Equal(other Interval) bool {
+	return i == other
+}

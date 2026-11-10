@@ -6,6 +6,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
+	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/ids"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/kind"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
@@ -18,8 +19,6 @@ const (
 	attrServiceNamespace = "service.namespace"
 	attrK8sNamespaceName = "k8s.namespace.name"
 	attrK8sPodName       = "k8s.pod.name"
-
-	relevantAttributesHint = 2
 )
 
 type Source struct {
@@ -36,10 +35,11 @@ func (s Source) Len() int {
 	return s.traces.SpanCount()
 }
 
-func (s Source) All() iter.Seq2[resource.Resource, span.Fields] {
-	return func(yield func(resource.Resource, span.Fields) bool) {
+func (s Source) All() iter.Seq2[resource.Resource, *ingest.Record] {
+	return func(yield func(resource.Resource, *ingest.Record) bool) {
+		var record ingest.Record
 		for _, resourceSpans := range s.traces.ResourceSpans().All() {
-			if !yieldResource(resourceSpans, yield) {
+			if !yieldResource(resourceSpans, &record, yield) {
 				return
 			}
 		}
@@ -48,11 +48,12 @@ func (s Source) All() iter.Seq2[resource.Resource, span.Fields] {
 
 func yieldResource(
 	resourceSpans ptrace.ResourceSpans,
-	yield func(resource.Resource, span.Fields) bool,
+	record *ingest.Record,
+	yield func(resource.Resource, *ingest.Record) bool,
 ) bool {
 	source := resourceOf(resourceSpans.Resource().Attributes())
 	for _, scopeSpans := range resourceSpans.ScopeSpans().All() {
-		if !yieldScope(source, scopeSpans, yield) {
+		if !yieldScope(source, scopeSpans, record, yield) {
 			return false
 		}
 	}
@@ -62,10 +63,12 @@ func yieldResource(
 func yieldScope(
 	source resource.Resource,
 	scopeSpans ptrace.ScopeSpans,
-	yield func(resource.Resource, span.Fields) bool,
+	record *ingest.Record,
+	yield func(resource.Resource, *ingest.Record) bool,
 ) bool {
 	for _, observed := range scopeSpans.Spans().All() {
-		if !yield(source, fieldsOf(observed)) {
+		fill(record, observed)
+		if !yield(source, record) {
 			return false
 		}
 	}
@@ -88,15 +91,39 @@ func stringValue(attributes pcommon.Map, key string) string {
 	return ""
 }
 
-func fieldsOf(observed ptrace.Span) span.Fields {
-	return span.Fields{
+func fill(record *ingest.Record, observed ptrace.Span) {
+	*record = ingest.Record{Fields: span.Fields{
 		TraceID:      ids.TraceID(observed.TraceID()),
 		SpanID:       ids.SpanID(observed.SpanID()),
 		ParentSpanID: ids.SpanID(observed.ParentSpanID()),
 		Kind:         kindOf(observed.Kind()),
 		StatusError:  observed.Status().Code() == ptrace.StatusCodeError,
-		Attributes:   attributesOf(observed.Attributes()),
+		Start:        uint64(observed.StartTimestamp()),
+		End:          uint64(observed.EndTimestamp()),
+	}}
+	for key, value := range observed.Attributes().All() {
+		collect(record, key, value)
 	}
+}
+
+func collect(record *ingest.Record, key string, value pcommon.Value) {
+	if value.Type() == pcommon.ValueTypeStr {
+		collectText(record, key, value.Str())
+		return
+	}
+	if !response.Relevant(key) {
+		return
+	}
+	if text, scalar := scalarText(value); scalar {
+		record.Fields.Attributes.Set(key, text)
+	}
+}
+
+func collectText(record *ingest.Record, key, text string) {
+	if record.Fields.Attributes.Set(key, text) {
+		return
+	}
+	record.Facts.Set(key, text)
 }
 
 func kindOf(spanKind ptrace.SpanKind) kind.Kind {
@@ -104,28 +131,6 @@ func kindOf(spanKind ptrace.SpanKind) kind.Kind {
 		return kind.Unspecified
 	}
 	return kind.Kind(spanKind)
-}
-
-func attributesOf(attributes pcommon.Map) response.Attributes {
-	var relevant response.Attributes
-	for key, value := range attributes.All() {
-		text, decides := decisive(key, value)
-		if !decides {
-			continue
-		}
-		if relevant == nil {
-			relevant = make(response.Attributes, relevantAttributesHint)
-		}
-		relevant[key] = text
-	}
-	return relevant
-}
-
-func decisive(key string, value pcommon.Value) (string, bool) {
-	if !response.Relevant(key) {
-		return "", false
-	}
-	return scalarText(value)
 }
 
 func scalarText(value pcommon.Value) (string, bool) {

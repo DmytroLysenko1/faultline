@@ -67,11 +67,11 @@ func TestBatchFootprint(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
 			spans := lo.Map(tt.Args, func(resource resource.Resource, i int) span.Span {
-				return telemetrytest.MustSpan(t, resource, telemetrytest.FieldsWith(func(f *span.Fields) {
+				return telemetrytest.MustSpan(t, resource, new(telemetrytest.FieldsWith(func(f *span.Fields) {
 					f.SpanID = ids.SpanID{
 						byte(i + 1),
 					}
-				}))
+				})))
 			})
 			received, err := batch.New(spans, time.Unix(1, 0))
 			if !errors.Is(err, tt.WantErr) {
@@ -87,27 +87,27 @@ func TestBatchFootprint(t *testing.T) {
 func TestNewBatchCopiesSpans(t *testing.T) {
 	receivedAt := time.Unix(42, 0)
 	spans := []span.Span{
-		telemetrytest.MustSpan(t, telemetrytest.ValidResource(), telemetrytest.FieldsWith(func(f *span.Fields) {
+		telemetrytest.MustSpan(t, telemetrytest.ValidResource(), new(telemetrytest.FieldsWith(func(f *span.Fields) {
 			f.SpanID = ids.SpanID{
 				1,
 			}
-		})),
-		telemetrytest.MustSpan(t, telemetrytest.ValidResource(), telemetrytest.FieldsWith(func(f *span.Fields) {
+		}))),
+		telemetrytest.MustSpan(t, telemetrytest.ValidResource(), new(telemetrytest.FieldsWith(func(f *span.Fields) {
 			f.SpanID = ids.SpanID{
 				2,
 			}
-		})),
+		}))),
 	}
 	received, err := batch.New(spans, receivedAt)
 	if err != nil {
 		t.Fatalf("NewBatch: %v", err)
 	}
 
-	spans[0] = telemetrytest.MustSpan(t, telemetrytest.ValidResource(), telemetrytest.FieldsWith(func(f *span.Fields) {
+	spans[0] = telemetrytest.MustSpan(t, telemetrytest.ValidResource(), new(telemetrytest.FieldsWith(func(f *span.Fields) {
 		f.SpanID = ids.SpanID{
 			7,
 		}
-	}))
+	})))
 
 	got := lo.Map(received.Spans, func(span span.Span, _ int) ids.SpanID {
 		return span.SpanID
@@ -141,7 +141,7 @@ func TestNewOwningRejectsEmpty(t *testing.T) {
 func TestNewOwningTakesSpansWithoutCopy(t *testing.T) {
 	const runs = 100
 	spans := []span.Span{
-		telemetrytest.MustSpan(t, telemetrytest.ValidResource(), telemetrytest.ValidFields()),
+		telemetrytest.MustSpan(t, telemetrytest.ValidResource(), new(telemetrytest.ValidFields())),
 	}
 	received, err := batch.NewOwning(spans, time.Unix(1, 0))
 	if err != nil {

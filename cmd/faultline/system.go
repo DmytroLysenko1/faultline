@@ -13,6 +13,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
 	"github.com/DmytroLysenko1/faultline/internal/application/processing"
 	"github.com/DmytroLysenko1/faultline/internal/application/query"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memgraph"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
@@ -170,7 +171,7 @@ func provideStorage(cfg *Config) (storage, error) {
 }
 
 func provideIngest(journal *memjournal.Journal, logger *slog.Logger) (ingestServer, *ingest.AcceptBatch) {
-	accept := ingest.NewAcceptBatch(journal, systemClock{})
+	accept := ingest.NewAcceptBatch(journal, systemClock{}, operation.NewNormalizer(nil))
 	return otlp.NewServer(accept, otlp.DefaultOptions(logger, systemClock{})), accept
 }
 

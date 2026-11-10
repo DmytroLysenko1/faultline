@@ -32,7 +32,7 @@ func BenchmarkHeapPerPendingHalf(b *testing.B) {
 			b.Fatalf("matcher.New: %v", err)
 		}
 		for _, observed := range spans {
-			pairing.Match(observed, telemetrytest.Epoch())
+			pairing.Match(&observed, telemetrytest.Epoch())
 		}
 		b.ReportMetric(float64(telemetrytest.HeapInUse()-before)/benchPendingHalves, "B/half")
 		runtime.KeepAlive(pairing)

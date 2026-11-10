@@ -150,7 +150,8 @@ func TestRoleOf(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
-			key, got := role.Of(telemetrytest.NewSpan(t, tt.Args))
+			observed := telemetrytest.NewSpan(t, tt.Args)
+			key, got := role.Of(&observed)
 			if diff := cmp.Diff(tt.Want, want{
 				Key:  key,
 				Role: got,

@@ -771,6 +771,8 @@ publish: Publish(Snapshot()) — ошибка → return (held не освобо
 - **холодный путь** (маппинг ответа API, CLI, конфиг, правила, тесты): трансформации — `lo`;
 - поиск и порядок — `slices` / `maps`.
 
+- `topology.participants` (срез 3b): цикл по индексам вместо `lo.FilterMap` — элемент `span.Span` 112 B, обратный вызов копировал бы его на каждом спане; в срезе 6 — переиспользуемый буфер.
+
 ## Границы
 
 - **Всегда:** `make verify`; 0 аллокаций на событие в Pipeline закреплён `AllocsPerRun`; proto — только добавлением; тест на каждую строку таблиц раскладки, интервала, нормализации и `Served`; формулы I6/I10/I11 — в `pipeline.stats`.
@@ -875,7 +877,7 @@ publish: Publish(Snapshot()) — ошибка → return (held не освобо
 | 0 ✔ 08.11 | Спайк: скетч, `lo`; прототипы ревью (детерминизм, кольцо, флаги, арена, реестр, каденс) | числа выше |
 | 1 | `pkg/sketch`: разреженный `Sketch`, buddy-`Arena`, слияние, скетч без записей, `Percentiles`, `Equal`, поколение в отладке | FR-TOP-002, 420 000 ячеек без слияния, фрагментация, fuzz, 0 аллокаций, «без указателей» |
 | 2 | `pkg/stream`: `Config`, `Window`, `Watermark` (кандидат пакета, пульс), `Windows` (`Classify`, `Drop`, `Locate`, `Begin`, `End`, `FireEarly`) | I6, I7, I8 property ≥ 10⁴; флаги; FR-STR-001/002; 0 аллокаций; heap на серию |
-| 3 | telemetry: `eventtime`, `operation` (`Normalizer`, `Rules`, дерево), `response.Attributes` struct, нормализация в `AcceptBatch`, проверка операции в `span.New`, `batch.Heartbeat`; `spanmap`; `AcceptBatch` без `clock` | таблицы интервала и нормализации, FR-STR-006, fuzz, параллельный нормализатор, бенчмарки до/после, `span.Span` ≤ 128 B, ratio OTLP, B1, B2 |
+| 3 | telemetry: `eventtime`, `operation` (`Normalizer`, `Rules`, дерево), `response.Attributes` struct, нормализация в `AcceptBatch`, проверка операции в `span.New`, `batch.Heartbeat`; `spanmap`. Удаление `clock` из `AcceptBatch`, forbidigo на `batch.NewOwning`/`batch.Heartbeat` вне журнала и инкапсуляция `Batch.Spans` (пульс без спанов по построению) — в срезе 4 вместе с журналом, ставящим `ReceivedAt`; загрузка файла правил из env — в срезе 8 (до него `NewNormalizer(nil)`) | таблицы интервала и нормализации, FR-STR-006, fuzz, параллельный нормализатор, бенчмарки до/после, `span.Span` ≤ 128 B, ratio OTLP, B1, B2 |
 | 4 | `memjournal`: `Append(spans)` с `ReceivedAt` под мьютексом, `Receive(maxWait)` с пульсом | synctest, монотонность под `-race`, goleak |
 | 5 | `cardinality.Registry` | FR-STR-007, утечка 0, глобальный лимит, фронты |
 | 6 | `handle`, `role.Entry`, `matcher` (`Outcome`), `call`, `graph.Applied`, `red`, `traffic`, `Builder` (`Fire`, ревизия, `FinalSink`), `Snapshot` | I10–I12, `Served`, `SeriesKey`, оракул RED, replay = golden, `live`/`final`, B4 |
@@ -1055,7 +1057,8 @@ type LineError struct{ Line int; Err error } // Line = 0 — строка неи
 // span
 // Span: + Interval eventtime.Interval, Operation operation.Operation
 // Fields: + Start, End uint64, Operation operation.Operation; response.Attributes — struct
-func New(source resource.Resource, fields Fields) (Span, error) // сигнатура шага 1
+func New(source resource.Resource, fields *Fields) (Span, error) // Fields выросли до 208 B — по указателю (срез 3b)
+func (s *Span) IdentityStrings() [3]string                       // + имя операции; Span 112 B — matcher.Match и role.Of тоже берут *Span
 
 // batch
 func Heartbeat(receivedAt time.Time) Batch
@@ -1077,7 +1080,13 @@ type Record struct {
 	Fields span.Fields
 	Facts  operation.Facts
 }
-// SpanSource.All() iter.Seq2[resource.Resource, ingest.Record]; AcceptBatch нормализует Facts и кладёт Operation в Fields
+// SpanSource.All() iter.Seq2[resource.Resource, *ingest.Record] — источник переиспользует одну запись (336 B), указатель действителен до следующего шага
+// AcceptBatch нормализует Facts CLIENT- и SERVER-спанов через NormalizeShared(service, facts, names operation.Names) и кладёт Operation в Fields:
+//   имя ищется в таблице запроса прямо по буферу нормализатора и аллоцируется только для нового имени (512 спанов двух операций: 271 аллокация вместо 781)
+// AcceptBatch копирует принятые спаны в срез точного размера, если принята половина или меньше: Footprint считает len, журнал не держит неучтённую ёмкость (ревью pstack)
+// operation.Facts.Set: новый ключ semconv перекрывает устаревший, устаревший и пустое значение заполняют только пустое поле — порядок атрибутов не важен
+// response.Attributes.Set: у каждой формы ключа своё поле, старшинство решают Failed и CallsExternalSystem
+// Interval.Equal и Batch.Equal — сравнение для cmp (неэкспортированные поля)
 
 // memjournal
 type Limits struct { /* шаг 1 + */ IdleAfter time.Duration }

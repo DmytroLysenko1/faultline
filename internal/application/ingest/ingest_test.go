@@ -18,6 +18,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/ids"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/kind"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
@@ -65,11 +66,11 @@ func (s *sliceSource) Len() int {
 	return s.Reported
 }
 
-func (s *sliceSource) All() iter.Seq2[resource.Resource, span.Fields] {
-	return func(yield func(resource.Resource, span.Fields) bool) {
+func (s *sliceSource) All() iter.Seq2[resource.Resource, *ingest.Record] {
+	return func(yield func(resource.Resource, *ingest.Record) bool) {
 		s.Passes++
-		for _, input := range s.Inputs {
-			if !yield(input.Resource, input.Fields) {
+		for i := range s.Inputs {
+			if !yield(s.Inputs[i].Resource, &ingest.Record{Fields: s.Inputs[i].Fields}) {
 				return
 			}
 		}
@@ -113,7 +114,7 @@ func newHarness(journalErr error) harness {
 	}
 	return harness{
 		Journal: journal,
-		Accept: ingest.NewAcceptBatch(journal, fixedClock{
+		Accept: newAcceptBatch(journal, fixedClock{
 			Time: telemetrytest.Epoch(),
 		}),
 	}
@@ -152,12 +153,12 @@ func serviceNameOfLength(length int) spanInput {
 
 func expectedSpan(t *testing.T, input *spanInput) span.Span {
 	t.Helper()
-	return telemetrytest.MustSpan(t, input.Resource, input.Fields)
+	return telemetrytest.MustSpan(t, input.Resource, &input.Fields)
 }
 
 func rejection(t *testing.T, input *spanInput) string {
 	t.Helper()
-	_, err := span.New(input.Resource, input.Fields)
+	_, err := span.New(input.Resource, &input.Fields)
 	if err == nil {
 		t.Fatalf("span.New accepted an input the test expects to be rejected")
 	}
@@ -545,7 +546,7 @@ func TestExecuteStampsBatchWithClock(t *testing.T) {
 	const offset = 42 * time.Second
 	stamped := telemetrytest.Epoch().Add(offset)
 	journal := &fakeJournal{}
-	accept := ingest.NewAcceptBatch(journal, fixedClock{
+	accept := newAcceptBatch(journal, fixedClock{
 		Time: stamped,
 	})
 	if _, err := accept.Execute(t.Context(), sourceOf([]spanInput{
@@ -599,7 +600,7 @@ func executeConcurrently(t *testing.T, accept *ingest.AcceptBatch, inputs []span
 }
 
 func TestStatsSumConcurrentRequestsExactly(t *testing.T) {
-	accept := ingest.NewAcceptBatch(&sizeGatedJournal{}, fixedClock{
+	accept := newAcceptBatch(&sizeGatedJournal{}, fixedClock{
 		Time: telemetrytest.Epoch(),
 	})
 	accepted := []spanInput{
@@ -675,4 +676,11 @@ func TestExecuteResultDoesNotDependOnTheLengthHint(t *testing.T) {
 			t.Errorf("Len() = %d changed the journal (-want +got):\n%s", hint, diff)
 		}
 	}
+}
+
+func newAcceptBatch(journal interface {
+	Append(ctx context.Context, received batch.Batch) error
+}, clock fixedClock,
+) *ingest.AcceptBatch {
+	return ingest.NewAcceptBatch(journal, clock, operation.NewNormalizer(nil))
 }

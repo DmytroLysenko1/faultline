@@ -14,6 +14,7 @@ import (
 
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/graph"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/matcher"
@@ -109,7 +110,7 @@ func replay(t *testing.T, limits topology.Limits, lines []ptrace.Traces) *topolo
 		t.Fatalf("NewBuilder: %v", err)
 	}
 	journal := &collectingJournal{}
-	accept := ingest.NewAcceptBatch(journal, clock)
+	accept := ingest.NewAcceptBatch(journal, clock, operation.NewNormalizer(nil))
 	for _, line := range lines {
 		clock.AdvanceTo(lastEnd(line))
 		if _, err := accept.Execute(t.Context(), spanmap.NewSource(line)); err != nil {

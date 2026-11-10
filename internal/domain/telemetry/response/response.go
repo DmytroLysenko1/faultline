@@ -33,26 +33,72 @@ const (
 	grpcCodeAlreadyExists grpcCode = 6
 )
 
-type Attributes map[string]string
+type Attributes struct {
+	RPCResponseStatusCode  string
+	RPCGRPCStatusCode      string
+	HTTPResponseStatusCode string
+	HTTPStatusCode         string
+	ErrorType              string
+	DBSystemName           string
+	DBSystem               string
+	MessagingSystem        string
+}
 
-func (a Attributes) Failed(statusError bool) bool {
+func (a *Attributes) Set(key, value string) bool {
+	field := a.field(key)
+	if field == nil {
+		return false
+	}
+	*field = value
+	return true
+}
+
+func (a *Attributes) field(key string) *string {
+	switch key {
+	case attrRPCResponseStatusCode:
+		return &a.RPCResponseStatusCode
+	case attrRPCGRPCStatusCode:
+		return &a.RPCGRPCStatusCode
+	case attrHTTPResponseStatusCode:
+		return &a.HTTPResponseStatusCode
+	case attrHTTPStatusCode:
+		return &a.HTTPStatusCode
+	}
+	return a.contextField(key)
+}
+
+func (a *Attributes) contextField(key string) *string {
+	switch key {
+	case attrErrorType:
+		return &a.ErrorType
+	case attrDBSystemName:
+		return &a.DBSystemName
+	case attrDBSystem:
+		return &a.DBSystem
+	case attrMessagingSystem:
+		return &a.MessagingSystem
+	}
+	return nil
+}
+
+func (a *Attributes) Failed(statusError bool) bool {
 	if failed, found := a.rpcFailed(); found {
 		return failed
 	}
 	if failed, found := a.httpFailed(); found {
 		return failed
 	}
-	if a[attrErrorType] != "" {
+	if a.ErrorType != "" {
 		return true
 	}
 	return statusError
 }
 
-func (a Attributes) rpcFailed() (failed, found bool) {
-	if name := a[attrRPCResponseStatusCode]; name != "" {
-		return !isBenignGRPCCodeName(grpcCodeName(name)), true
+func (a *Attributes) rpcFailed() (failed, found bool) {
+	if a.RPCResponseStatusCode != "" {
+		return !isBenignGRPCCodeName(grpcCodeName(a.RPCResponseStatusCode)), true
 	}
-	raw := a[attrRPCGRPCStatusCode]
+	raw := a.RPCGRPCStatusCode
 	if raw == "" {
 		return false, false
 	}
@@ -63,12 +109,11 @@ func (a Attributes) rpcFailed() (failed, found bool) {
 	return !isBenignGRPCCode(grpcCode(code)), true
 }
 
-func (a Attributes) httpFailed() (failed, found bool) {
-	for _, key := range [...]string{
-		attrHTTPResponseStatusCode,
-		attrHTTPStatusCode,
+func (a *Attributes) httpFailed() (failed, found bool) {
+	for _, raw := range [...]string{
+		a.HTTPResponseStatusCode,
+		a.HTTPStatusCode,
 	} {
-		raw := a[key]
 		if raw == "" {
 			continue
 		}
@@ -96,17 +141,11 @@ func isBenignGRPCCode(code grpcCode) bool {
 	return false
 }
 
-func (a Attributes) CallsExternalSystem() bool {
-	return a[attrDBSystemName] != "" ||
-		a[attrDBSystem] != "" ||
-		a[attrMessagingSystem] != ""
+func (a *Attributes) CallsExternalSystem() bool {
+	return a.DBSystemName != "" || a.DBSystem != "" || a.MessagingSystem != ""
 }
 
 func Relevant(key string) bool {
-	switch key {
-	case attrRPCResponseStatusCode, attrRPCGRPCStatusCode, attrHTTPResponseStatusCode, attrHTTPStatusCode,
-		attrErrorType, attrDBSystemName, attrDBSystem, attrMessagingSystem:
-		return true
-	}
-	return false
+	var probe Attributes
+	return probe.field(key) != nil
 }

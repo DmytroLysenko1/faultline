@@ -8,8 +8,10 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
+	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/ids"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/kind"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/response"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
@@ -23,17 +25,22 @@ const (
 	hostileArrayValues = 10_000
 )
 
+const (
+	startNanos = pcommon.Timestamp(1_700_000_000_000_000_000)
+	endNanos   = startNanos + 12_000_000
+)
+
 type pair struct {
 	Resource resource.Resource
-	Fields   span.Fields
+	Record   ingest.Record
 }
 
 func collect(source spanmap.Source) []pair {
 	var pairs []pair
-	for observed, fields := range source.All() {
+	for observed, record := range source.All() {
 		pairs = append(pairs, pair{
 			Resource: observed,
-			Fields:   fields,
+			Record:   *record,
 		})
 	}
 	return pairs
@@ -68,6 +75,8 @@ func TestSourceMapsResourceAndSpanFields(t *testing.T) {
 		9,
 	})
 	observed.SetKind(ptrace.SpanKindServer)
+	observed.SetStartTimestamp(startNanos)
+	observed.SetEndTimestamp(endNanos)
 	observed.Status().SetCode(ptrace.StatusCodeError)
 	observed.Attributes().PutInt("rpc.grpc.status_code", unavailableCode)
 	observed.Attributes().PutStr("http.route", "/cart")
@@ -79,20 +88,27 @@ func TestSourceMapsResourceAndSpanFields(t *testing.T) {
 				K8sNamespaceName: "otel-demo",
 				K8sPodName:       "checkout-pod",
 			},
-			Fields: span.Fields{
-				TraceID: ids.TraceID{
-					1,
+			Record: ingest.Record{
+				Fields: span.Fields{
+					TraceID: ids.TraceID{
+						1,
+					},
+					SpanID: ids.SpanID{
+						1,
+					},
+					ParentSpanID: ids.SpanID{
+						9,
+					},
+					Kind:        kind.Server,
+					StatusError: true,
+					Start:       uint64(startNanos),
+					End:         uint64(endNanos),
+					Attributes: response.Attributes{
+						RPCGRPCStatusCode: "14",
+					},
 				},
-				SpanID: ids.SpanID{
-					1,
-				},
-				ParentSpanID: ids.SpanID{
-					9,
-				},
-				Kind:        kind.Server,
-				StatusError: true,
-				Attributes: response.Attributes{
-					"rpc.grpc.status_code": "14",
+				Facts: operation.Facts{
+					Route: "/cart",
 				},
 			},
 		},
@@ -139,7 +155,7 @@ func TestKindsOutsideOTLPBecomeUnspecified(t *testing.T) {
 			traces := ptrace.NewTraces()
 			newSpan(newResource(traces, "cart"), 1).SetKind(tt.Args)
 			got := collect(spanmap.NewSource(traces))
-			if diff := cmp.Diff(tt.Want, got[0].Fields.Kind); diff != "" {
+			if diff := cmp.Diff(tt.Want, got[0].Record.Fields.Kind); diff != "" {
 				t.Errorf("kind (-want +got):\n%s", diff)
 			}
 		})
@@ -157,20 +173,17 @@ func TestNonStringIdentityIsMissingNotStringified(t *testing.T) {
 	}
 }
 
-func TestSpanWithoutRelevantAttributesAllocatesNoMap(t *testing.T) {
+func TestSpanWithoutDecidingAttributesAllocatesNothing(t *testing.T) {
 	traces := ptrace.NewTraces()
 	observed := newSpan(newResource(traces, "cart"), 1)
 	observed.Attributes().PutStr("http.route", "/cart")
 	source := spanmap.NewSource(traces)
 	got := collect(source)
-	if got[0].Fields.Attributes != nil {
-		t.Errorf("Attributes = %v, want nil when no attribute is relevant", got[0].Fields.Attributes)
+	if got[0].Record.Fields.Attributes != (response.Attributes{}) {
+		t.Errorf("Attributes = %+v, want zero when no attribute decides the outcome", got[0].Record.Fields.Attributes)
 	}
 	allocations := testing.AllocsPerRun(allocationRuns, func() {
-		for _, fields := range source.All() {
-			if fields.Attributes != nil {
-				t.Errorf("unexpected attributes %v", fields.Attributes)
-			}
+		for range source.All() {
 		}
 	})
 	if allocations > 1 {
@@ -239,8 +252,8 @@ func TestNonScalarRelevantAttributeIsIgnoredWithoutAllocation(t *testing.T) {
 	observed.Attributes().PutEmptyMap("http.status_code").PutStr("nested", "503")
 	observed.Attributes().PutEmptyBytes("rpc.response.status_code").FromRaw([]byte("UNAVAILABLE"))
 	source := spanmap.NewSource(traces)
-	if got := collect(source)[0].Fields.Attributes; got != nil {
-		t.Errorf("Attributes = %v, want nil: only scalar values decide the outcome", got)
+	if got := collect(source)[0].Record.Fields.Attributes; got != (response.Attributes{}) {
+		t.Errorf("Attributes = %+v, want zero: only scalar values decide the outcome", got)
 	}
 	allocations := testing.AllocsPerRun(allocationRuns, func() {
 		for range source.All() {
@@ -248,5 +261,32 @@ func TestNonScalarRelevantAttributeIsIgnoredWithoutAllocation(t *testing.T) {
 	})
 	if allocations > 1 {
 		t.Errorf("non-scalar attributes cost %.0f allocations per span, want none beyond the iterator", allocations)
+	}
+}
+
+func TestSourceReadsOperationFactsInBothSemanticConventionForms(t *testing.T) {
+	traces := ptrace.NewTraces()
+	scope := newResource(traces, "cart")
+	current := newSpan(scope, 1)
+	current.Attributes().PutStr("http.request.method", "GET")
+	current.Attributes().PutStr("url.full", "http://cart/cart/42")
+	current.Attributes().PutStr("rpc.system.name", "grpc")
+	deprecated := newSpan(scope, 2)
+	deprecated.Attributes().PutStr("http.method", "POST")
+	deprecated.Attributes().PutStr("http.url", "http://cart/checkout")
+	deprecated.Attributes().PutStr("http.target", "/checkout?x=1")
+	deprecated.Attributes().PutInt("http.route", 7)
+
+	got := []operation.Facts{}
+	for _, mapped := range collect(spanmap.NewSource(traces)) {
+		got = append(got, mapped.Record.Facts)
+	}
+
+	want := []operation.Facts{
+		{HTTPMethod: "GET", URL: "http://cart/cart/42", RPCSystem: "grpc"},
+		{HTTPMethod: "POST", URL: "http://cart/checkout", Target: "/checkout?x=1"},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("facts mismatch, a non-string route is ignored (-want +got):\n%s", diff)
 	}
 }

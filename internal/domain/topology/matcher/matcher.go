@@ -69,7 +69,7 @@ func New(limits Limits) (*Matcher, error) {
 	}, nil
 }
 
-func (m *Matcher) Match(observed span.Span, now time.Time) (call.Call, bool) {
+func (m *Matcher) Match(observed *span.Span, now time.Time) (call.Call, bool) {
 	key, side := role.Of(observed)
 	if !m.Stats.Observe(side) {
 		return call.Call{}, false

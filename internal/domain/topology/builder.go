@@ -5,8 +5,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/samber/lo"
-
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
@@ -64,8 +62,8 @@ func (l Limits) graphLimits() graph.Limits {
 func (b *Builder) Apply(received batch.Batch) {
 	unanswered := b.Matcher.Expire(received.ReceivedAt)
 	calls := make([]call.Call, 0, len(received.Spans))
-	for _, observed := range received.Spans {
-		if matched, ok := b.Matcher.Match(observed, received.ReceivedAt); ok {
+	for i := range received.Spans {
+		if matched, ok := b.Matcher.Match(&received.Spans[i], received.ReceivedAt); ok {
 			calls = append(calls, matched)
 		}
 	}
@@ -78,10 +76,13 @@ func (b *Builder) Apply(received batch.Batch) {
 }
 
 func participants(spans []span.Span) []resource.ServiceRef {
-	return lo.FilterMap(spans, func(observed span.Span, _ int) (resource.ServiceRef, bool) {
-		_, side := role.Of(observed)
-		return observed.Service, side.Participates()
-	})
+	services := make([]resource.ServiceRef, 0, len(spans))
+	for i := range spans {
+		if _, side := role.Of(&spans[i]); side.Participates() {
+			services = append(services, spans[i].Service)
+		}
+	}
+	return services
 }
 
 func (b *Builder) Snapshot() *Snapshot {

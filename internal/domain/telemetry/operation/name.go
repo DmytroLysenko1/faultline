@@ -70,3 +70,16 @@ func (n *name) truncate() {
 func (n *name) String() string {
 	return string(n.buf[:n.length])
 }
+
+type Names map[string]string
+
+func (names Names) share(built *name) string {
+	if shared, seen := names[string(built.buf[:built.length])]; seen {
+		return shared
+	}
+	text := built.String()
+	if names != nil {
+		names[text] = text
+	}
+	return text
+}

@@ -23,7 +23,7 @@ func (r Role) Pairable() bool {
 	return r == Caller || r == Callee
 }
 
-func Of(observed span.Span) (ids.CallKey, Role) {
+func Of(observed *span.Span) (ids.CallKey, Role) {
 	switch observed.Kind {
 	case kind.Client:
 		if observed.CallsExternalSystem {

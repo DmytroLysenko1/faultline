@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/otlptest"
@@ -59,7 +60,7 @@ func startPipeline(t *testing.T, limits memjournal.Limits) pipeline {
 		t.Fatalf("memjournal.New: %v", err)
 	}
 	settings := otlp.DefaultOptions(slog.New(slog.DiscardHandler), fixedClock{})
-	server := otlp.NewServer(ingest.NewAcceptBatch(journal, fixedClock{}), settings)
+	server := otlp.NewServer(ingest.NewAcceptBatch(journal, fixedClock{}, operation.NewNormalizer(nil)), settings)
 	listener := bufconn.Listen(bufferBytes)
 	var serving sync.WaitGroup
 	serving.Go(func() {

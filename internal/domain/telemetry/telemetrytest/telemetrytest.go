@@ -13,6 +13,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/ids"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/kind"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/response"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 )
 
@@ -53,7 +54,7 @@ func NewSpan(tb testing.TB, spec SpanSpec) span.Span {
 			spec.SpanID,
 		},
 		Kind:       spec.Kind,
-		Attributes: spec.Attributes,
+		Attributes: Attributes(spec.Attributes),
 	}
 	if spec.ParentID != 0 {
 		fields.ParentSpanID = ids.SpanID{
@@ -63,7 +64,7 @@ func NewSpan(tb testing.TB, spec SpanSpec) span.Span {
 	return MustSpan(tb, resource.Resource{
 		ServiceName:      spec.Service,
 		K8sNamespaceName: Namespace,
-	}, fields)
+	}, &fields)
 }
 
 func Client(tb testing.TB, trace, spanID byte, name string, attributes map[string]string) span.Span {
@@ -121,13 +122,21 @@ func FieldsWith(edit func(*span.Fields)) span.Fields {
 	return fields
 }
 
-func MustSpan(tb testing.TB, source resource.Resource, fields span.Fields) span.Span {
+func MustSpan(tb testing.TB, source resource.Resource, fields *span.Fields) span.Span {
 	tb.Helper()
 	created, err := span.New(source, fields)
 	if err != nil {
 		tb.Fatalf("span.New: %v", err)
 	}
 	return created
+}
+
+func Attributes(values map[string]string) response.Attributes {
+	var attributes response.Attributes
+	for key, value := range values {
+		attributes.Set(key, value)
+	}
+	return attributes
 }
 
 func NumberedTrace(n uint64) ids.TraceID {
@@ -156,7 +165,7 @@ func NumberedSpan(tb testing.TB, spanKind kind.Kind, n uint64, serviceName strin
 	return MustSpan(tb, resource.Resource{
 		ServiceName:      serviceName,
 		K8sNamespaceName: Namespace,
-	}, fields)
+	}, &fields)
 }
 
 func HeapInUse() uint64 {
