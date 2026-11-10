@@ -127,6 +127,17 @@ linters:
               desc: only topology.Builder keeps the expire → match → apply order (I1, I3)
             - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/clock
               desc: only topology.Builder keeps the expire → match → apply order (I1, I3)
+        # Step 2: operations per owner sit below graph and traffic, so cardinality never sees them.
+        topology-cardinality:
+          files:
+            - "**/internal/domain/topology/cardinality/**"
+          deny:
+            - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/graph
+              desc: cardinality counts operations per owner; graph and traffic sit above it
+            - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/traffic
+              desc: cardinality counts operations per owner; graph and traffic sit above it
+            - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/matcher
+              desc: cardinality counts operations per owner; matcher, graph and traffic sit above it
         # Spans on the ingest path would loop back through a Collector into faultline (step 1, slice 5b-3, D6).
         no-self-tracing-on-ingest:
           files:
