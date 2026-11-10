@@ -5,8 +5,6 @@ import (
 	"time"
 )
 
-// Interval keeps zero as "unknown" for both fields, so the zero value is an
-// untimed span: end 0 is unknown by the OTLP rules, and latency is stored + 1.
 type Interval struct {
 	end            int64
 	latencyPlusOne int64
@@ -28,6 +26,10 @@ func (i Interval) End() (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return time.Unix(0, i.end), true
+}
+
+func (i Interval) EndsAfter(other Interval) bool {
+	return i.end > other.end
 }
 
 func (i Interval) Latency() (time.Duration, bool) {

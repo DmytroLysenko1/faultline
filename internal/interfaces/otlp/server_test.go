@@ -17,9 +17,9 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
-	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/otlptest"
 )
@@ -350,14 +350,14 @@ func waitForArrivals(t *testing.T, arrived <-chan struct{}, failed <-chan struct
 
 type discardJournal struct{}
 
-func (discardJournal) Append(context.Context, batch.Batch) error {
+func (discardJournal) Append(context.Context, []span.Span) error {
 	return nil
 }
 
 func TestHeldRequestsStayWithinTheMemoryBudget(t *testing.T) {
 	arrived := make(chan struct{}, heldRequests)
 	release := make(chan struct{})
-	accept := ingest.NewAcceptBatch(discardJournal{}, &fakeClock{}, operation.NewNormalizer(nil))
+	accept := ingest.NewAcceptBatch(discardJournal{}, operation.NewNormalizer(nil))
 	h := start(t, func(ctx context.Context, spans ingest.SpanSource) (ingest.AcceptResult, error) {
 		return accept.Execute(ctx, holdingSource{
 			inner:   spans,

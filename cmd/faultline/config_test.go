@@ -27,6 +27,7 @@ func defaultConfig() Config {
 		Journal: memjournal.Limits{
 			MaxBytes:   64 << 20,
 			MaxBatches: 4096,
+			IdleAfter:  35 * time.Second,
 		},
 		Topology: topology.Limits{
 			PairingTTL:    10 * time.Second,
@@ -71,6 +72,7 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 				envAPIAddr:           "[::1]:8081",
 				envJournalMaxBytes:   "128MiB",
 				envJournalMaxBatches: "10",
+				envIdleAdvanceAfter:  "1m",
 				envPairingTTL:        "20s",
 				envPairingMaxPending: "500",
 				envTombstoneTTL:      "2m",
@@ -86,6 +88,7 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 				Journal: memjournal.Limits{
 					MaxBytes:   128 << 20,
 					MaxBatches: 10,
+					IdleAfter:  time.Minute,
 				},
 				Topology: topology.Limits{
 					PairingTTL:    20 * time.Second,
@@ -211,6 +214,22 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 				envTombstoneTTL: "11m",
 			},
 			Want:    "FAULTLINE_TOMBSTONE_TTL: 11m0s out of range, want 1s … 10m0s",
+			WantErr: errOutOfRange,
+		},
+		{
+			Name: "idle advance below range",
+			Args: map[string]string{
+				envIdleAdvanceAfter: "50ms",
+			},
+			Want:    "FAULTLINE_IDLE_ADVANCE_AFTER: 50ms out of range, want 100ms … 5m0s",
+			WantErr: errOutOfRange,
+		},
+		{
+			Name: "idle advance above range",
+			Args: map[string]string{
+				envIdleAdvanceAfter: "6m",
+			},
+			Want:    "FAULTLINE_IDLE_ADVANCE_AFTER: 6m0s out of range, want 100ms … 5m0s",
 			WantErr: errOutOfRange,
 		},
 		{

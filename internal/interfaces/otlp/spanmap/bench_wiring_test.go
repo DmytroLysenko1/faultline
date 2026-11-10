@@ -6,5 +6,5 @@ import (
 )
 
 func newAcceptBatch() *ingest.AcceptBatch {
-	return ingest.NewAcceptBatch(discardJournal{}, benchClock{}, operation.NewNormalizer(nil))
+	return ingest.NewAcceptBatch(discardJournal{}, operation.NewNormalizer(nil))
 }

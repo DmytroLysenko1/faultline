@@ -5,6 +5,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/eventtime"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 )
 
@@ -13,13 +14,48 @@ var ErrEmpty = errors.New("empty batch")
 const spanFixedBytes = 256
 
 type Batch struct {
-	Spans      []span.Span
-	ReceivedAt time.Time
+	spans      []span.Span
+	receivedAt time.Time
+	latest     eventtime.Interval
 	heartbeat  bool
 }
 
+func New(spans []span.Span, receivedAt time.Time) (Batch, error) {
+	unstamped, err := NewOwning(slices.Clone(spans))
+	if err != nil {
+		return Batch{}, err
+	}
+	return unstamped.Stamped(receivedAt), nil
+}
+
+func NewOwning(spans []span.Span) (Batch, error) {
+	if len(spans) == 0 {
+		return Batch{}, ErrEmpty
+	}
+	return Batch{
+		spans:  spans,
+		latest: latestOf(spans),
+	}, nil
+}
+
 func Heartbeat(receivedAt time.Time) Batch {
-	return Batch{ReceivedAt: receivedAt, heartbeat: true}
+	return Batch{
+		receivedAt: receivedAt,
+		heartbeat:  true,
+	}
+}
+
+func (b Batch) Stamped(receivedAt time.Time) Batch {
+	b.receivedAt = receivedAt
+	return b
+}
+
+func (b Batch) Spans() []span.Span {
+	return b.spans
+}
+
+func (b Batch) ReceivedAt() time.Time {
+	return b.receivedAt
 }
 
 func (b Batch) IsHeartbeat() bool {
@@ -28,51 +64,41 @@ func (b Batch) IsHeartbeat() bool {
 
 func (b Batch) Candidate() (time.Time, bool) {
 	if b.heartbeat {
-		return b.ReceivedAt, true
+		return b.receivedAt, true
 	}
-	latest, known := b.latestEnd()
-	if !known {
+	latest, timed := b.latest.End()
+	if !timed {
 		return time.Time{}, false
 	}
-	if latest.After(b.ReceivedAt) {
-		return b.ReceivedAt, true
+	if latest.After(b.receivedAt) {
+		return b.receivedAt, true
 	}
 	return latest, true
 }
 
-func (b Batch) latestEnd() (time.Time, bool) {
-	var latest time.Time
-	known := false
-	for i := range b.Spans {
-		end, timed := b.Spans[i].Interval.End()
-		if timed && (!known || end.After(latest)) {
-			latest, known = end, true
-		}
-	}
-	return latest, known
-}
-
-func New(spans []span.Span, receivedAt time.Time) (Batch, error) {
-	return NewOwning(slices.Clone(spans), receivedAt)
-}
-
-func NewOwning(spans []span.Span, receivedAt time.Time) (Batch, error) {
-	if len(spans) == 0 {
-		return Batch{}, ErrEmpty
-	}
-	return Batch{
-		Spans:      spans,
-		ReceivedAt: receivedAt,
-	}, nil
-}
-
 func (b Batch) Footprint() int64 {
-	total := int64(len(b.Spans)) * spanFixedBytes
+	total := int64(len(b.spans)) * spanFixedBytes
 	distinct := make(map[string]struct{})
-	for i := range b.Spans {
-		total += unseenBytes(distinct, b.Spans[i].IdentityStrings())
+	for i := range b.spans {
+		total += unseenBytes(distinct, b.spans[i].IdentityStrings())
 	}
 	return total
+}
+
+func (b Batch) Equal(other Batch) bool {
+	return b.heartbeat == other.heartbeat &&
+		b.receivedAt.Equal(other.receivedAt) &&
+		slices.Equal(b.spans, other.spans)
+}
+
+func latestOf(spans []span.Span) eventtime.Interval {
+	var latest eventtime.Interval
+	for i := range spans {
+		if spans[i].Interval.EndsAfter(latest) {
+			latest = spans[i].Interval
+		}
+	}
+	return latest
 }
 
 func unseenBytes(distinct map[string]struct{}, identities [span.IdentityStringCount]string) (added int64) {
@@ -84,10 +110,4 @@ func unseenBytes(distinct map[string]struct{}, identities [span.IdentityStringCo
 		added += int64(len(identity))
 	}
 	return added
-}
-
-func (b Batch) Equal(other Batch) bool {
-	return b.heartbeat == other.heartbeat &&
-		b.ReceivedAt.Equal(other.ReceivedAt) &&
-		slices.Equal(b.Spans, other.Spans)
 }

@@ -47,7 +47,7 @@ type pipelineRunner interface {
 }
 
 type spanFeed interface {
-	Receive(ctx context.Context, limit int) ([]processing.Delivery, error)
+	Receive(ctx context.Context, limit int, maxWait time.Duration) ([]processing.Delivery, error)
 }
 
 type statsRunner interface {
@@ -151,7 +151,7 @@ func assemble(cfg *Config, logger *slog.Logger, seams wiring) (*system, error) {
 }
 
 func provideStorage(cfg *Config) (storage, error) {
-	journal, err := memjournal.New(cfg.Journal)
+	journal, err := memjournal.New(cfg.Journal, systemClock{})
 	if err != nil {
 		return storage{}, fmt.Errorf("build journal: %w", err)
 	}
@@ -171,7 +171,7 @@ func provideStorage(cfg *Config) (storage, error) {
 }
 
 func provideIngest(journal *memjournal.Journal, logger *slog.Logger) (ingestServer, *ingest.AcceptBatch) {
-	accept := ingest.NewAcceptBatch(journal, systemClock{}, operation.NewNormalizer(nil))
+	accept := ingest.NewAcceptBatch(journal, operation.NewNormalizer(nil))
 	return otlp.NewServer(accept, otlp.DefaultOptions(logger, systemClock{})), accept
 }
 

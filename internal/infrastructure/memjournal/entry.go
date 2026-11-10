@@ -1,6 +1,10 @@
 package memjournal
 
-import "github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
+import (
+	"time"
+
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
+)
 
 type Stats struct {
 	Bytes   int64
@@ -8,19 +12,25 @@ type Stats struct {
 	Spans   int
 }
 
-func (s Stats) with(added entry) Stats {
+func (s Stats) with(added *entry) Stats {
+	if added.batch.IsHeartbeat() {
+		return s
+	}
 	return Stats{
 		Bytes:   s.Bytes + added.size,
 		Batches: s.Batches + 1,
-		Spans:   s.Spans + len(added.batch.Spans),
+		Spans:   s.Spans + len(added.batch.Spans()),
 	}
 }
 
-func (s Stats) without(removed entry) Stats {
+func (s Stats) without(removed *entry) Stats {
+	if removed.batch.IsHeartbeat() {
+		return s
+	}
 	return Stats{
 		Bytes:   s.Bytes - removed.size,
 		Batches: s.Batches - 1,
-		Spans:   s.Spans - len(removed.batch.Spans),
+		Spans:   s.Spans - len(removed.batch.Spans()),
 	}
 }
 
@@ -29,9 +39,8 @@ type entry struct {
 	size  int64
 }
 
-func newEntry(received batch.Batch) entry {
+func heartbeatAt(receivedAt time.Time) entry {
 	return entry{
-		batch: received,
-		size:  received.Footprint(),
+		batch: batch.Heartbeat(receivedAt),
 	}
 }

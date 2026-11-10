@@ -35,14 +35,15 @@ import (
 )
 
 const (
-	bufferBytes     = 256 << 10
-	journalBytes    = 64 << 20
-	journalBatches  = 64
-	callerSpan      = 1
-	calleeSpan      = 2
-	pollInterval    = 10 * time.Millisecond
-	visibleDeadline = 5 * time.Second
-	attrServiceName = "service.name"
+	bufferBytes      = 256 << 10
+	journalBytes     = 64 << 20
+	journalBatches   = 64
+	journalIdleAfter = 35 * time.Second
+	callerSpan       = 1
+	calleeSpan       = 2
+	pollInterval     = 10 * time.Millisecond
+	visibleDeadline  = 5 * time.Second
+	attrServiceName  = "service.name"
 )
 
 func TestMain(m *testing.M) {
@@ -71,7 +72,8 @@ func start(t *testing.T) *system {
 	journal, err := memjournal.New(memjournal.Limits{
 		MaxBytes:   journalBytes,
 		MaxBatches: journalBatches,
-	})
+		IdleAfter:  journalIdleAfter,
+	}, fixedClock{})
 	if err != nil {
 		t.Fatalf("memjournal.New: %v", err)
 	}
@@ -122,7 +124,7 @@ func startAPI(t *testing.T, store *memgraph.Store) faultlinev1connect.GraphServi
 func (s *system) startOTLP(t *testing.T) ptraceotlp.GRPCClient {
 	t.Helper()
 	settings := otlp.DefaultOptions(slog.New(slog.DiscardHandler), fixedClock{})
-	s.otlp = otlp.NewServer(ingest.NewAcceptBatch(s.journal, fixedClock{}, operation.NewNormalizer(nil)), settings)
+	s.otlp = otlp.NewServer(ingest.NewAcceptBatch(s.journal, operation.NewNormalizer(nil)), settings)
 	listener := bufconn.Listen(bufferBytes)
 	s.serving.Go(func() {
 		if err := s.otlp.Serve(listener); err != nil && !errors.Is(err, grpc.ErrServerStopped) {

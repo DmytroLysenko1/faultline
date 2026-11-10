@@ -1,6 +1,7 @@
 package ingest_test
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
@@ -28,6 +29,7 @@ import (
 
 const (
 	bufferBytes        = 256 << 10
+	journalIdleAfter   = 35 * time.Second
 	roomyBytes         = 1 << 30
 	roomyBatches       = 64
 	journalLowerBound  = 48 << 20
@@ -55,12 +57,13 @@ type pipeline struct {
 
 func startPipeline(t *testing.T, limits memjournal.Limits) pipeline {
 	t.Helper()
-	journal, err := memjournal.New(limits)
+	limits.IdleAfter = cmp.Or(limits.IdleAfter, journalIdleAfter)
+	journal, err := memjournal.New(limits, fixedClock{})
 	if err != nil {
 		t.Fatalf("memjournal.New: %v", err)
 	}
 	settings := otlp.DefaultOptions(slog.New(slog.DiscardHandler), fixedClock{})
-	server := otlp.NewServer(ingest.NewAcceptBatch(journal, fixedClock{}, operation.NewNormalizer(nil)), settings)
+	server := otlp.NewServer(ingest.NewAcceptBatch(journal, operation.NewNormalizer(nil)), settings)
 	listener := bufconn.Listen(bufferBytes)
 	var serving sync.WaitGroup
 	serving.Go(func() {

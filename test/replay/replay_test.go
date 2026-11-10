@@ -3,6 +3,7 @@ package replay_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/graph"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/matcher"
@@ -39,12 +41,17 @@ const (
 
 type collectingJournal struct {
 	lock    sync.Mutex
+	clock   *monotonicClock
 	batches []batch.Batch
 }
 
-func (j *collectingJournal) Append(_ context.Context, received batch.Batch) error {
+func (j *collectingJournal) Append(_ context.Context, spans []span.Span) error {
 	j.lock.Lock()
 	defer j.lock.Unlock()
+	received, err := batch.New(spans, j.clock.Now())
+	if err != nil {
+		return fmt.Errorf("collect batch: %w", err)
+	}
 	j.batches = append(j.batches, received)
 	return nil
 }
@@ -109,8 +116,8 @@ func replay(t *testing.T, limits topology.Limits, lines []ptrace.Traces) *topolo
 	if err != nil {
 		t.Fatalf("NewBuilder: %v", err)
 	}
-	journal := &collectingJournal{}
-	accept := ingest.NewAcceptBatch(journal, clock, operation.NewNormalizer(nil))
+	journal := &collectingJournal{clock: clock}
+	accept := ingest.NewAcceptBatch(journal, operation.NewNormalizer(nil))
 	for _, line := range lines {
 		clock.AdvanceTo(lastEnd(line))
 		if _, err := accept.Execute(t.Context(), spanmap.NewSource(line)); err != nil {

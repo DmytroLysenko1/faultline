@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 )
@@ -12,10 +13,11 @@ import (
 const (
 	MaxBatchesPerIteration = 64
 	HeldSnapshots          = 1
+	ReceiveWait            = time.Second
 )
 
 type spanFeed interface {
-	Receive(ctx context.Context, limit int) ([]Delivery, error)
+	Receive(ctx context.Context, limit int, maxWait time.Duration) ([]Delivery, error)
 }
 
 type graphPublisher interface {
@@ -49,9 +51,12 @@ func (p *Pipeline) Run(ctx context.Context) error {
 }
 
 func (p *Pipeline) iterate(ctx context.Context) error {
-	deliveries, err := p.receive(ctx)
+	deliveries, err := p.feed.Receive(ctx, MaxBatchesPerIteration, ReceiveWait)
 	if err != nil {
-		return err
+		return fmt.Errorf("receive batches: %w", err)
+	}
+	if len(deliveries) == 0 {
+		return nil
 	}
 	p.apply(deliveries)
 	if err := p.publish(ctx, len(deliveries)); err != nil {
@@ -59,17 +64,6 @@ func (p *Pipeline) iterate(ctx context.Context) error {
 	}
 	release(deliveries)
 	return nil
-}
-
-func (p *Pipeline) receive(ctx context.Context) ([]Delivery, error) {
-	deliveries, err := p.feed.Receive(ctx, MaxBatchesPerIteration)
-	if err != nil {
-		return nil, fmt.Errorf("receive batches: %w", err)
-	}
-	if len(deliveries) == 0 {
-		return nil, ErrEmptyReceive
-	}
-	return deliveries, nil
 }
 
 func (p *Pipeline) apply(deliveries []Delivery) {

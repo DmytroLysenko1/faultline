@@ -77,7 +77,7 @@ func TestHeartbeatIsABatchWithoutSpans(t *testing.T) {
 	}
 	want := observed{PulseIsHeartbeat: true}
 	got := observed{PulseIsHeartbeat: pulse.IsHeartbeat(), DataIsHeartbeat: data.IsHeartbeat(),
-		PulseSpans: int64(len(pulse.Spans)), PulseFootprint: pulse.Footprint()}
+		PulseSpans: int64(len(pulse.Spans())), PulseFootprint: pulse.Footprint()}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("heartbeat mismatch (-want +got):\n%s", diff)
 	}

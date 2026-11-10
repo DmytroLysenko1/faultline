@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"go.uber.org/goleak"
 
@@ -82,7 +83,7 @@ type observedFeed struct {
 	readers    *progress
 }
 
-func (f *observedFeed) Receive(ctx context.Context, _ int) ([]processing.Delivery, error) {
+func (f *observedFeed) Receive(ctx context.Context, _ int, _ time.Duration) ([]processing.Delivery, error) {
 	if err := f.readers.waitFor(ctx, f.handedOut); err != nil {
 		return nil, err
 	}

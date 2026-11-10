@@ -9,10 +9,10 @@ import (
 var (
 	ErrFeedClosed     = errors.New("span feed closed")
 	ErrAlreadyStarted = errors.New("pipeline already started")
-	ErrEmptyReceive   = errors.New("span feed returned no deliveries")
 )
 
 type Delivery interface {
 	Batch() batch.Batch
+	Bytes() int64
 	Release()
 }

@@ -43,10 +43,7 @@ func TestBuilderKeepsEdgeAccounting(t *testing.T) {
 		var fed uint64
 		for _, generated := range topologytest.RandomSteps(t, rng) {
 			fed += participating(generated.Spans)
-			builder.Apply(batch.Batch{
-				Spans:      generated.Spans,
-				ReceivedAt: telemetrytest.Epoch().Add(generated.At),
-			})
+			builder.Apply(batchAt(t, generated.At, generated.Spans...))
 			if rng.IntN(3) != 0 {
 				continue
 			}
@@ -149,7 +146,7 @@ func TestBuilderGraphMatchesOracle(t *testing.T) {
 	for scenario := range oracleScenarios {
 		spans, truth := oracleScenario(t, rng)
 		builder := newTestBuilder(t, builderLimits())
-		for _, received := range oracleBatches(rng, spans) {
+		for _, received := range oracleBatches(t, rng, spans) {
 			builder.Apply(received)
 		}
 		got := lo.SliceToMap(builder.Snapshot().Edges, func(e graph.Edge) (oracleEdge, oracleCounts) {
@@ -208,7 +205,8 @@ func oracleScenario(t *testing.T, rng *rand.Rand) ([]span.Span, map[oracleEdge]o
 	return spans, truth
 }
 
-func oracleBatches(rng *rand.Rand, spans []span.Span) []batch.Batch {
+func oracleBatches(t *testing.T, rng *rand.Rand, spans []span.Span) []batch.Batch {
+	t.Helper()
 	rng.Shuffle(len(spans), func(i, j int) {
 		spans[i], spans[j] = spans[j], spans[i]
 	})
@@ -217,17 +215,11 @@ func oracleBatches(rng *rand.Rand, spans []span.Span) []batch.Batch {
 	for len(spans) > 0 {
 		size := min(len(spans), 1+rng.IntN(5))
 		clock += time.Duration(rng.Int64N(int64(oracleWindowStep)))
-		batches = append(batches, batch.Batch{
-			Spans:      spans[:size],
-			ReceivedAt: telemetrytest.Epoch().Add(clock),
-		})
+		batches = append(batches, batchAt(t, clock, spans[:size]...))
 		spans = spans[size:]
 		for rng.IntN(3) == 0 {
 			retried := batches[rng.IntN(len(batches))]
-			batches = append(batches, batch.Batch{
-				Spans:      retried.Spans,
-				ReceivedAt: telemetrytest.Epoch().Add(clock),
-			})
+			batches = append(batches, retried.Stamped(telemetrytest.Epoch().Add(clock)))
 		}
 	}
 	return batches

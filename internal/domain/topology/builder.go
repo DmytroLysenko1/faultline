@@ -60,16 +60,17 @@ func (l Limits) graphLimits() graph.Limits {
 }
 
 func (b *Builder) Apply(received batch.Batch) {
-	unanswered := b.Matcher.Expire(received.ReceivedAt)
-	calls := make([]call.Call, 0, len(received.Spans))
-	for i := range received.Spans {
-		if matched, ok := b.Matcher.Match(&received.Spans[i], received.ReceivedAt); ok {
+	receivedAt, spans := received.ReceivedAt(), received.Spans()
+	unanswered := b.Matcher.Expire(receivedAt)
+	calls := make([]call.Call, 0, len(spans))
+	for i := range spans {
+		if matched, ok := b.Matcher.Match(&spans[i], receivedAt); ok {
 			calls = append(calls, matched)
 		}
 	}
 	b.Graph.Apply(&graph.Change{
-		ReceivedAt: received.ReceivedAt,
-		Services:   participants(received.Spans),
+		ReceivedAt: receivedAt,
+		Services:   participants(spans),
 		Calls:      calls,
 		Unanswered: unanswered,
 	})

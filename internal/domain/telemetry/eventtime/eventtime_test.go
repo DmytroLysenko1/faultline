@@ -93,3 +93,29 @@ func TestIntervalEqualDistinguishesEndAndLatency(t *testing.T) {
 		})
 	}
 }
+
+func TestEndsAfterRanksUntimedBeforeEveryTimedInterval(t *testing.T) {
+	untimed := eventtime.Interval{}
+	early := eventtime.FromUnixNanos(1, 10)
+	late := eventtime.FromUnixNanos(1, 20)
+	sameEndLongerLatency := eventtime.FromUnixNanos(0, 20)
+	tests := []struct {
+		Name string
+		Args [2]eventtime.Interval
+		Want bool
+	}{
+		{Name: "later end", Args: [2]eventtime.Interval{late, early}, Want: true},
+		{Name: "earlier end", Args: [2]eventtime.Interval{early, late}},
+		{Name: "same end, whatever the latency", Args: [2]eventtime.Interval{sameEndLongerLatency, late}},
+		{Name: "timed after untimed", Args: [2]eventtime.Interval{early, untimed}, Want: true},
+		{Name: "untimed after timed", Args: [2]eventtime.Interval{untimed, early}},
+		{Name: "untimed after untimed", Args: [2]eventtime.Interval{untimed, untimed}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.Name, func(t *testing.T) {
+			if got := tt.Args[0].EndsAfter(tt.Args[1]); got != tt.Want {
+				t.Errorf("EndsAfter = %v, want %v", got, tt.Want)
+			}
+		})
+	}
+}

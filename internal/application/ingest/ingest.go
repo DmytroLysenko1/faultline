@@ -7,9 +7,7 @@ import (
 	"iter"
 	"slices"
 	"sync/atomic"
-	"time"
 
-	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/kind"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
@@ -25,11 +23,7 @@ var (
 const MaxReasons = 16
 
 type spanJournal interface {
-	Append(ctx context.Context, received batch.Batch) error
-}
-
-type clock interface {
-	Now() time.Time
+	Append(ctx context.Context, spans []span.Span) error
 }
 
 type SpanSource interface {
@@ -67,7 +61,6 @@ type Stats struct {
 
 type AcceptBatch struct {
 	journal    spanJournal
-	clock      clock
 	normalizer *operation.Normalizer
 	accepted   atomic.Int64
 	rejected   atomic.Int64
@@ -75,13 +68,12 @@ type AcceptBatch struct {
 	tooLarge   atomic.Int64
 }
 
-func NewAcceptBatch(journal spanJournal, clock clock, normalizer *operation.Normalizer) *AcceptBatch {
+func NewAcceptBatch(journal spanJournal, normalizer *operation.Normalizer) *AcceptBatch {
 	if normalizer == nil {
 		panic("ingest: NewAcceptBatch needs an operation normalizer")
 	}
 	return &AcceptBatch{
 		journal:    journal,
-		clock:      clock,
 		normalizer: normalizer,
 	}
 }
@@ -97,14 +89,10 @@ func (a *AcceptBatch) Execute(ctx context.Context, spans SpanSource) (AcceptResu
 }
 
 func (a *AcceptBatch) enqueue(ctx context.Context, valid []span.Span) error {
-	received, err := batch.NewOwning(fitted(valid), a.clock.Now())
-	if errors.Is(err, batch.ErrEmpty) {
+	if len(valid) == 0 {
 		return nil
 	}
-	if err != nil {
-		return fmt.Errorf("accept batch: %w", err)
-	}
-	if err := a.journal.Append(ctx, received); err != nil {
+	if err := a.journal.Append(ctx, fitted(valid)); err != nil {
 		a.countFailure(err)
 		return fmt.Errorf("accept batch of %d spans: %w", len(valid), err)
 	}

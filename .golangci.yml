@@ -199,6 +199,9 @@ linters:
         - pattern: ^topology\.Builder\.(Matcher|Graph)$
           pkg: ^github\.com/DmytroLysenko1/faultline/internal/domain/topology$
           msg: only topology.Builder keeps the expire → match → apply order (I1, I3)
+        - pattern: ^batch\.(New|NewOwning|Heartbeat|Batch\.Stamped)$
+          pkg: ^github\.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch$
+          msg: only memjournal stamps ReceivedAt and writes heartbeats — journal order is ReceivedAt order
         - pattern: ^fmt\.Print(|f|ln)$
           msg: no stdout printing — use slog/zap (observability doctrine)
         - pattern: ^log\.(Print|Fatal|Panic)(|f|ln)$
@@ -220,6 +223,10 @@ linters:
         linters:
           - forbidigo
         text: only topology.Builder keeps the expire
+      - path: (internal/infrastructure/memjournal/|internal/domain/telemetry/batch/|/[a-z]+test/|_test\.go$)
+        linters:
+          - forbidigo
+        text: only memjournal stamps ReceivedAt
       - path-except: internal/(domain|application)/
         linters:
           - forbidigo

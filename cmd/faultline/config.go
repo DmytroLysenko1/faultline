@@ -14,6 +14,7 @@ const (
 	envAPIAddr           = "FAULTLINE_API_ADDR"
 	envJournalMaxBytes   = "FAULTLINE_JOURNAL_MAX_BYTES"
 	envJournalMaxBatches = "FAULTLINE_JOURNAL_MAX_BATCHES"
+	envIdleAdvanceAfter  = "FAULTLINE_IDLE_ADVANCE_AFTER"
 	envPairingTTL        = "FAULTLINE_PAIRING_TTL"
 	envPairingMaxPending = "FAULTLINE_PAIRING_MAX_PENDING"
 	envTombstoneTTL      = "FAULTLINE_TOMBSTONE_TTL"
@@ -30,6 +31,9 @@ const (
 	maxJournalMaxBytes       = 512 * mib
 	defaultJournalMaxBatches = 4096
 	maxJournalMaxBatches     = 1_000_000
+	defaultIdleAdvanceAfter  = 35 * time.Second
+	minIdleAdvanceAfter      = 100 * time.Millisecond
+	maxIdleAdvanceAfter      = 5 * time.Minute
 	defaultPairingTTL        = 10 * time.Second
 	minPairingTTL            = time.Second
 	maxPairingTTL            = 5 * time.Minute
@@ -75,6 +79,7 @@ func journalLimits(reader *envReader) memjournal.Limits {
 	return memjournal.Limits{
 		MaxBytes:   reader.size(envJournalMaxBytes, defaultJournalMaxBytes, minJournalMaxBytes, maxJournalMaxBytes),
 		MaxBatches: reader.count(envJournalMaxBatches, defaultJournalMaxBatches, maxJournalMaxBatches),
+		IdleAfter:  reader.duration(envIdleAdvanceAfter, defaultIdleAdvanceAfter, minIdleAdvanceAfter, maxIdleAdvanceAfter),
 	}
 }
 

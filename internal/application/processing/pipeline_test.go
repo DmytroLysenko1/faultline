@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"go.uber.org/goleak"
@@ -31,11 +32,16 @@ type answer struct {
 
 type scriptedFeed struct {
 	answers []answer
-	limits  []int
+	calls   []receiveCall
 }
 
-func (f *scriptedFeed) Receive(_ context.Context, limit int) ([]processing.Delivery, error) {
-	f.limits = append(f.limits, limit)
+type receiveCall struct {
+	Limit   int
+	MaxWait time.Duration
+}
+
+func (f *scriptedFeed) Receive(_ context.Context, limit int, maxWait time.Duration) ([]processing.Delivery, error) {
+	f.calls = append(f.calls, receiveCall{Limit: limit, MaxWait: maxWait})
 	if len(f.answers) == 0 {
 		return nil, processing.ErrFeedClosed
 	}
@@ -48,7 +54,7 @@ type blockingFeed struct {
 	entered chan struct{}
 }
 
-func (f *blockingFeed) Receive(ctx context.Context, _ int) ([]processing.Delivery, error) {
+func (f *blockingFeed) Receive(ctx context.Context, _ int, _ time.Duration) ([]processing.Delivery, error) {
 	close(f.entered)
 	<-ctx.Done()
 	return nil, fmt.Errorf("receive: %w", ctx.Err())
@@ -177,12 +183,9 @@ func TestIterationPublishesEveryBatchBeforeReleasingAny(t *testing.T) {
 			t.Errorf("delivery %d released %d times, want 1", index, got)
 		}
 	}
-	wantLimits := []int{
-		processing.MaxBatchesPerIteration,
-		processing.MaxBatchesPerIteration,
-	}
-	if diff := cmp.Diff(wantLimits, feed.limits); diff != "" {
-		t.Errorf("Receive limits (-want +got):\n%s", diff)
+	each := receiveCall{Limit: processing.MaxBatchesPerIteration, MaxWait: processing.ReceiveWait}
+	if diff := cmp.Diff([]receiveCall{each, each}, feed.calls); diff != "" {
+		t.Errorf("Receive calls (-want +got):\n%s", diff)
 	}
 }
 
@@ -276,15 +279,20 @@ func TestRunStopsWithTheRightOutcome(t *testing.T) {
 			WantErr: context.Canceled,
 		},
 		{
-			Name: "empty answer breaks the feed contract",
+			Name: "empty answer publishes nothing and the run goes on",
 			Args: args{
-				answers: func(*testing.T) []answer {
+				answers: func(t *testing.T) []answer {
+					var batches scenario
 					return []answer{
 						iterationOf(),
+						iterationOf(batches.pair(t)),
 					}
 				},
 			},
-			WantErr: processing.ErrEmptyReceive,
+			Want: outcome{
+				Released:  1,
+				Published: 1,
+			},
 		},
 		{
 			Name: "run canceled during publish keeps the iteration unreleased",

@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
@@ -153,10 +154,10 @@ func (f runnerFunc) Run(ctx context.Context) error {
 	return f(ctx)
 }
 
-type feedFunc func(ctx context.Context, limit int) ([]processing.Delivery, error)
+type feedFunc func(ctx context.Context, limit int, maxWait time.Duration) ([]processing.Delivery, error)
 
-func (f feedFunc) Receive(ctx context.Context, limit int) ([]processing.Delivery, error) {
-	return f(ctx, limit)
+func (f feedFunc) Receive(ctx context.Context, limit int, maxWait time.Duration) ([]processing.Delivery, error) {
+	return f(ctx, limit, maxWait)
 }
 
 type logBuffer struct {

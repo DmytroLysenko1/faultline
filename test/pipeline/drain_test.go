@@ -4,6 +4,7 @@ package pipeline_test
 
 import (
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -23,7 +24,14 @@ const (
 	largestRequestSpans  = 123_360
 	largestRequestsCount = 2
 	drainBudget          = 2500 * time.Millisecond
+	journalIdleAfter     = 35 * time.Second
 )
+
+type systemClock struct{}
+
+func (systemClock) Now() time.Time {
+	return time.Now()
+}
 
 func singlePairBatches(t *testing.T) []batch.Batch {
 	t.Helper()
@@ -45,16 +53,17 @@ func fullJournal(t *testing.T, batches []batch.Batch) *memjournal.Journal {
 	journal, err := memjournal.New(memjournal.Limits{
 		MaxBytes:   journalMaxBytes,
 		MaxBatches: journalMaxBatches,
-	})
+		IdleAfter:  journalIdleAfter,
+	}, systemClock{})
 	if err != nil {
 		t.Fatalf("memjournal.New: %v", err)
 	}
 	for index, appended := range batches {
-		if err := journal.Append(t.Context(), appended); err != nil {
+		if err := journal.Append(t.Context(), slices.Clone(appended.Spans())); err != nil {
 			t.Fatalf("Append batch %d: %v", index, err)
 		}
 	}
-	if err := journal.Append(t.Context(), batches[0]); !errors.Is(err, ingest.ErrOverloaded) {
+	if err := journal.Append(t.Context(), slices.Clone(batches[0].Spans())); !errors.Is(err, ingest.ErrOverloaded) {
 		t.Fatalf("Append into the filled journal = %v, want ErrOverloaded", err)
 	}
 	journal.Close()

@@ -42,12 +42,13 @@ func newHarness(t *testing.T, kind pipelineKind, preload int) *harness {
 	journal, err := memjournal.New(memjournal.Limits{
 		MaxBytes:   harnessBytes,
 		MaxBatches: harnessBatches,
-	})
+		IdleAfter:  defaultIdleAdvanceAfter,
+	}, systemClock{})
 	if err != nil {
 		t.Fatalf("memjournal.New: %v", err)
 	}
 	for index := range preload {
-		if err := journal.Append(t.Context(), processingtest.Pairs(t, uint64(index), 1)); err != nil {
+		if err := journal.Append(t.Context(), slices.Clone(processingtest.Pairs(t, uint64(index), 1).Spans())); err != nil {
 			t.Fatalf("Append: %v", err)
 		}
 	}
@@ -130,7 +131,7 @@ func stuckPipeline(_ *testing.T, h *harness) pipelineRunner {
 func failingAfterDrainPipeline(_ *testing.T, h *harness) pipelineRunner {
 	return runnerFunc(func(ctx context.Context) error {
 		for {
-			if _, err := h.journal.Receive(ctx, processing.MaxBatchesPerIteration); err != nil {
+			if _, err := h.journal.Receive(ctx, processing.MaxBatchesPerIteration, processing.ReceiveWait); err != nil {
 				return errCrash
 			}
 		}

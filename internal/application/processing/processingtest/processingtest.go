@@ -48,6 +48,10 @@ func (d *Delivery) Batch() batch.Batch {
 	return d.batch
 }
 
+func (d *Delivery) Bytes() int64 {
+	return d.batch.Footprint()
+}
+
 func (d *Delivery) Release() {
 	d.released.Add(1)
 }
@@ -66,7 +70,7 @@ func NewIterationFeed(iterations ...[]processing.Delivery) *IterationFeed {
 	}
 }
 
-func (f *IterationFeed) Receive(ctx context.Context, _ int) ([]processing.Delivery, error) {
+func (f *IterationFeed) Receive(ctx context.Context, _ int, _ time.Duration) ([]processing.Delivery, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("receive: %w", err)
 	}

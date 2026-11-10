@@ -202,10 +202,10 @@ func gatedSystem(t *testing.T, cfg *Config, feedOf feedSource) *system {
 
 func gated(gate <-chan struct{}) feedSource {
 	return func(stored storage) spanFeed {
-		return feedFunc(func(ctx context.Context, limit int) ([]processing.Delivery, error) {
+		return feedFunc(func(ctx context.Context, limit int, maxWait time.Duration) ([]processing.Delivery, error) {
 			select {
 			case <-gate:
-				return stored.journal.Receive(ctx, limit)
+				return stored.journal.Receive(ctx, limit, maxWait)
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			}
@@ -214,7 +214,7 @@ func gated(gate <-chan struct{}) feedSource {
 }
 
 func broken(stored storage) spanFeed {
-	return feedFunc(func(context.Context, int) ([]processing.Delivery, error) {
+	return feedFunc(func(context.Context, int, time.Duration) ([]processing.Delivery, error) {
 		return nil, errFeedBroken
 	})
 }

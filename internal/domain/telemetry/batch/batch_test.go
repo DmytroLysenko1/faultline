@@ -109,7 +109,7 @@ func TestNewBatchCopiesSpans(t *testing.T) {
 		}
 	})))
 
-	got := lo.Map(received.Spans, func(span span.Span, _ int) ids.SpanID {
+	got := lo.Map(received.Spans(), func(span span.Span, _ int) ids.SpanID {
 		return span.SpanID
 	})
 	if diff := cmp.Diff([]ids.SpanID{
@@ -122,8 +122,8 @@ func TestNewBatchCopiesSpans(t *testing.T) {
 	}, got); diff != "" {
 		t.Errorf("batch spans changed with the caller's slice (-want +got):\n%s", diff)
 	}
-	if !received.ReceivedAt.Equal(receivedAt) {
-		t.Errorf("ReceivedAt = %v, want %v", received.ReceivedAt, receivedAt)
+	if !received.ReceivedAt().Equal(receivedAt) {
+		t.Errorf("ReceivedAt() = %v, want %v", received.ReceivedAt(), receivedAt)
 	}
 }
 
@@ -132,7 +132,7 @@ func TestNewOwningRejectsEmpty(t *testing.T) {
 		nil,
 		{},
 	} {
-		if _, err := batch.NewOwning(spans, time.Unix(1, 0)); !errors.Is(err, batch.ErrEmpty) {
+		if _, err := batch.NewOwning(spans); !errors.Is(err, batch.ErrEmpty) {
 			t.Errorf("NewOwning(%d spans) err = %v, want %v", len(spans), err, batch.ErrEmpty)
 		}
 	}
@@ -143,15 +143,15 @@ func TestNewOwningTakesSpansWithoutCopy(t *testing.T) {
 	spans := []span.Span{
 		telemetrytest.MustSpan(t, telemetrytest.ValidResource(), new(telemetrytest.ValidFields())),
 	}
-	received, err := batch.NewOwning(spans, time.Unix(1, 0))
+	received, err := batch.NewOwning(spans)
 	if err != nil {
 		t.Fatalf("NewOwning: %v", err)
 	}
-	if &received.Spans[0] != &spans[0] {
+	if &received.Spans()[0] != &spans[0] {
 		t.Errorf("NewOwning copied the spans, want the batch to own the caller's slice")
 	}
 	allocations := testing.AllocsPerRun(runs, func() {
-		if _, err := batch.NewOwning(spans, time.Unix(1, 0)); err != nil {
+		if _, err := batch.NewOwning(spans); err != nil {
 			t.Errorf("NewOwning: %v", err)
 		}
 	})

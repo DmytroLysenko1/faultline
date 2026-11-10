@@ -8,14 +8,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 	"unicode/utf8"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
-	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/ids"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/kind"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation"
@@ -79,12 +77,12 @@ func (s *sliceSource) All() iter.Seq2[resource.Resource, *ingest.Record] {
 
 type fakeJournal struct {
 	lock     sync.Mutex
-	Batches  []batch.Batch
+	Batches  [][]span.Span
 	Contexts []context.Context
 	Err      error
 }
 
-func (f *fakeJournal) Append(ctx context.Context, received batch.Batch) error {
+func (f *fakeJournal) Append(ctx context.Context, received []span.Span) error {
 	f.lock.Lock()
 	defer f.lock.Unlock()
 	f.Contexts = append(f.Contexts, ctx)
@@ -93,14 +91,6 @@ func (f *fakeJournal) Append(ctx context.Context, received batch.Batch) error {
 	}
 	f.Batches = append(f.Batches, received)
 	return nil
-}
-
-type fixedClock struct {
-	Time time.Time
-}
-
-func (c fixedClock) Now() time.Time {
-	return c.Time
 }
 
 type harness struct {
@@ -114,9 +104,7 @@ func newHarness(journalErr error) harness {
 	}
 	return harness{
 		Journal: journal,
-		Accept: newAcceptBatch(journal, fixedClock{
-			Time: telemetrytest.Epoch(),
-		}),
+		Accept:  newAcceptBatch(journal),
 	}
 }
 
@@ -193,13 +181,10 @@ func TestExecuteAppendsValidSpansAsOneBatchInInputOrder(t *testing.T) {
 	if diff := diffResult(want, got); diff != "" {
 		t.Errorf("result (-want +got):\n%s", diff)
 	}
-	wantBatches := []batch.Batch{
+	wantBatches := [][]span.Span{
 		{
-			Spans: []span.Span{
-				expectedSpan(t, &first),
-				expectedSpan(t, &second),
-			},
-			ReceivedAt: telemetrytest.Epoch(),
+			expectedSpan(t, &first),
+			expectedSpan(t, &second),
 		},
 	}
 	if diff := cmp.Diff(wantBatches, h.Journal.Batches); diff != "" {
@@ -349,7 +334,7 @@ func TestExecuteAppliesEveryValidationRule(t *testing.T) {
 func journalSpans(journal *fakeJournal) int {
 	total := 0
 	for _, appended := range journal.Batches {
-		total += len(appended.Spans)
+		total += len(appended)
 	}
 	return total
 }
@@ -542,23 +527,19 @@ func TestExecuteJournalFailureAcceptsNothing(t *testing.T) {
 	}
 }
 
-func TestExecuteStampsBatchWithClock(t *testing.T) {
-	const offset = 42 * time.Second
-	stamped := telemetrytest.Epoch().Add(offset)
-	journal := &fakeJournal{}
-	accept := newAcceptBatch(journal, fixedClock{
-		Time: stamped,
-	})
-	if _, err := accept.Execute(t.Context(), sourceOf([]spanInput{
-		validInput(firstSpanID),
-	})); err != nil {
-		t.Fatalf("Execute: %v", err)
+func TestExecuteNeverReusesASliceItGaveTheJournal(t *testing.T) {
+	h := newHarness(nil)
+	first, second := validInput(firstSpanID), validInput(secondSpanID)
+
+	for _, input := range []spanInput{first, second} {
+		if _, err := h.Accept.Execute(t.Context(), sourceOf([]spanInput{input})); err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
 	}
-	if len(journal.Batches) != 1 {
-		t.Fatalf("journal has %d batches, want 1", len(journal.Batches))
-	}
-	if got := journal.Batches[0].ReceivedAt; !got.Equal(stamped) {
-		t.Errorf("ReceivedAt = %v, want the clock reading %v", got, stamped)
+
+	want := [][]span.Span{{expectedSpan(t, &first)}, {expectedSpan(t, &second)}}
+	if diff := cmp.Diff(want, h.Journal.Batches); diff != "" {
+		t.Errorf("a later request changed spans the journal already owns (-want +got):\n%s", diff)
 	}
 }
 
@@ -583,8 +564,8 @@ type sizeGatedJournal struct {
 	fakeJournal
 }
 
-func (j *sizeGatedJournal) Append(ctx context.Context, received batch.Batch) error {
-	if len(received.Spans) == overloadedBatchLen {
+func (j *sizeGatedJournal) Append(ctx context.Context, received []span.Span) error {
+	if len(received) == overloadedBatchLen {
 		return ingest.ErrOverloaded
 	}
 	return j.fakeJournal.Append(ctx, received)
@@ -600,9 +581,7 @@ func executeConcurrently(t *testing.T, accept *ingest.AcceptBatch, inputs []span
 }
 
 func TestStatsSumConcurrentRequestsExactly(t *testing.T) {
-	accept := newAcceptBatch(&sizeGatedJournal{}, fixedClock{
-		Time: telemetrytest.Epoch(),
-	})
+	accept := newAcceptBatch(&sizeGatedJournal{})
 	accepted := []spanInput{
 		validInput(firstSpanID),
 		validInput(secondSpanID),
@@ -679,8 +658,8 @@ func TestExecuteResultDoesNotDependOnTheLengthHint(t *testing.T) {
 }
 
 func newAcceptBatch(journal interface {
-	Append(ctx context.Context, received batch.Batch) error
-}, clock fixedClock,
+	Append(ctx context.Context, received []span.Span) error
+},
 ) *ingest.AcceptBatch {
-	return ingest.NewAcceptBatch(journal, clock, operation.NewNormalizer(nil))
+	return ingest.NewAcceptBatch(journal, operation.NewNormalizer(nil))
 }

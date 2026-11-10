@@ -47,8 +47,8 @@ func acceptedOperations(t *testing.T, records ...ingest.Record) []operation.Oper
 		t.Fatal(err)
 	}
 	var operations []operation.Operation
-	for i := range h.Journal.Batches[0].Spans {
-		operations = append(operations, h.Journal.Batches[0].Spans[i].Operation)
+	for i := range h.Journal.Batches[0] {
+		operations = append(operations, h.Journal.Batches[0][i].Operation)
 	}
 	return operations
 }
@@ -91,7 +91,7 @@ func TestNewAcceptBatchWithoutANormalizerPanics(t *testing.T) {
 			t.Fatal("NewAcceptBatch without a normalizer did not panic")
 		}
 	}()
-	ingest.NewAcceptBatch(&fakeJournal{}, fixedClock{}, nil)
+	ingest.NewAcceptBatch(&fakeJournal{}, nil)
 }
 
 func TestAcceptBatchAllocatesOneNamePerDistinctOperation(t *testing.T) {
@@ -133,7 +133,7 @@ func TestJournalDoesNotKeepTheCapacityOfRejectedSpans(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	held := h.Journal.Batches[0].Spans
+	held := h.Journal.Batches[0]
 	if diff := cmp.Diff([2]int{1, 1}, [2]int{len(held), cap(held)}); diff != "" {
 		t.Errorf("[len, cap] of the journaled spans when 99 of 100 were rejected (-want +got):\n%s", diff)
 	}

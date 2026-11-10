@@ -3,12 +3,11 @@ package spanmap_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
-	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/spanmap"
 )
 
@@ -16,11 +15,7 @@ const benchSpans = 512
 
 type discardJournal struct{}
 
-func (discardJournal) Append(context.Context, batch.Batch) error { return nil }
-
-type benchClock struct{}
-
-func (benchClock) Now() time.Time { return time.Unix(1_700_000_000, 0) }
+func (discardJournal) Append(context.Context, []span.Span) error { return nil }
 
 func demoTraces() ptrace.Traces {
 	traces := ptrace.NewTraces()

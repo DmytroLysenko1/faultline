@@ -4,6 +4,7 @@ package memjournal_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
@@ -15,9 +16,10 @@ func TestWorstCaseHeapCoversTheQueueAllocatedUpFront(t *testing.T) {
 	limits := memjournal.Limits{
 		MaxBytes:   1,
 		MaxBatches: largestQueue,
+		IdleAfter:  time.Minute,
 	}
 	grown := telemetrytest.HeapGrowth(func() any {
-		journal, err := memjournal.New(limits)
+		journal, err := memjournal.New(limits, wallClock{})
 		if err != nil {
 			t.Fatalf("memjournal.New: %v", err)
 		}
