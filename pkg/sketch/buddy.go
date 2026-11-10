@@ -94,15 +94,19 @@ func (b *buddy) push(order uint8, offset uint32) {
 func (b *buddy) remove(order uint8, offset uint32) {
 	next := b.slab[offset+linkNext].link()
 	prev := b.slab[offset+linkPrev].link()
-	if prev == noBlock {
-		b.heads[order] = next
-	} else {
-		b.slab[prev+linkNext] = entry(next)
-	}
+	b.setNext(order, prev, next)
 	if next != noBlock {
 		b.slab[next+linkPrev] = entry(prev)
 	}
 	b.setFree(order, offset, false)
+}
+
+func (b *buddy) setNext(order uint8, prev, next uint32) {
+	if prev == noBlock {
+		b.heads[order] = next
+		return
+	}
+	b.slab[prev+linkNext] = entry(next)
 }
 
 func (b *buddy) isFree(order uint8, offset uint32) bool {

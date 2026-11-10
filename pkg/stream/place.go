@@ -91,7 +91,8 @@ func (w *Windows[K, C]) openSlot(series int32, id int64) (*slot[C], int32) {
 	b := &w.buckets[position]
 	if !b.live {
 		b.occupy(id, id < w.batch.openFrom)
-	} else if b.windowID != id {
+	}
+	if b.windowID != id {
 		panic("stream: window ring collision; the horizon invariant is broken")
 	}
 	s := w.slotAt(series, int(position))

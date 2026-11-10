@@ -145,7 +145,7 @@ topology.Builder.Snapshot() = graph.View + traffic.View (по хэндлу) + с
 | `start = end` | `end` | 0 ns |
 | иначе | `end` | `end − start` |
 
-Спан с неизвестным временем не отклоняется: в шаге 1 он давал граф. `Interval` — 16 B (`end`, `latency` как `int64`; «неизвестно» — `−1`).
+Спан с неизвестным временем не отклоняется: в шаге 1 он давал граф. `Interval` — 16 B (`end` и `latency + 1` как `int64`; «неизвестно» — 0, поэтому нулевое значение — спан без времени).
 
 ### Время приёма и пульс (ред. 3)
 
@@ -313,7 +313,7 @@ type Cell struct {            // red.Cell — ячейка субъекта; б�
 Правило, первое подходящее побеждает:
 1. есть RPC-метод → `GRPC` (`rpc.system ∈ {grpc, connect_rpc}`) или `RPC`, имя `Service/Method` без ведущего `/`;
 2. есть `http.route` → `HTTP`, `<METHOD> <шаблон(route)>`;
-3. есть путь (`url.path`, иначе `http.target`, иначе путь из `url.full` / `http.url`) → `HTTP`, `<METHOD> <шаблон(путь)>`;
+3. есть путь (`url.path`, иначе `http.target`, иначе путь из `url.full` / `http.url`) → `HTTP`, `<METHOD> <шаблон(путь)>`; схема признаётся только префиксом `[A-Za-z][A-Za-z0-9+.-]*://`, путь начинается с первого `/` после authority, `?` или `#` раньше пути — корень (иначе путь брался из query: `http://api?next=/users/1`, ревью osmani и pstack); `http.target` в абсолютной форме (RFC 9112) разбирается так же;
 4. иначе — имя `""`, протокол `UNSPECIFIED` (неизвестная операция — обычная операция для лимитов).
 
 Метод HTTP: методы RFC 9110 и `PATCH` как есть, прочие — `_OTHER`.
@@ -321,11 +321,15 @@ type Cell struct {            // red.Cell — ячейка субъекта; б�
 **Шаблон пути**, сегмент за сегментом (пустые сегменты и завершающий `/` убираются, корень — `/`):
 1. правила сервиса — совпал шаблон → он и есть результат;
 2. сегмент → `{id}`, если это: десятичное число; UUID (8-4-4-4-12 hex, любой регистр); hex длиной ≥ 16; строка с `@` (e-mail — кардинальность и PII); base64/base64url-подобная строка длиной ≥ 20 (алфавит base64/base64url и `.` для JWT), у которой **≥ 5 переходов** «буква↔цифра» и «строчная→заглавная» — независимо от разделителей (ред. 5, ревью osmani, прогон 10⁵ случайных токенов: правило «разделители делят на слова» ред. 4 оставляло литералом 30–66 % base64url-токенов, у которых `-` и `_` — часть алфавита). Настоящие слова дают 0–3 перехода (`product-catalog-service-v2` — 1, `api-v1-users-v2-orders-v3-items` — 3, `getHTTPResponseHeaders` — 2, `OAuthCallbackHandlerV` — 3) и остаются; случайный токен остаётся литералом в 4,7 % при длине 20, 2,3 % при 22, ≈ 0 % от 32. История: «только цифра» (ред. 1) пропускал ≈ 3,4 %, «оба регистра» (ред. 2) и «не camelCase» (ред. 3) превращали аббревиатуры в `{id}`, «слова через разделители» (ред. 4) пропускал токены. Остаток держит лимит 500;
-3. иначе сегмент остаётся.
+3. сегмент → `{id}` и для частых форматов id (ревью кода среза 3a, pstack: замер 20 000 образцов на формат — каждый из них один занимал лимит 500 операций): ≥ 4 цифры подряд (даты, время, `ORD-000123`); число со знаком или дробью, IPv4 (`-42`, `1700000000.123`, `10.0.0.1`); число в конце после `-` / `_` (`user_42`, `page-2`); hex длиной 7–15 с цифрой и буквой (короткий SHA git); UUID внутри сегмента (`{uuid}`, `urn:uuid:…`); `%40` как `@`. Остаются литералом: `v12`, `v1.2.3`, `x509`, hex-слова без цифр (`deadbeef`), 6 hex (`ff00aa`); короткие base62/hashids/nanoid (≤ 12) — литерал, их держит лимит 500 и правила сервиса;
+4. сегмент длиннее 256 B → `{id}` без сканирования (целиком в имя он не войдёт; работа на спан ≤ 33 × 256 B, ревью osmani: 4 MiB-запрос стоил бы 40–70 ms CPU);
+5. иначе сегмент остаётся. Известные ложные срабатывания новых классов: `1.0` (`/api/1.0/users` → `/api/{id}/users`), `iso8601`, `rfc9110`, `face2face`, `utf-8`, `covid-19`, `top-10` — лечатся правилом сервиса.
+
+Ложные срабатывания на длинных camelCase-словах (`getUserProfileSettingsV2` → `{id}`) — осознанный компромисс: правило «горба» (заглавная перед строчной не считается) исправляет 3 из 7 таких слов, но поднимает долю случайных токенов, оставшихся литералом, с 4,6 % до 17,7 % при длине 20 (замер 10⁵); такой сегмент лечится правилом сервиса — литерал правила побеждает.
 
 `http.route` тоже проходит шаг 2; на настоящем шаблоне шаг ничего не меняет.
 
-**Злые входы:** обрабатываются первые 32 сегмента, остальное — одним сегментом `…`; имя ≤ 256 B (обрезка по границе UTF-8 с `…`); невалидный UTF-8 и управляющие символы → `U+FFFD`. Работа линейна по длине входа; вход читается из строки pdata без копии. Имя `__overflow__` недостижимо, закреплено fuzz-тестом. Аллокация — одна на различное имя в запросе (интернирование в карте вызова `AcceptBatch`); бенчмарк `BenchmarkNormalize` при приёме, бюджет — в таблице.
+**Злые входы:** обрабатываются первые 32 сегмента, остальное — одним сегментом `…`; имя ≤ 256 B (обрезка по границе UTF-8 с `…`); невалидный UTF-8 и управляющие символы → `U+FFFD`. Работа линейна по длине входа; вход читается из строки pdata без копии. Имя `__overflow__` недостижимо, закреплено fuzz-тестом. `N(N(x)) = N(x)` — для необрезанных имён при любых принятых правилах (fuzz с правилами и без): обрезка отбрасывает сегменты, и короткое имя может совпасть с правилом, которое не совпало с исходным путём. Ведущие `/` у `rpc.service` и `rpc.method` отбрасываются. Аллокация — одна на различное имя в запросе (интернирование в карте вызова `AcceptBatch`); бенчмарк `BenchmarkNormalize` при приёме, бюджет — в таблице.
 
 **Правила сервиса** — `FAULTLINE_ROUTE_RULES_FILE` (YAML ≤ 1 MiB, строгий разбор, exit 2 с номером строки):
 
@@ -339,7 +343,7 @@ services:
       - /v1/{tenant}/items/{id}
 ```
 
-Шаблон — литералы и `{имя}`; побеждает литерал в более раннем сегменте. Префиксное дерево сегментов сервиса с возвратом: O(узлов дерева сервиса) ≤ 256 × 32 = 8 192; только чтение после старта, поэтому безопасно для параллельных хэндлеров приёма. Лимиты: ≤ 256 шаблонов на сервис, ≤ 4 096 всего, шаблон ≤ 256 B и ≤ 32 сегмента.
+Шаблон — литералы и `{имя}` (`[A-Za-z0-9_]+`), без пустых сегментов, без `?` и `#` (их часть пути отрезается — такой шаблон никогда бы не совпал; найдено fuzz), ≤ 249 B (имя «`_OTHER ` + шаблон» не обрезается; найдено fuzz); побеждает литерал в более раннем сегменте. Разбор YAML — адаптер `internal/infrastructure/routerules` (домен не знает форматов файлов), дерево и лимиты — `operation.NewRules`. Префиксное дерево сегментов сервиса с возвратом. Путь приходит от клиента, и неоднозначные правила (2⁸ сочетаний литерала и параметра) давали 89 µs на спан (ревью pocock и osmani); отсечка во время сопоставления ломала идемпотентность (ревью pstack). Поэтому **`NewRules` отклоняет сервис, чей худший обход длиннее 256 узлов** (`MaxMatchVisits`; худший обход узла = 1 + худший обход одного литерального ребёнка + обход параметра): сопоставление ограничено по построению, без отсечки и без зависимости результата от бюджета; только чтение после старта, поэтому безопасно для параллельных хэндлеров приёма. Лимиты: ≤ 256 шаблонов на сервис, ≤ 4 096 всего, шаблон ≤ 249 B и ≤ 32 сегмента; сервис дважды и одинаковая форма шаблона (имена параметров не важны) — ошибка.
 
 ### Операции: кардинальность (FR-STR-007)
 
@@ -749,7 +753,7 @@ publish: Publish(Snapshot()) — ошибка → return (held не освобо
 | `BenchmarkSketchCellLifecycle` (пустая → 10 событий → пенсия) | ≤ 500 ns, 0 аллокаций (замер: 400 ns) |
 | `BenchmarkSketchPercentiles` | ≤ 300 ns, 0 аллокаций |
 | `BenchmarkLocateRecord` (100 000 серий, случайный доступ) | ≤ 50 ns (замер среза 2: 32 ns), 0 аллокаций |
-| `BenchmarkNormalize` / `BenchmarkRouteRulesWorst` | ≤ 400 ns / ≤ 10 µs, ≤ 1 аллокация |
+| `BenchmarkNormalize` (типичные входы) / враждебный путь 64 сегмента / `BenchmarkRouteRulesWorst` (2⁸ сочетаний) | ≤ 400 ns / ≤ 4 µs / ≤ 15 µs, ≤ 1 аллокация (замер среза 3a: 50–300 ns / 2,1–2,5 µs / 2,8 µs — худшие принятые правила, 2⁶ сочетаний) |
 | `BenchmarkAcceptBatch` (512 спанов) | не хуже шага 1 + нормализация; аллокации — ≤ шага 1 + 1 на спан |
 | `BenchmarkBuilderApplyPerSpan` | ≤ 1 µs на спан, 0 аллокаций на спан |
 | `BenchmarkWindowClose160k` | ≤ 60 ms |
@@ -1006,13 +1010,16 @@ func WorstCaseHeapBytes[K comparable, C any](cfg Config, capacity int) int64
 
 ```go
 // eventtime
-type Interval struct { /* end, latency int64; −1 — неизвестно */ }
+type Interval struct { /* end, latency+1 int64; 0 — неизвестно: нулевое значение — спан без времени */ }
 func FromUnixNanos(start, end uint64) Interval
 func (i Interval) End() (time.Time, bool)
 func (i Interval) Latency() (time.Duration, bool)
 
 // operation
-var ErrInvalidRules = errors.New("invalid route rules")
+var (
+	ErrInvalidRules     = errors.New("invalid route rules")
+	ErrInvalidOperation = errors.New("invalid operation") // Operation.Validate — для span.New
+)
 type Protocol uint8 // ProtocolUnspecified, ProtocolHTTP, ProtocolGRPC, ProtocolRPC
 type Operation struct {
 	Protocol Protocol
@@ -1022,14 +1029,28 @@ const (
 	MaxNameBytes    = 256
 	MaxPathSegments = 32
 	OverflowName    = "__overflow__"
+	MaxTemplateBytes    = MaxNameBytes - len("_OTHER ") // 249: имя «метод + шаблон» не обрезается
+	MaxRoutesPerService = 256
+	MaxRoutes           = 4096
 )
+func (o Operation) Validate() error // протокол известен; имя пусто ⇔ UNSPECIFIED; ≤ 256 B; UTF-8; ≠ OverflowName
 type Facts struct {
 	HTTPMethod, Route, Path, URL, Target string // сырые строки pdata, не копируются
 	RPCSystem, RPCService, RPCMethod     string
 }
-func ParseRules(data []byte) (*Rules, error)
-func NewNormalizer(rules *Rules) *Normalizer                   // без изменяемого состояния; безопасен для параллельных вызовов
-func (n *Normalizer) Normalize(service resource.ServiceRef, facts Facts) Operation
+type ServiceRoutes struct {
+	Service resource.ServiceRef
+	Routes  []string
+}
+type RuleError struct{ Service, Route int; Reason string } // Route = −1 — ошибка сервиса; Unwrap → ErrInvalidRules
+func NewRules(services []ServiceRoutes) (*Rules, error)        // домен: лимиты, синтаксис шаблона, дерево; YAML — в адаптере
+func NewNormalizer(rules *Rules) *Normalizer                   // без изменяемого состояния; безопасен для параллельных вызовов; nil — без правил
+func (n *Normalizer) Normalize(service resource.ServiceRef, facts *Facts) Operation // Facts — 128 B, по указателю
+
+// internal/infrastructure/routerules (адаптер файла правил, срез 3a)
+const MaxFileBytes = 1 << 20
+func Parse(data []byte) (*operation.Rules, error) // строгий YAML (KnownFields, один документ, version: 1, пустой файл — ошибка); ошибки — ErrInvalidRules
+type LineError struct{ Line int; Err error } // Line = 0 — строка неизвестна; Unwrap → *operation.RuleError или ошибка версии → ErrInvalidRules
 
 // span
 // Span: + Interval eventtime.Interval, Operation operation.Operation
