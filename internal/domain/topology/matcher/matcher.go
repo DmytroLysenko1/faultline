@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/eventtime"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/ids"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/call"
@@ -37,11 +39,13 @@ func (l Limits) validate() error {
 }
 
 type pendingHalf struct {
-	Key      ids.CallKey
-	Service  resource.ServiceRef
-	Deadline time.Duration
-	Side     role.Role
-	Failed   bool
+	Key       ids.CallKey
+	Service   resource.ServiceRef
+	Deadline  time.Duration
+	Side      role.Role
+	Failed    bool
+	Interval  eventtime.Interval
+	Operation operation.Operation
 }
 
 type Matcher struct {
@@ -69,29 +73,31 @@ func New(limits Limits) (*Matcher, error) {
 	}, nil
 }
 
-func (m *Matcher) Match(observed *span.Span, now time.Time) (call.Call, bool) {
+func (m *Matcher) Match(observed *span.Span, now time.Time) (call.Call, Outcome) {
 	key, side := role.Of(observed)
 	if !m.Stats.Observe(side) {
-		return call.Call{}, false
+		return call.Call{}, unpaired(side)
 	}
 	at := m.Clock.Advance(now)
 	arrived := pendingHalf{
-		Key:      key,
-		Side:     side,
-		Service:  observed.Service,
-		Failed:   observed.Failed,
-		Deadline: at + m.Limits.TTL,
+		Key:       key,
+		Side:      side,
+		Service:   observed.Service,
+		Failed:    observed.Failed,
+		Deadline:  at + m.Limits.TTL,
+		Interval:  observed.Interval,
+		Operation: observed.Operation,
 	}
 	waiting := m.PendingByKey[key]
 	switch {
-	case m.isDuplicate(arrived, waiting):
+	case m.isDuplicate(&arrived, waiting):
 		m.Stats.RecordDuplicate()
-		return call.Call{}, false
+		return call.Call{}, OutcomeDuplicate
 	case waiting == nil:
-		m.wait(arrived)
-		return call.Call{}, false
+		m.wait(&arrived)
+		return call.Call{}, OutcomeWaiting
 	}
-	return m.complete(waiting, arrived, at), true
+	return m.complete(waiting, &arrived, at), OutcomeMatched
 }
 
 func (m *Matcher) Expire(now time.Time) []call.Unanswered {
@@ -103,20 +109,24 @@ func (m *Matcher) Expire(now time.Time) []call.Unanswered {
 		if !expired {
 			return callers
 		}
-		if caller, unanswered := m.settleExpired(half, at); unanswered {
+		if caller, unanswered := m.settleExpired(&half, at); unanswered {
 			callers = append(callers, caller)
 		}
 	}
 }
 
-func (m *Matcher) isDuplicate(arrived pendingHalf, waiting *list.Element) bool {
+func (m *Matcher) isDuplicate(arrived *pendingHalf, waiting *list.Element) bool {
 	if m.Tombstones.Suppresses(arrived.Key, arrived.Side) {
 		return true
 	}
-	return waiting != nil && halfOf(waiting).sameSideAs(arrived)
+	if waiting == nil {
+		return false
+	}
+	existing := halfOf(waiting)
+	return existing.sameSideAs(arrived)
 }
 
-func (m *Matcher) complete(waiting *list.Element, arrived pendingHalf, at time.Duration) call.Call {
+func (m *Matcher) complete(waiting *list.Element, arrived *pendingHalf, at time.Duration) call.Call {
 	other := m.remove(waiting)
 	m.Stats.RecordMatch()
 	m.addTombstone(arrived.Key, tombstone.BothSides, at)
@@ -133,7 +143,7 @@ func (m *Matcher) popExpired(at time.Duration) (pendingHalf, bool) {
 	return half, true
 }
 
-func (m *Matcher) settleExpired(half pendingHalf, at time.Duration) (call.Unanswered, bool) {
+func (m *Matcher) settleExpired(half *pendingHalf, at time.Duration) (call.Unanswered, bool) {
 	unanswered, isCaller := half.unanswered()
 	if isCaller {
 		m.addTombstone(half.Key, tombstone.CallerOnly, at)
@@ -141,11 +151,11 @@ func (m *Matcher) settleExpired(half pendingHalf, at time.Duration) (call.Unansw
 	return unanswered, isCaller
 }
 
-func (m *Matcher) wait(half pendingHalf) {
+func (m *Matcher) wait(half *pendingHalf) {
 	if m.Pending.Len() >= m.Limits.MaxPending {
 		m.evictOldest()
 	}
-	m.PendingByKey[half.Key] = m.Pending.PushBack(half)
+	m.PendingByKey[half.Key] = m.Pending.PushBack(*half)
 	m.Stats.RecordWait()
 }
 
@@ -168,19 +178,19 @@ func (m *Matcher) addTombstone(key ids.CallKey, scope tombstone.Scope, at time.D
 	}
 }
 
-func (h pendingHalf) sameSideAs(other pendingHalf) bool {
+func (h *pendingHalf) sameSideAs(other *pendingHalf) bool {
 	return h.Side == other.Side
 }
 
-func (h pendingHalf) callWith(other pendingHalf) call.Call {
+func (h *pendingHalf) callWith(other *pendingHalf) call.Call {
 	caller, callee := h, other
 	if h.Side == role.Callee {
 		caller, callee = other, h
 	}
-	return call.Between(caller.party(), callee.party())
+	return call.Between(new(caller.party()), new(callee.party()))
 }
 
-func (h pendingHalf) unanswered() (call.Unanswered, bool) {
+func (h *pendingHalf) unanswered() (call.Unanswered, bool) {
 	if h.Side != role.Caller {
 		return call.Unanswered{}, false
 	}
@@ -190,10 +200,12 @@ func (h pendingHalf) unanswered() (call.Unanswered, bool) {
 	}, true
 }
 
-func (h pendingHalf) party() call.Party {
+func (h *pendingHalf) party() call.Party {
 	return call.Party{
-		Service: h.Service,
-		Failed:  h.Failed,
+		Service:   h.Service,
+		Failed:    h.Failed,
+		Interval:  h.Interval,
+		Operation: h.Operation,
 	}
 }
 

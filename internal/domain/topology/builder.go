@@ -61,29 +61,31 @@ func (l Limits) graphLimits() graph.Limits {
 
 func (b *Builder) Apply(received batch.Batch) {
 	receivedAt, spans := received.ReceivedAt(), received.Spans()
-	unanswered := b.Matcher.Expire(receivedAt)
-	calls := make([]call.Call, 0, len(spans))
-	for i := range spans {
-		if matched, ok := b.Matcher.Match(&spans[i], receivedAt); ok {
-			calls = append(calls, matched)
-		}
-	}
-	b.Graph.Apply(&graph.Change{
+	change := graph.Change{
 		ReceivedAt: receivedAt,
-		Services:   participants(spans),
-		Calls:      calls,
-		Unanswered: unanswered,
-	})
+		Unanswered: b.Matcher.Expire(receivedAt),
+		Services:   make([]resource.ServiceRef, 0, len(spans)),
+		Calls:      make([]call.Call, 0, len(spans)),
+		Served:     make([]resource.ServiceRef, 0, len(spans)),
+	}
+	for i := range spans {
+		b.observe(&change, &spans[i])
+	}
+	b.Graph.Apply(&change)
 }
 
-func participants(spans []span.Span) []resource.ServiceRef {
-	services := make([]resource.ServiceRef, 0, len(spans))
-	for i := range spans {
-		if _, side := role.Of(&spans[i]); side.Participates() {
-			services = append(services, spans[i].Service)
-		}
+func (b *Builder) observe(change *graph.Change, observed *span.Span) {
+	_, side := role.Of(observed)
+	if side.Participates() {
+		change.Services = append(change.Services, observed.Service)
 	}
-	return services
+	matched, outcome := b.Matcher.Match(observed, change.ReceivedAt)
+	if outcome == matcher.OutcomeMatched {
+		change.Calls = append(change.Calls, matched)
+	}
+	if outcome.Served(side) {
+		change.Served = append(change.Served, observed.Service)
+	}
 }
 
 func (b *Builder) Snapshot() *Snapshot {

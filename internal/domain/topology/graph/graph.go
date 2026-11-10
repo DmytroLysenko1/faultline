@@ -3,6 +3,8 @@ package graph
 import (
 	"errors"
 	"fmt"
+	"maps"
+	"math"
 	"slices"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/call"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/clock"
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology/handle"
 )
 
 var ErrInvalidLimits = errors.New("invalid graph limits")
@@ -37,6 +40,13 @@ type Change struct {
 	Services   []resource.ServiceRef
 	Calls      []call.Call
 	Unanswered []call.Unanswered
+	Served     []resource.ServiceRef
+}
+
+type Applied struct {
+	CallEdges   []handle.Edge
+	CallCallees []handle.Node
+	ServedNodes []handle.Node
 }
 
 type Graph struct {
@@ -48,6 +58,9 @@ type Graph struct {
 	ChangedAt time.Time
 	Clock     clock.Monotonic
 	View      View
+	applied   Applied
+	nextNode  handle.Node
+	nextEdge  handle.Edge
 }
 
 func New(limits Limits, startedAt time.Time) (*Graph, error) {
@@ -66,23 +79,32 @@ func New(limits Limits, startedAt time.Time) (*Graph, error) {
 
 func (l Limits) validate() error {
 	switch {
-	case l.MaxNodes <= 0:
-		return fmt.Errorf("%w: max nodes %d must be positive", ErrInvalidLimits, l.MaxNodes)
-	case l.MaxEdges <= 0:
-		return fmt.Errorf("%w: max edges %d must be positive", ErrInvalidLimits, l.MaxEdges)
+	case l.MaxNodes <= 0 || l.MaxNodes > math.MaxInt32:
+		return fmt.Errorf("%w: max nodes %d must be in 1 … %d", ErrInvalidLimits, l.MaxNodes, math.MaxInt32)
+	case l.MaxEdges <= 0 || l.MaxEdges > math.MaxInt32:
+		return fmt.Errorf("%w: max edges %d must be in 1 … %d", ErrInvalidLimits, l.MaxEdges, math.MaxInt32)
 	}
 	return nil
 }
 
-func (g *Graph) Apply(change *Change) {
+func (g *Graph) Apply(change *Change) Applied {
 	g.Clock.Advance(change.ReceivedAt)
+	g.resetApplied()
 	changed := g.addNodes(change.Services)
 	changed = g.addCalls(change.Calls) || changed
+	changed = g.addServed(change.Served) || changed
 	changed = g.addUnanswered(change.Unanswered) || changed
 	if changed {
 		g.Dirty = true
 		g.ChangedAt = g.Clock.Now()
 	}
+	return g.applied
+}
+
+func (g *Graph) resetApplied() {
+	g.applied.CallEdges = g.applied.CallEdges[:0]
+	g.applied.CallCallees = g.applied.CallCallees[:0]
+	g.applied.ServedNodes = g.applied.ServedNodes[:0]
 }
 
 func (g *Graph) CurrentView() View {
@@ -114,24 +136,48 @@ func (g *Graph) addNode(service resource.ServiceRef) (added bool) {
 		g.Stats.NodeOverflow++
 		return false
 	}
-	g.Nodes[service] = new(NewNode(service))
+	created := NewNode(service)
+	created.Handle = g.nextNode
+	g.nextNode++
+	g.Nodes[service] = &created
 	return true
 }
 
 func (g *Graph) addCalls(calls []call.Call) (changed bool) {
-	for _, matched := range calls {
-		edge := g.edgeFor(matched)
-		if edge == nil {
-			g.Stats.GraphOverflow++
+	for i := range calls {
+		edge, callee := g.recordCall(&calls[i])
+		g.applied.CallEdges = append(g.applied.CallEdges, edge)
+		g.applied.CallCallees = append(g.applied.CallCallees, callee)
+		changed = changed || edge != handle.None
+	}
+	return changed
+}
+
+func (g *Graph) recordCall(matched *call.Call) (handle.Edge, handle.Node) {
+	edge := g.edgeFor(matched)
+	if edge == nil {
+		g.Stats.GraphOverflow++
+		return handle.None, handle.None
+	}
+	edge.Record(matched)
+	return edge.Handle, g.Nodes[matched.Callee].Handle
+}
+
+func (g *Graph) addServed(served []resource.ServiceRef) (changed bool) {
+	for _, service := range served {
+		node, exists := g.Nodes[service]
+		if !exists {
+			g.applied.ServedNodes = append(g.applied.ServedNodes, handle.None)
 			continue
 		}
-		edge.Record(matched)
+		node.RecordServed()
+		g.applied.ServedNodes = append(g.applied.ServedNodes, node.Handle)
 		changed = true
 	}
 	return changed
 }
 
-func (g *Graph) edgeFor(matched call.Call) *Edge {
+func (g *Graph) edgeFor(matched *call.Call) *Edge {
 	key := edgeKey{
 		Caller: matched.Caller,
 		Callee: matched.Callee,
@@ -147,7 +193,9 @@ func (g *Graph) edgeFor(matched call.Call) *Edge {
 	edge := &Edge{
 		Source: caller.ID,
 		Target: callee.ID,
+		Handle: g.nextEdge,
 	}
+	g.nextEdge++
 	g.Edges[key] = edge
 	return edge
 }
@@ -165,10 +213,9 @@ func (g *Graph) addUnanswered(unanswered []call.Unanswered) (changed bool) {
 	return changed
 }
 
-func sortedCopies[K comparable, V any](items map[K]*V, compare func(a, b V) int) []V {
-	copies := lo.MapToSlice(items, func(_ K, item *V) V {
+func sortedCopies[K comparable, V any](items map[K]*V, compare func(a, b *V) int) []V {
+	sorted := slices.SortedFunc(maps.Values(items), compare)
+	return lo.Map(sorted, func(item *V, _ int) V {
 		return *item
 	})
-	slices.SortFunc(copies, compare)
-	return copies
 }

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/samber/lo"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
@@ -28,7 +27,7 @@ func Graph(snapshot *topology.Snapshot) (*faultlinev1.Graph, error) {
 	return &faultlinev1.Graph{
 		Revision:    snapshot.Revision,
 		GeneratedAt: timestamppb.New(snapshot.GeneratedAt),
-		Nodes:       lo.Map(snapshot.Nodes, node),
+		Nodes:       nodes(snapshot.Nodes),
 		Edges:       mapped,
 	}, nil
 }
@@ -43,7 +42,15 @@ func indexByID(nodes []graph.Node) map[string]uint32 {
 	return positions
 }
 
-func node(source graph.Node, _ int) *faultlinev1.Node {
+func nodes(source []graph.Node) []*faultlinev1.Node {
+	mapped := make([]*faultlinev1.Node, 0, len(source))
+	for i := range source {
+		mapped = append(mapped, node(&source[i]))
+	}
+	return mapped
+}
+
+func node(source *graph.Node) *faultlinev1.Node {
 	return &faultlinev1.Node{
 		Id: source.ID,
 		Service: &faultlinev1.ServiceRef{

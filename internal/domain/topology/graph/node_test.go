@@ -111,11 +111,11 @@ func TestEdgeRecord(t *testing.T) {
 		Source: "svc:shop/frontend",
 		Target: "svc:shop/cart",
 	}
-	edge.Record(call.Call{
+	edge.Record(&call.Call{
 		Caller: telemetrytest.Service("frontend"),
 		Callee: telemetrytest.Service("cart"),
 	})
-	edge.Record(call.Call{
+	edge.Record(&call.Call{
 		Caller: telemetrytest.Service("frontend"),
 		Callee: telemetrytest.Service("cart"),
 		Failed: true,

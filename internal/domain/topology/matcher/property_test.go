@@ -31,7 +31,7 @@ func TestPairingAccountsForEverySpan(t *testing.T) {
 				if _, side := role.Of(&span); side != role.Ignored {
 					fed++
 				}
-				if _, matched := pairing.Match(&span, now); matched {
+				if _, outcome := pairing.Match(&span, now); outcome == matcher.OutcomeMatched {
 					pairs++
 				}
 			}

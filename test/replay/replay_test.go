@@ -134,6 +134,7 @@ type goldenNode struct {
 	ID                    string `json:"id"`
 	UnansweredCalls       uint64 `json:"unanswered_calls"`
 	UnansweredFailedCalls uint64 `json:"unanswered_failed_calls"`
+	Served                uint64 `json:"served"`
 }
 
 type goldenEdge struct {
@@ -164,10 +165,16 @@ func goldenOf(snapshot *topology.Snapshot) golden {
 			ID:                    node.ID,
 			UnansweredCalls:       node.UnansweredCalls,
 			UnansweredFailedCalls: node.UnansweredFailedCalls,
+			Served:                node.Served,
 		})
 	}
 	for _, edge := range snapshot.Edges {
-		result.Edges = append(result.Edges, goldenEdge(edge))
+		result.Edges = append(result.Edges, goldenEdge{
+			Source:      edge.Source,
+			Target:      edge.Target,
+			Calls:       edge.Calls,
+			FailedCalls: edge.FailedCalls,
+		})
 	}
 	return result
 }

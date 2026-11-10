@@ -31,6 +31,10 @@ type Operation struct {
 	Name     string
 }
 
+func (o Operation) IsZero() bool {
+	return o == Operation{}
+}
+
 func (o Operation) Validate() error {
 	switch {
 	case o.Protocol > ProtocolRPC:

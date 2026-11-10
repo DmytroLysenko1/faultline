@@ -5,72 +5,86 @@
     {
       "id": "svc:otel-demo/ad",
       "unanswered_calls": 0,
-      "unanswered_failed_calls": 0
+      "unanswered_failed_calls": 0,
+      "served": 5
     },
     {
       "id": "svc:otel-demo/cart",
       "unanswered_calls": 4,
-      "unanswered_failed_calls": 0
+      "unanswered_failed_calls": 0,
+      "served": 17
     },
     {
       "id": "svc:otel-demo/checkout",
       "unanswered_calls": 0,
-      "unanswered_failed_calls": 0
+      "unanswered_failed_calls": 0,
+      "served": 3
     },
     {
       "id": "svc:otel-demo/currency",
       "unanswered_calls": 0,
-      "unanswered_failed_calls": 0
+      "unanswered_failed_calls": 0,
+      "served": 9
     },
     {
       "id": "svc:otel-demo/email",
       "unanswered_calls": 0,
-      "unanswered_failed_calls": 0
+      "unanswered_failed_calls": 0,
+      "served": 3
     },
     {
       "id": "svc:otel-demo/flagd",
       "unanswered_calls": 0,
-      "unanswered_failed_calls": 0
+      "unanswered_failed_calls": 0,
+      "served": 20
     },
     {
       "id": "svc:otel-demo/fraud-detection",
       "unanswered_calls": 0,
-      "unanswered_failed_calls": 0
+      "unanswered_failed_calls": 0,
+      "served": 0
     },
     {
       "id": "svc:otel-demo/frontend",
       "unanswered_calls": 0,
-      "unanswered_failed_calls": 0
+      "unanswered_failed_calls": 0,
+      "served": 50
     },
     {
       "id": "svc:otel-demo/frontend-proxy",
       "unanswered_calls": 7,
-      "unanswered_failed_calls": 0
+      "unanswered_failed_calls": 0,
+      "served": 26
     },
     {
       "id": "svc:otel-demo/payment",
       "unanswered_calls": 0,
-      "unanswered_failed_calls": 0
+      "unanswered_failed_calls": 0,
+      "served": 3
     },
     {
       "id": "svc:otel-demo/product-catalog",
       "unanswered_calls": 0,
-      "unanswered_failed_calls": 0
+      "unanswered_failed_calls": 0,
+      "served": 36
     },
     {
       "id": "svc:otel-demo/quote",
       "unanswered_calls": 0,
-      "unanswered_failed_calls": 0
+      "unanswered_failed_calls": 0,
+      "served": 3
     },
     {
       "id": "svc:otel-demo/recommendation",
       "unanswered_calls": 0,
-      "unanswered_failed_calls": 0
+      "unanswered_failed_calls": 0,
+      "served": 4
     },
     {
       "id": "svc:otel-demo/shipping",
       "unanswered_calls": 0,
-      "unanswered_failed_calls": 0
+      "unanswered_failed_calls": 0,
+      "served": 6
     }
   ],
   "edges": [

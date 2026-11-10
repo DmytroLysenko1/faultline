@@ -63,7 +63,7 @@ func TestBetween(t *testing.T) {
 				Callee: callee.Service,
 				Failed: tt.Want,
 			}
-			if diff := cmp.Diff(want, call.Between(caller, callee)); diff != "" {
+			if diff := cmp.Diff(want, call.Between(&caller, &callee)); diff != "" {
 				t.Errorf("call mismatch (-want +got):\n%s", diff)
 			}
 		})

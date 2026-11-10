@@ -13,6 +13,7 @@ const (
 	Unpairable
 	Caller
 	Callee
+	Entry
 )
 
 func (r Role) Participates() bool {
@@ -32,7 +33,7 @@ func Of(observed *span.Span) (ids.CallKey, Role) {
 		return ids.NewCallKey(observed.TraceID, observed.SpanID), Caller
 	case kind.Server:
 		if observed.ParentSpanID.IsZero() {
-			return ids.CallKey{}, Unpairable
+			return ids.CallKey{}, Entry
 		}
 		return ids.NewCallKey(observed.TraceID, observed.ParentSpanID), Callee
 	default:

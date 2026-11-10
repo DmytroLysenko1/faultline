@@ -117,7 +117,9 @@ func checkEdgeAccounting(t *testing.T, scenario int, view *snapshotView) {
 	}); found {
 		t.Fatalf("scenario %d: edge %s→%s points outside the node set", scenario, e.Source, e.Target)
 	}
-	if !slices.IsSortedFunc(view.Nodes, graph.CompareNodes) || !slices.IsSortedFunc(view.Edges, graph.CompareEdges) {
+	nodesSorted := slices.IsSortedFunc(view.Nodes, func(a, b graph.Node) int { return graph.CompareNodes(&a, &b) })
+	edgesSorted := slices.IsSortedFunc(view.Edges, func(a, b graph.Edge) int { return graph.CompareEdges(&a, &b) })
+	if !nodesSorted || !edgesSorted {
 		t.Fatalf("scenario %d: snapshot is not sorted", scenario)
 	}
 }

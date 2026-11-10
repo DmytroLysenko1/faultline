@@ -96,7 +96,7 @@ func TestRoleOf(t *testing.T) {
 				Service: "frontend",
 			},
 			Want: want{
-				Role: role.Unpairable,
+				Role: role.Entry,
 			},
 		},
 		{

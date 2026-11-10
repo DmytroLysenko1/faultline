@@ -36,7 +36,7 @@ func runMatcher(t *testing.T, limits matcher.Limits, steps []batchStep) matchOut
 		now := telemetrytest.Epoch().Add(step.At)
 		outcome.ExpiredCallers = append(outcome.ExpiredCallers, pairing.Expire(now)...)
 		for _, span := range step.Spans {
-			if matched, ok := pairing.Match(&span, now); ok {
+			if matched, result := pairing.Match(&span, now); result == matcher.OutcomeMatched {
 				outcome.Calls = append(outcome.Calls, matched)
 			}
 		}

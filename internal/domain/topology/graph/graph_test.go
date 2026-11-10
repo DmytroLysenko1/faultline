@@ -54,7 +54,7 @@ func TestNewRejectsInvalidLimits(t *testing.T) {
 			Args: graph.Limits{
 				MaxEdges: 1,
 			},
-			Want:    "invalid graph limits: max nodes 0 must be positive",
+			Want:    "invalid graph limits: max nodes 0 must be in 1 … 2147483647",
 			WantErr: graph.ErrInvalidLimits,
 		},
 		{
@@ -62,7 +62,7 @@ func TestNewRejectsInvalidLimits(t *testing.T) {
 			Args: graph.Limits{
 				MaxNodes: 1,
 			},
-			Want:    "invalid graph limits: max edges 0 must be positive",
+			Want:    "invalid graph limits: max edges 0 must be in 1 … 2147483647",
 			WantErr: graph.ErrInvalidLimits,
 		},
 	}
@@ -249,7 +249,7 @@ func TestGraphApply(t *testing.T) {
 				View:  services.CurrentView(),
 				Stats: services.Stats,
 			}
-			if diff := cmp.Diff(tt.Want, got, cmpopts.EquateEmpty()); diff != "" {
+			if diff := cmp.Diff(tt.Want, got, cmpopts.EquateEmpty(), shapeOnly()); diff != "" {
 				t.Errorf("graph mismatch (-want +got):\n%s", diff)
 			}
 		})
@@ -305,7 +305,15 @@ func TestGeneratedAtNeverGoesBack(t *testing.T) {
 			node("frontend"),
 		},
 	}
-	if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+	if diff := cmp.Diff(want, got, cmpopts.EquateEmpty(), shapeOnly()); diff != "" {
 		t.Errorf("view mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// shapeOnly compares the step-1 graph shape; handles and served counts have their own tests.
+func shapeOnly() cmp.Option {
+	return cmp.Options{
+		cmpopts.IgnoreFields(graph.Node{}, "Handle", "Served"),
+		cmpopts.IgnoreFields(graph.Edge{}, "Handle"),
 	}
 }

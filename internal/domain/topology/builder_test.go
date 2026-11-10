@@ -88,7 +88,7 @@ func TestBuilderEmptySnapshot(t *testing.T) {
 	got := viewOfSnapshot(newTestBuilder(t, builderLimits()).Snapshot())
 	if diff := cmp.Diff(snapshotView{
 		GeneratedAt: telemetrytest.Epoch(),
-	}, got); diff != "" {
+	}, got, shapeOnly()); diff != "" {
 		t.Errorf("empty snapshot mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -133,7 +133,7 @@ func TestBuilderBuildsServiceGraph(t *testing.T) {
 			Unpairable: 2,
 		},
 	}
-	if diff := cmp.Diff(want, viewOfSnapshot(builder.Snapshot())); diff != "" {
+	if diff := cmp.Diff(want, viewOfSnapshot(builder.Snapshot()), shapeOnly()); diff != "" {
 		t.Errorf("snapshot mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -159,10 +159,10 @@ func TestBuilderOrdersNodesAndEdges(t *testing.T) {
 		edge("checkout", "payment", 1, 0),
 		edge("frontend", "cart", 1, 0),
 	}
-	if diff := cmp.Diff(wantNodes, got.Nodes); diff != "" {
+	if diff := cmp.Diff(wantNodes, got.Nodes, shapeOnly()); diff != "" {
 		t.Errorf("nodes mismatch (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff(wantEdges, got.Edges); diff != "" {
+	if diff := cmp.Diff(wantEdges, got.Edges, shapeOnly()); diff != "" {
 		t.Errorf("edges mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -290,7 +290,7 @@ func TestBuilderRevisionMovesOnlyWithGraphData(t *testing.T) {
 	}
 	for _, tt := range steps {
 		tt.Args()
-		if diff := cmp.Diff(tt.Want, observe()); diff != "" {
+		if diff := cmp.Diff(tt.Want, observe(), shapeOnly()); diff != "" {
 			t.Fatalf("%s (-want +got):\n%s", tt.Name, diff)
 		}
 	}
@@ -374,7 +374,7 @@ func TestBuilderCountsUnansweredCallsOnTheCaller(t *testing.T) {
 			ExpiredCaller: 2,
 		},
 	}
-	if diff := cmp.Diff(want, viewOfSnapshot(builder.Snapshot()), cmpopts.EquateEmpty()); diff != "" {
+	if diff := cmp.Diff(want, viewOfSnapshot(builder.Snapshot()), cmpopts.EquateEmpty(), shapeOnly()); diff != "" {
 		t.Errorf("snapshot mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -478,7 +478,7 @@ func TestBuilderLimits(t *testing.T) {
 			for _, received := range batches {
 				builder.Apply(received)
 			}
-			if diff := cmp.Diff(tt.Want, viewOfSnapshot(builder.Snapshot())); diff != "" {
+			if diff := cmp.Diff(tt.Want, viewOfSnapshot(builder.Snapshot()), shapeOnly()); diff != "" {
 				t.Errorf("snapshot mismatch (-want +got):\n%s", diff)
 			}
 		})
@@ -497,7 +497,7 @@ func TestNewBuilderRejectsInvalidLimits(t *testing.T) {
 			Args: func(l *topology.Limits) {
 				l.MaxNodes = 0
 			},
-			Want:    "invalid topology limits: invalid graph limits: max nodes 0 must be positive",
+			Want:    "invalid topology limits: invalid graph limits: max nodes 0 must be in 1 … 2147483647",
 			WantErr: topology.ErrInvalidLimits,
 		},
 		{
@@ -505,7 +505,7 @@ func TestNewBuilderRejectsInvalidLimits(t *testing.T) {
 			Args: func(l *topology.Limits) {
 				l.MaxEdges = 0
 			},
-			Want:    "invalid topology limits: invalid graph limits: max edges 0 must be positive",
+			Want:    "invalid topology limits: invalid graph limits: max edges 0 must be in 1 … 2147483647",
 			WantErr: topology.ErrInvalidLimits,
 		},
 		{
@@ -529,5 +529,13 @@ func TestNewBuilderRejectsInvalidLimits(t *testing.T) {
 				t.Errorf("message mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+// shapeOnly compares the step-1 graph shape; handles and served counts have their own tests.
+func shapeOnly() cmp.Option {
+	return cmp.Options{
+		cmpopts.IgnoreFields(graph.Node{}, "Handle", "Served"),
+		cmpopts.IgnoreFields(graph.Edge{}, "Handle"),
 	}
 }
