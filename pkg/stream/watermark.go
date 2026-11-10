@@ -10,10 +10,10 @@ type Mark struct {
 type Watermark struct {
 	delay         time.Duration
 	lateness      time.Duration
-	current       Mark
+	Current       Mark
+	MaxReceivedAt Mark
+	CoverageStart Mark
 	maxCandidate  Mark
-	maxReceivedAt Mark
-	coverage      Mark
 }
 
 func NewWatermark(cfg Config) (*Watermark, error) {
@@ -27,20 +27,20 @@ func NewWatermark(cfg Config) (*Watermark, error) {
 }
 
 func (w *Watermark) Advance(receivedAt time.Time, candidate Mark) Mark {
-	w.maxReceivedAt = later(w.maxReceivedAt, receivedAt)
+	w.MaxReceivedAt = later(w.MaxReceivedAt, receivedAt)
 	if !candidate.Known {
-		return w.current
+		return w.Current
 	}
 	candidate = notAfter(candidate, receivedAt)
 	w.maxCandidate = later(w.maxCandidate, candidate.Time)
-	w.current = later(w.current, candidate.Time.Add(-w.delay))
-	if !w.coverage.Known {
-		w.coverage = Mark{
-			Time:  w.current.Time.Add(-w.lateness),
+	w.Current = later(w.Current, candidate.Time.Add(-w.delay))
+	if !w.CoverageStart.Known {
+		w.CoverageStart = Mark{
+			Time:  w.Current.Time.Add(-w.lateness),
 			Known: true,
 		}
 	}
-	return w.current
+	return w.Current
 }
 
 func (w *Watermark) Anchor(batchCandidate Mark, receivedAt time.Time) time.Time {
@@ -51,18 +51,6 @@ func (w *Watermark) Anchor(batchCandidate Mark, receivedAt time.Time) time.Time 
 		return w.maxCandidate.Time
 	}
 	return receivedAt
-}
-
-func (w *Watermark) Current() Mark {
-	return w.current
-}
-
-func (w *Watermark) MaxReceivedAt() Mark {
-	return w.maxReceivedAt
-}
-
-func (w *Watermark) CoverageStart() Mark {
-	return w.coverage
 }
 
 func notAfter(candidate Mark, receivedAt time.Time) Mark {

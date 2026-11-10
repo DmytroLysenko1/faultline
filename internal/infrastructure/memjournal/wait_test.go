@@ -135,7 +135,7 @@ func TestReceivedAtNeverStepsBackWithTheClock(t *testing.T) {
 
 	got := make([]time.Time, 0, len(deliveries))
 	for _, delivery := range deliveries {
-		got = append(got, delivery.Batch().ReceivedAt())
+		got = append(got, delivery.Batch().ReceivedAt)
 	}
 	if diff := cmp.Diff([]time.Time{at(100), at(100), at(120)}, got); diff != "" {
 		t.Errorf("ReceivedAt in journal order (-want +got):\n%s", diff)
@@ -169,7 +169,7 @@ func TestReceivedAtFollowsJournalOrderUnderConcurrentWriters(t *testing.T) {
 			t.Fatalf("Receive: %v", err)
 		}
 		for _, delivery := range deliveries {
-			stamps = append(stamps, delivery.Batch().ReceivedAt())
+			stamps = append(stamps, delivery.Batch().ReceivedAt)
 		}
 		releaseAll(deliveries)
 	}

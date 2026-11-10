@@ -252,7 +252,7 @@ func TestWatermarkFollowsTheLatestCandidateAndNeverPassesReceiveTime(t *testing.
 		t.Errorf("watermark after each batch mismatch (-want +got):\n%s", diff)
 	}
 	wantMarks := []time.Time{at(0), at(5 * time.Minute), want[len(want)-1]}
-	gotMarks := []time.Time{watermark.CoverageStart().Time, watermark.MaxReceivedAt().Time, watermark.Current().Time}
+	gotMarks := []time.Time{watermark.CoverageStart.Time, watermark.MaxReceivedAt.Time, watermark.Current.Time}
 	if diff := cmp.Diff(wantMarks, gotMarks); diff != "" {
 		t.Errorf("[CoverageStart, MaxReceivedAt, Current] mismatch (-want +got):\n%s", diff)
 	}

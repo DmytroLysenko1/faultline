@@ -13,24 +13,24 @@ type Stats struct {
 }
 
 func (s Stats) with(added *entry) Stats {
-	if added.batch.IsHeartbeat() {
+	if added.batch.Heartbeat {
 		return s
 	}
 	return Stats{
 		Bytes:   s.Bytes + added.size,
 		Batches: s.Batches + 1,
-		Spans:   s.Spans + len(added.batch.Spans()),
+		Spans:   s.Spans + len(added.batch.Spans),
 	}
 }
 
 func (s Stats) without(removed *entry) Stats {
-	if removed.batch.IsHeartbeat() {
+	if removed.batch.Heartbeat {
 		return s
 	}
 	return Stats{
 		Bytes:   s.Bytes - removed.size,
 		Batches: s.Batches - 1,
-		Spans:   s.Spans - len(removed.batch.Spans()),
+		Spans:   s.Spans - len(removed.batch.Spans),
 	}
 }
 

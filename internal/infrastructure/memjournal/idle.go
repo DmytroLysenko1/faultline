@@ -19,17 +19,17 @@ func (r *idleRule) due(now time.Time) bool {
 
 func (r *idleRule) dueBefore(next batch.Batch) bool {
 	_, grows := r.growth(next)
-	return r.due(next.ReceivedAt()) && !grows
+	return r.due(next.ReceivedAt) && !grows
 }
 
 func (r *idleRule) record(recorded batch.Batch) {
 	if !r.started {
 		r.started = true
-		r.since = recorded.ReceivedAt()
+		r.since = recorded.ReceivedAt
 	}
 	if candidate, grows := r.growth(recorded); grows {
 		r.candidate = candidate
-		r.since = recorded.ReceivedAt()
+		r.since = recorded.ReceivedAt
 	}
 }
 

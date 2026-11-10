@@ -31,11 +31,11 @@ func lowerBound(entries []entry, key entry) int {
 
 func (a *Arena) incrementEntry(s *Sketch, entries []entry, position int) {
 	if entries[position].count() == countMask {
-		a.stats.DroppedSamples++
+		a.Stats.DroppedSamples++
 		return
 	}
 	entries[position] = entries[position].plus(1)
-	s.count++
+	s.Count++
 	a.generations.touch(s)
 }
 
@@ -84,11 +84,11 @@ func (a *Arena) growByCopy(s *Sketch) bool {
 func (a *Arena) adopt(s *Sketch, offset uint32, order uint8) {
 	s.offset, s.order = offset, order
 	s.generation = a.generations.current(offset)
-	a.stats.InUse += s.capacity()
+	a.Stats.InUse += s.capacity()
 }
 
 func (a *Arena) disown(s *Sketch) {
-	a.stats.InUse -= s.capacity()
+	a.Stats.InUse -= s.capacity()
 	a.generations.retire(s.offset)
 }
 
@@ -105,7 +105,7 @@ func (a *Arena) insert(s *Sketch, position int, index uint16) {
 	copy(entries[position+1:], entries[position:s.length])
 	entries[position] = newEntry(index)
 	s.length++
-	s.count++
+	s.Count++
 	a.generations.touch(s)
 }
 
@@ -117,7 +117,7 @@ func (a *Arena) collapseInto(s *Sketch, position int, index uint16) {
 		return
 	}
 	if !s.hasBlock() || !foldFits(entries) {
-		a.stats.DroppedSamples++
+		a.Stats.DroppedSamples++
 		return
 	}
 	a.markCollapsed(s)
@@ -133,10 +133,10 @@ func foldFits(entries []entry) bool {
 }
 
 func (a *Arena) markCollapsed(s *Sketch) {
-	a.stats.CollapsedAdds++
+	a.Stats.CollapsedAdds++
 	if s.collapsed {
 		return
 	}
 	s.collapsed = true
-	a.stats.CollapsedSketches++
+	a.Stats.CollapsedSketches++
 }

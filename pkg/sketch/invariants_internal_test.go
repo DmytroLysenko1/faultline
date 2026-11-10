@@ -50,12 +50,12 @@ func assertArenaInvariants(t *testing.T, arena *Arena, sketches []Sketch) {
 		capacities += sketches[i].capacity()
 		assertSketchInvariants(t, arena, &sketches[i])
 	}
-	if capacities != arena.Stats().InUse {
-		t.Fatalf("InUse = %d, sum of capacities = %d", arena.Stats().InUse, capacities)
+	if capacities != arena.Stats.InUse {
+		t.Fatalf("InUse = %d, sum of capacities = %d", arena.Stats.InUse, capacities)
 	}
-	if free := freeEntries(&arena.blocks); free+capacities != arena.Stats().Budget {
+	if free := freeEntries(&arena.blocks); free+capacities != arena.Stats.Budget {
 		t.Fatalf("free %d + in use %d = %d, want the budget %d: a block leaked from the free lists", free,
-			capacities, free+capacities, arena.Stats().Budget)
+			capacities, free+capacities, arena.Stats.Budget)
 	}
 }
 
@@ -69,8 +69,8 @@ func assertSketchInvariants(t *testing.T, arena *Arena, s *Sketch) {
 		}
 		total += e.count()
 	}
-	if total != s.count || int(s.length) > s.capacity() {
-		t.Fatalf("zero + Σ entries = %d, count = %d, length %d, capacity %d", total, s.count, s.length, s.capacity())
+	if total != s.Count || int(s.length) > s.capacity() {
+		t.Fatalf("zero + Σ entries = %d, count = %d, length %d, capacity %d", total, s.Count, s.length, s.capacity())
 	}
 }
 
@@ -79,14 +79,14 @@ func TestZeroCounterSaturatesInsteadOfWrapping(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := Sketch{zero: maxZero, count: uint64(maxZero)}
+	s := Sketch{zero: maxZero, Count: uint64(maxZero)}
 
 	arena.Add(&s, 0)
 
-	if s.zero != maxZero || s.count != uint64(maxZero) {
-		t.Fatalf("zero %d, count %d after saturation; want %d and %d", s.zero, s.count, maxZero, maxZero)
+	if s.zero != maxZero || s.Count != uint64(maxZero) {
+		t.Fatalf("zero %d, count %d after saturation; want %d and %d", s.zero, s.Count, maxZero, maxZero)
 	}
-	if dropped := arena.Stats().DroppedSamples; dropped != 1 {
+	if dropped := arena.Stats.DroppedSamples; dropped != 1 {
 		t.Errorf("DroppedSamples = %d, want 1", dropped)
 	}
 	if got, ok := arena.Percentiles(&s); !ok || got != (Percentiles{}) {
@@ -111,7 +111,7 @@ func TestEntryCountSaturatesInsteadOfCorruptingTheIndex(t *testing.T) {
 		t.Fatalf("entry after overflow attempt: index %d count %d; want index %d count %d", got.index(), got.count(),
 			index, uint64(countMask))
 	}
-	if dropped := arena.Stats().DroppedSamples; dropped != 1 {
+	if dropped := arena.Stats.DroppedSamples; dropped != 1 {
 		t.Errorf("DroppedSamples = %d, want 1", dropped)
 	}
 }
@@ -133,19 +133,19 @@ func TestFoldThatWouldOverflowDropsTheNewSampleAndKeepsCountedOnes(t *testing.T)
 	arena.Add(&s, math.MaxInt32)
 	entries := arena.entries(&s)
 	entries[0], entries[1] = entryKey(entries[0].index())|countMask, entryKey(entries[1].index())|countMask
-	s.count = 2 * countMask
+	s.Count = 2 * countMask
 	before := append([]entry(nil), entries...)
 	fillers := fillAllBlocks(t, arena)
-	droppedBefore := arena.Stats().DroppedSamples
+	droppedBefore := arena.Stats.DroppedSamples
 
 	arena.Add(&s, math.MaxInt64)
 
-	if !slices.Equal(arena.entries(&s), before) || s.count != 2*countMask {
-		t.Fatalf("entries %v count %d after a refused fold; want them unchanged (%v, %d)", arena.entries(&s), s.count,
+	if !slices.Equal(arena.entries(&s), before) || s.Count != 2*countMask {
+		t.Fatalf("entries %v count %d after a refused fold; want them unchanged (%v, %d)", arena.entries(&s), s.Count,
 			before, uint64(2*countMask))
 	}
 	assertSketchInvariants(t, arena, &s)
-	if dropped := arena.Stats().DroppedSamples - droppedBefore; dropped != 1 {
+	if dropped := arena.Stats.DroppedSamples - droppedBefore; dropped != 1 {
 		t.Errorf("DroppedSamples grew by %d, want 1", dropped)
 	}
 	for i := range fillers {
@@ -159,7 +159,7 @@ func fillAllBlocks(t *testing.T, arena *Arena) []Sketch {
 	for range cap(fillers) {
 		fillers = append(fillers, Sketch{})
 		arena.Add(&fillers[len(fillers)-1], 1)
-		if arena.Stats().DroppedSamples != 0 {
+		if arena.Stats.DroppedSamples != 0 {
 			return fillers
 		}
 	}

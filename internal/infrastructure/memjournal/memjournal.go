@@ -111,9 +111,9 @@ func (j *Journal) enqueueLocked(next *entry) error {
 	if err := j.roomLocked(next); err != nil {
 		return err
 	}
-	next.batch = next.batch.Stamped(j.stampLocked())
+	next.batch.ReceivedAt = j.stampLocked()
 	if j.idle.dueBefore(next.batch) && j.roomForHeartbeatLocked() {
-		j.pushLocked(new(heartbeatAt(next.batch.ReceivedAt())))
+		j.pushLocked(new(heartbeatAt(next.batch.ReceivedAt)))
 	}
 	j.pushLocked(next)
 	return nil

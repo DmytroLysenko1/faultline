@@ -11,7 +11,7 @@ var ErrInvalidBudget = errors.New("invalid sketch entry budget")
 
 const (
 	mappingBytes     = 16 << 10
-	overheadBytes    = 4 << 10
+	overheadBytes    = 64 << 10
 	maxBudgetEntries = 1 << 28
 )
 
@@ -33,7 +33,7 @@ type Arena struct {
 	mapping     mapping
 	blocks      buddy
 	generations generations
-	stats       ArenaStats
+	Stats       ArenaStats
 }
 
 func NewArena(maxEntries int) (*Arena, error) {
@@ -44,7 +44,7 @@ func NewArena(maxEntries int) (*Arena, error) {
 		mapping:     newMapping(),
 		blocks:      newBuddy(maxEntries),
 		generations: newGenerations(maxEntries),
-		stats: ArenaStats{
+		Stats: ArenaStats{
 			Budget: maxEntries,
 		},
 	}, nil
@@ -81,11 +81,11 @@ func (a *Arena) Add(s *Sketch, nanos int64) {
 
 func (a *Arena) addZero(s *Sketch) {
 	if s.zero == maxZero {
-		a.stats.DroppedSamples++
+		a.Stats.DroppedSamples++
 		return
 	}
 	s.zero++
-	s.count++
+	s.Count++
 }
 
 func (a *Arena) Release(s *Sketch) {
@@ -94,14 +94,10 @@ func (a *Arena) Release(s *Sketch) {
 	*s = Sketch{}
 }
 
-func (a *Arena) Stats() ArenaStats {
-	return a.stats
-}
-
 func (a *Arena) Equal(x, y *Sketch) bool {
 	a.generations.check(x)
 	a.generations.check(y)
-	return x.count == y.count &&
+	return x.Count == y.Count &&
 		x.zero == y.zero &&
 		slices.Equal(a.entries(x), a.entries(y))
 }

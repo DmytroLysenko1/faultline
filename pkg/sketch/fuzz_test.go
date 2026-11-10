@@ -18,8 +18,8 @@ func FuzzSketch(f *testing.F) {
 		arena := newArena(t, fuzzBudget)
 		forward := record(arena, values)
 
-		if forward.Count() != uint64(len(values)) {
-			t.Fatalf("Count = %d, want %d", forward.Count(), len(values))
+		if forward.Count != uint64(len(values)) {
+			t.Fatalf("Count = %d, want %d", forward.Count, len(values))
 		}
 		got, _ := arena.Percentiles(forward)
 		if got.P50 > got.P95 || got.P95 > got.P99 {

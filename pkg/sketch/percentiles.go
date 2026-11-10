@@ -10,13 +10,13 @@ const (
 
 func (a *Arena) Percentiles(s *Sketch) (Percentiles, bool) {
 	a.generations.check(s)
-	if s.count == 0 {
+	if s.Count == 0 {
 		return Percentiles{}, false
 	}
 	ranks := [...]uint64{
-		rankOf(s.count, quantile50),
-		rankOf(s.count, quantile95),
-		rankOf(s.count, quantile99),
+		rankOf(s.Count, quantile50),
+		rankOf(s.Count, quantile95),
+		rankOf(s.Count, quantile99),
 	}
 	values := a.valueAtRanks(s, ranks)
 	return Percentiles{

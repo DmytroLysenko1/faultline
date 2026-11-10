@@ -127,17 +127,18 @@ linters:
               desc: only topology.Builder keeps the expire → match → apply order (I1, I3)
             - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/clock
               desc: only topology.Builder keeps the expire → match → apply order (I1, I3)
-        # Step 2: operations per owner sit below graph and traffic, so cardinality never sees them.
-        topology-cardinality:
+        # Step 2: operation limits and RED cells sit below matcher, graph and traffic.
+        topology-lower-layers:
           files:
             - "**/internal/domain/topology/cardinality/**"
+            - "**/internal/domain/topology/red/**"
           deny:
             - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/graph
-              desc: cardinality counts operations per owner; graph and traffic sit above it
+              desc: cardinality and red sit below matcher, graph and traffic
             - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/traffic
-              desc: cardinality counts operations per owner; graph and traffic sit above it
+              desc: cardinality and red sit below matcher, graph and traffic
             - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/matcher
-              desc: cardinality counts operations per owner; matcher, graph and traffic sit above it
+              desc: cardinality and red sit below matcher, graph and traffic
         # Spans on the ingest path would loop back through a Collector into faultline (step 1, slice 5b-3, D6).
         no-self-tracing-on-ingest:
           files:
@@ -210,7 +211,7 @@ linters:
         - pattern: ^topology\.Builder\.(Matcher|Graph)$
           pkg: ^github\.com/DmytroLysenko1/faultline/internal/domain/topology$
           msg: only topology.Builder keeps the expire → match → apply order (I1, I3)
-        - pattern: ^batch\.(New|NewOwning|Heartbeat|Batch\.Stamped)$
+        - pattern: ^batch\.(New|NewOwning|Heartbeat)$
           pkg: ^github\.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch$
           msg: only memjournal stamps ReceivedAt and writes heartbeats — journal order is ReceivedAt order
         - pattern: ^fmt\.Print(|f|ln)$

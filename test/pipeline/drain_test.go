@@ -59,11 +59,11 @@ func fullJournal(t *testing.T, batches []batch.Batch) *memjournal.Journal {
 		t.Fatalf("memjournal.New: %v", err)
 	}
 	for index, appended := range batches {
-		if err := journal.Append(t.Context(), slices.Clone(appended.Spans())); err != nil {
+		if err := journal.Append(t.Context(), slices.Clone(appended.Spans)); err != nil {
 			t.Fatalf("Append batch %d: %v", index, err)
 		}
 	}
-	if err := journal.Append(t.Context(), slices.Clone(batches[0].Spans())); !errors.Is(err, ingest.ErrOverloaded) {
+	if err := journal.Append(t.Context(), slices.Clone(batches[0].Spans)); !errors.Is(err, ingest.ErrOverloaded) {
 		t.Fatalf("Append into the filled journal = %v, want ErrOverloaded", err)
 	}
 	journal.Close()

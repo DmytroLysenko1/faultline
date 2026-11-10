@@ -221,7 +221,8 @@ func oracleBatches(t *testing.T, rng *rand.Rand, spans []span.Span) []batch.Batc
 		spans = spans[size:]
 		for rng.IntN(3) == 0 {
 			retried := batches[rng.IntN(len(batches))]
-			batches = append(batches, retried.Stamped(telemetrytest.Epoch().Add(clock)))
+			retried.ReceivedAt = telemetrytest.Epoch().Add(clock)
+			batches = append(batches, retried)
 		}
 	}
 	return batches

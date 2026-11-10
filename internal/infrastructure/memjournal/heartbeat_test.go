@@ -56,9 +56,9 @@ func viewsOf(deliveries []processing.Delivery) []view {
 	var views []view
 	for _, delivery := range deliveries {
 		views = append(views, view{
-			Heartbeat:  delivery.Batch().IsHeartbeat(),
-			ReceivedAt: delivery.Batch().ReceivedAt(),
-			Spans:      len(delivery.Batch().Spans()),
+			Heartbeat:  delivery.Batch().Heartbeat,
+			ReceivedAt: delivery.Batch().ReceivedAt,
+			Spans:      len(delivery.Batch().Spans),
 			Bytes:      delivery.Bytes(),
 		})
 	}

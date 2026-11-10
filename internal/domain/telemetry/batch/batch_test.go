@@ -109,7 +109,7 @@ func TestNewBatchCopiesSpans(t *testing.T) {
 		}
 	})))
 
-	got := lo.Map(received.Spans(), func(span span.Span, _ int) ids.SpanID {
+	got := lo.Map(received.Spans, func(span span.Span, _ int) ids.SpanID {
 		return span.SpanID
 	})
 	if diff := cmp.Diff([]ids.SpanID{
@@ -122,8 +122,8 @@ func TestNewBatchCopiesSpans(t *testing.T) {
 	}, got); diff != "" {
 		t.Errorf("batch spans changed with the caller's slice (-want +got):\n%s", diff)
 	}
-	if !received.ReceivedAt().Equal(receivedAt) {
-		t.Errorf("ReceivedAt() = %v, want %v", received.ReceivedAt(), receivedAt)
+	if !received.ReceivedAt.Equal(receivedAt) {
+		t.Errorf("ReceivedAt() = %v, want %v", received.ReceivedAt, receivedAt)
 	}
 }
 
@@ -147,7 +147,7 @@ func TestNewOwningTakesSpansWithoutCopy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewOwning: %v", err)
 	}
-	if &received.Spans()[0] != &spans[0] {
+	if &received.Spans[0] != &spans[0] {
 		t.Errorf("NewOwning copied the spans, want the batch to own the caller's slice")
 	}
 	allocations := testing.AllocsPerRun(runs, func() {

@@ -34,7 +34,7 @@ func assertMatchesOracle(t *testing.T, r *run, want oracle) {
 		t.Errorf("drop and reassignment counters mismatch (-oracle +engine):\n%s", diff)
 	}
 	r.recorder.releaseRetired()
-	if diff := cmp.Diff([2]int{0, 0}, [2]int{stats.Series, r.recorder.arena.Stats().InUse}); diff != "" {
+	if diff := cmp.Diff([2]int{0, 0}, [2]int{stats.Series, r.recorder.arena.Stats.InUse}); diff != "" {
 		t.Errorf("after the flush [open series, held sketch entries] (-want +got):\n%s", diff)
 	}
 }

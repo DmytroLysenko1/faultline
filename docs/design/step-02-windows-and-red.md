@@ -89,7 +89,7 @@ topology.Builder.Snapshot() = graph.View + traffic.View (по хэндлу) + с
 | `internal/domain/telemetry/operation` | `Operation`, `Protocol`, `Facts` (вход нормализации), `Normalizer` (без состояния), `Rules`, `ParseRules`, `OverflowName`, `ErrInvalidRules` | `telemetry/resource` |
 | `internal/domain/telemetry/response` | `Attributes` — struct вместо `map[string]string` | stdlib |
 | `internal/domain/telemetry/span` | `Span` + `Interval`, `Operation`; `New(resource, fields)` — сигнатура шага 1, операция приходит в `Fields` | + `eventtime`, `operation` |
-| `internal/domain/telemetry/batch` | `Batch` + `Heartbeat(receivedAt)`, `IsHeartbeat()`, `Candidate()`; `ReceivedAt` ставит журнал (forbidigo: `NewOwning` и `Heartbeat` вне `memjournal` и тестов запрещены) | `span` |
+| `internal/domain/telemetry/batch` | `Batch` (поля `Spans`, `ReceivedAt`, `Latest`, `Heartbeat`) + `Heartbeat(receivedAt)`, `Candidate()`; `ReceivedAt` ставит журнал (forbidigo: `NewOwning` и `Heartbeat` вне `memjournal` и тестов запрещены) | `span` |
 | `internal/domain/topology/handle` | `Node`, `Edge` (плотные `int32`), `None` | stdlib |
 | `internal/domain/topology/cardinality` | `Registry`, `ID`, `Limits`, `Stats` | `telemetry/operation`, `handle` |
 | `internal/domain/topology/role` | + `Role.Entry` (корневой server-спан) | как в шаге 1 |
@@ -303,7 +303,7 @@ type Cell struct {            // red.Cell — ячейка субъекта; б�
 }
 ```
 
-`red.WindowStats` — VO с неэкспортируемыми полями и геттерами (`Start`, `Kind` → `red.PaneKind`, `Revision`, `Requests`, `Failed`, `LatencySamples`, `P50`, `P95`, `P99`, `Observed`); методы `Rate()`, `ErrorRatio()` (0 при нуле), `HasLatency()`, `IsZero()`. Создаётся только `red.Summarize`; инварианты: `Failed ≤ Requests`, `LatencySamples ≤ Requests`, `P50 ≤ P95 ≤ P99`, `0 < Observed ≤ size`. `red.PaneKind` — доменная копия `stream.PaneKind`, чтобы `connectapi` не импортировал `pkg/stream`.
+`red.WindowStats` — VO с публичными полями (`StartUnixNano`, `Kind` → `red.PaneKind`, `Revision`, `Requests`, `Failed`, `LatencySamples`, `P50`, `P95`, `P99`, `Observed`; правило проекта: тип, который читают другие пакеты, — публичные поля без геттеров); методы `Rate()`, `ErrorRatio()` (0 при нуле), `HasLatency()`, `IsZero()`. Создаётся только `red.Summarize` и `red.SummarizeCounts`; инварианты: `Failed ≤ Requests`, `LatencySamples ≤ Requests`, `P50 ≤ P95 ≤ P99`, `0 < Observed ≤ size`. `red.PaneKind` — доменная копия `stream.PaneKind`, чтобы `connectapi` не импортировал `pkg/stream`.
 
 ### Операции: нормализация (FR-STR-006)
 
@@ -652,7 +652,7 @@ publish: Publish(Snapshot()) — ошибка → return (held не освобо
 | OTLP-запросы в полёте | 10 потоков × 4 MiB × `ExportHeapRatio`; спан растёт с ≈ 72 до ≈ 112 B (`Interval` 16 + `Operation` 24) плюс строка имени (интернирование в пределах запроса); проба ratio среза 3 включает кучу имён | ≈ 525 MiB (было 440) |
 | буфер ожидания | 100 000 × (288 + 512 + 256 имя операции) B — 288 B замерены при самых длинных строках сервиса и именах вместе (срез 6a, ревью osmani) | 101 MiB |
 | граф | без RED, + `Served`, хэндлы (замер среза 6a; буферы `Applied` — в строке `Builder.Apply`) | 34,5 MiB |
-| view: граф ×3 + сводки субъектов ×3 (60 000 × 2 × ≈ 88 B: `WindowStats` с `time.Time`) | | 39 MiB |
+| view: граф ×3 + сводки субъектов ×3 (60 000 × 2 × 72 B: `WindowStats` с началом окна в наносекундах, срез 6b) | | 35 MiB |
 | движок субъектов | 60 000 × 9 × 48 B + индекс + серии | 28 MiB |
 | движок операций | 100 000 × 9 × 32 B + индекс + серии | 36 MiB |
 | движок переполнения | 60 000 × 9 × 32 B + индекс + серии | 20 MiB |
@@ -661,9 +661,9 @@ publish: Publish(Snapshot()) — ошибка → return (held не освобо
 | реестр | 100 000 × (256 имя + 160) B + 60 000 владельцев × 8 B; 114–152 B служебных на операцию замерены (пик — шаг роста map), `cardinality.WorstHeapBytes` закреплён пробой кучи (срез 5, ревью osmani) | 40 MiB |
 | `Builder.Apply` | самый большой пакет (≈ 148 000 спанов × 196 B: участник 32, вызов 112, обслуженный 32, три хэндла `Applied` 12, индекс обслуженного спана 8 для `RecordServed` среза 6c; замер 177 B без индекса, срез 6a) | 28 MiB |
 | ответы API | `api_response_budget` | 224 MiB |
-| **итого** | | **≈ 1 335 MiB** |
+| **итого** | | **≈ 1 331 MiB** |
 
-**D-MEM (апрув 08.11): `GOMEMLIMIT` 1408 → 1600 MiB при лимите пода 2 GiB.** Порог 0,85 × 1 600 = 1 360 MiB, запас ≈ 25 MiB (1,8 %; срез 5: реестр 32 → 40 MiB, срез 6a: `Apply` 21 → 28 MiB, граф +1 MiB, буфер ожидания +1 MiB — по замерам): узкий, поэтому пробы среза 8 — блокирующие, и первая уступка (арена 8 → 4 Mi, −32 MiB) заранее проверена тестом среза 1: 420 000 ячеек по 5 событий (NFR-PERF-002, класс 8) укладываются в 4 Mi без слияния; 10 событий на ячейку (класс 16, 6,7 Mi) — уже нет, это граница уступки. Между `GOMEMLIMIT` и лимитом пода — 448 MiB (бинарник, память вне Go, превышение мягкого предела под давлением GC); давление GC падает (слоты и арена без указателей). **Условие апрува — «без потери производительности»** — проверяется в срезе 8: `BenchmarkIteration50kEdges` и дренаж под нагрузкой при `GOMEMLIMIT=1600MiB` не хуже, чем при 1408 MiB (`benchstat`), доля CPU на GC по `GODEBUG=gctrace=1` ≤ 10 %. Если пробы среза 8 дадут итог выше 1 360 MiB — порядок уступок: арена 8 → 4 Mi записей (−32 MiB, демо и NFR-PERF-002 при 5 событиях на ячейку укладываются), затем `max_held_bytes`-независимый резерв журнала; **лимит пода и `GOMEMLIMIT` без нового апрува не меняются**.
+**D-MEM (апрув 08.11): `GOMEMLIMIT` 1408 → 1600 MiB при лимите пода 2 GiB.** Порог 0,85 × 1 600 = 1 360 MiB, запас ≈ 29 MiB (2,1 %; срез 5: реестр 32 → 40 MiB, срез 6a: `Apply` 21 → 28 MiB, граф +1 MiB, буфер ожидания +1 MiB — по замерам; срез 6b: сводки 88 → 72 B, view 39 → 35 MiB): узкий, поэтому пробы среза 8 — блокирующие, и первая уступка (арена 8 → 4 Mi, −32 MiB) заранее проверена тестом среза 1: 420 000 ячеек по 5 событий (NFR-PERF-002, класс 8) укладываются в 4 Mi без слияния; 10 событий на ячейку (класс 16, 6,7 Mi) — уже нет, это граница уступки. Между `GOMEMLIMIT` и лимитом пода — 448 MiB (бинарник, память вне Go, превышение мягкого предела под давлением GC); давление GC падает (слоты и арена без указателей). **Условие апрува — «без потери производительности»** — проверяется в срезе 8: `BenchmarkIteration50kEdges` и дренаж под нагрузкой при `GOMEMLIMIT=1600MiB` не хуже, чем при 1408 MiB (`benchstat`), доля CPU на GC по `GODEBUG=gctrace=1` ≤ 10 %. Если пробы среза 8 дадут итог выше 1 360 MiB — порядок уступок: арена 8 → 4 Mi записей (−32 MiB, демо и NFR-PERF-002 при 5 событиях на ячейку укладываются), затем `max_held_bytes`-независимый резерв журнала; **лимит пода и `GOMEMLIMIT` без нового апрува не меняются**.
 
 Типичный случай на демо — ≈ 330 MiB (арена и слоты выделены заранее; нетронутые страницы ОС в RSS не отдаёт).
 
@@ -910,8 +910,8 @@ var ErrInvalidBudget = errors.New("invalid sketch entry budget")
 // Sketch — дескриптор блока арены без указателей; живой Sketch не копируется
 // (копия после Release указывала бы на чужой блок). В сборке с тегом faultline_debug
 // поколение блока меняется на каждом изменении скетча, обращение по устаревшей копии — паника.
-type Sketch struct { /* count uint64, offset uint32, zero uint32, generation uint32, length uint16, order uint8, collapsed bool — 24 B */ }
-func (s *Sketch) Count() uint64
+type Sketch struct { Count uint64; /* offset uint32, zero uint32, generation uint32, length uint16, order uint8, collapsed bool — разметка блока, пишет только арена */ } // 24 B
+// Arena: поле Stats ArenaStats вместо метода Stats(); блоки, отображение и поколения — внутренние
 
 type Percentiles struct{ P50, P95, P99 int64 } // наносекунды
 
@@ -967,12 +967,9 @@ type Mark struct {
 	Known bool
 }
 
-type Watermark struct { /* unexported */ }
+type Watermark struct { Current, MaxReceivedAt, CoverageStart Mark; /* delay, lateness, maxCandidate — внутренние */ } // CoverageStart — watermark первого пакета − lateness
 func NewWatermark(cfg Config) (*Watermark, error)              // партиций до шага 3 нет
 func (w *Watermark) Advance(receivedAt time.Time, candidate Mark) Mark // кандидат пакета или пульса, прижатый к receivedAt (I9); Known=false — watermark не двигается
-func (w *Watermark) Current() Mark
-func (w *Watermark) MaxReceivedAt() Mark
-func (w *Watermark) CoverageStart() Mark                       // watermark первого пакета − lateness
 func (w *Watermark) Anchor(batchCandidate Mark, receivedAt time.Time) time.Time // кандидат пакета, иначе max кандидат, иначе receivedAt
 
 type Sink[K comparable, C any] interface { // вызывается при обходе корзин: обратно в тот же Windows не входить
@@ -1062,17 +1059,13 @@ type LineError struct{ Line int; Err error } // Line = 0 — строка неи
 func New(source resource.Resource, fields *Fields) (Span, error) // Fields выросли до 208 B — по указателю (срез 3b)
 func (s *Span) IdentityStrings() [3]string                       // + имя операции; Span 112 B — matcher.Match и role.Of тоже берут *Span
 
-// batch — поля закрыты (срез 4): пакет создаётся только конструкторами, пульс без спанов по построению
+// batch — поля публичные (Spans, ReceivedAt, Latest, Heartbeat; правило проекта — без геттеров); пакет создают конструкторы, ReceivedAt ставит журнал присваиванием под мьютексом
 func New(spans []span.Span, receivedAt time.Time) (Batch, error) // копия + отметка; тесты и тестовые пакеты
 func NewOwning(spans []span.Span) (Batch, error)                  // без копии и без отметки; только журнал
 func Heartbeat(receivedAt time.Time) Batch                        // только журнал
-func (b Batch) Stamped(receivedAt time.Time) Batch                // только журнал, под мьютексом
-func (b Batch) Spans() []span.Span
-func (b Batch) ReceivedAt() time.Time
-func (b Batch) IsHeartbeat() bool
 func (b Batch) Candidate() (time.Time, bool) // min(ReceivedAt, max t со временем); пульс → (ReceivedAt, true); без таких спанов → false
 // наибольший интервал считается в NewOwning вне мьютекса журнала, Candidate — O(1) и без аллокаций
-// forbidigo: New, NewOwning, Heartbeat, Batch.Stamped вне memjournal, batch, тестовых пакетов */*test/ и *_test.go запрещены (проверено пробным файлом в ingest)
+// forbidigo: New, NewOwning, Heartbeat вне memjournal, batch, тестовых пакетов */*test/ и *_test.go запрещены (проверено пробным файлом в ingest)
 // Footprint: + длины различных Operation.Name
 // eventtime.Interval.EndsAfter(other) — сравнение концов без time.Time; интервал без времени раньше любого со временем
 ```
@@ -1169,11 +1162,17 @@ type Cell struct {
 	Latency sketch.Sketch
 }
 func (c *Cell) Record(arena *sketch.Arena, failed bool, latency time.Duration, latencyKnown bool)
+func (c *Cell) Release(arena *sketch.Arena) // возвращает блок скетча и обнуляет ячейку; traffic меняет ячейки только через Record и Release (срез 6b)
 type PaneKind uint8 // PaneEarly, PaneOnTime, PaneLate
 type WindowStats struct { /* unexported */ }
 func Summarize(arena *sketch.Arena, pane stream.Pane, cell *Cell, observed time.Duration) WindowStats
 func SummarizeCounts(pane stream.Pane, counts *Counts, observed time.Duration) WindowStats
-// геттеры, Rate, ErrorRatio, HasLatency, IsZero
+// публичные поля; методы Rate, ErrorRatio, HasLatency, IsZero, Equal
+// срез 6b: WindowStats хранит начало окна как Unix-наносекунды (stream ограничивает время диапазоном int64) — 72 B, без указателей,
+// value receivers, Equal = «==» (cmp вызывает его и в составе SubjectRED); Summarize ≈ 39 ns, 0 аллокаций
+// SummarizeCounts: Failed > Requests, observed вне (0, размер окна] и неизвестный stream.PaneKind — паника wiring с префиксом "red: ";
+// Summarize дополнительно: образцов латентности больше, чем запросов
+// depguard: red и cardinality не импортируют matcher, graph, traffic (проверено пробным импортом)
 
 // traffic
 type Limits struct {
@@ -1314,6 +1313,22 @@ func ResponseWeight(nodes, edges int) int64                          // конс
 | Дорогое закрытие окон и снимок | работа ∝ панелям; публикация по 4 причинам; бенчмарки |
 | Изменение порта журнала (`Append(spans)`) задевает тесты шага 1 | срез 4 — отдельный, тесты `memjournal` и `ingest` переводятся в нём |
 | Объём шага | линия отсечения |
+
+### Разбор ревью кода среза 6b (`red`)
+
+Три ревьюера (pocock, osmani, pstack). HIGH нет; один MEDIUM исправлен.
+
+| Находка | Решение |
+|---|---|
+| pocock MEDIUM (подтверждён osmani пробой): публичный API собирал сводку с `Failed > Requests` и латентностью без запросов | Паники wiring в `SummarizeCounts` и `Summarize`; тесты; мутации «проверка снята» убиты |
+| pocock, osmani LOW: у `Cell` нет освобождения скетча; освобождённая ячейка хранила счётчики | `Cell.Release(arena)`: блок возвращён арене, ячейка обнулена |
+| pocock LOW: ожидаемые перцентили брались из того же скетча | Сверка с известными 50/95/99 ms в пределах α; допуск только на перцентили (pstack) |
+| pocock LOW: нет теста исчерпания бюджета | Тест: арена заполнена — `latency_samples < requests` |
+| pocock, pstack, osmani LOW: комментарий о диапазоне `int64` неточен | Инвариант держится на беззнаковом времени OTLP — так и написано; проверка в конструкторе не добавлена (недостижимо, цикломатика) |
+| pocock LOW: пара `latency, latencyKnown` | Оставлена: повторяет `eventtime.Interval.Latency()`, вызов в 6c — одна строка |
+| pstack, osmani LOW: спека (88 B, `Release`, паники, оба конструктора) | Исправлено; view 39 → 35 MiB, итог ≈ 1 331 MiB |
+
+Числа: `Summarize` ≈ 39 ns, 0 аллокаций; 13 мутаций убиты; покрытие 100 %.
 
 ### Разбор ревью кода среза 6a (`role`, `call`, `matcher`, `graph`, `Builder`)
 

@@ -107,7 +107,7 @@ func mustReceive(t *testing.T, journal *memjournal.Journal, limit int) []process
 func spansOfDeliveries(deliveries []processing.Delivery) [][]span.Span {
 	received := make([][]span.Span, 0, len(deliveries))
 	for _, delivery := range deliveries {
-		received = append(received, delivery.Batch().Spans())
+		received = append(received, delivery.Batch().Spans)
 	}
 	return received
 }

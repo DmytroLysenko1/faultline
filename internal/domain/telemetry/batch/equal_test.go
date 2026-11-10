@@ -20,7 +20,7 @@ func TestBatchEqualDistinguishesHeartbeatReceiveTimeAndSpans(t *testing.T) {
 		{Name: "same data batch", Args: func(t *testing.T) (batch.Batch, batch.Batch) { return data(t), data(t) },
 			Want: true},
 		{Name: "heartbeat versus an empty data batch", Args: func(*testing.T) (batch.Batch, batch.Batch) {
-			return batch.Heartbeat(at), batch.Batch{}.Stamped(at)
+			return batch.Heartbeat(at), batch.Batch{ReceivedAt: at}
 		}},
 		{Name: "another receive time", Args: func(t *testing.T) (batch.Batch, batch.Batch) {
 			return data(t), mustBatch(t, at.Add(time.Second), spanEndingAt(t, 1, 2*time.Second))

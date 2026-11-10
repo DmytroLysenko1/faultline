@@ -48,7 +48,7 @@ func newHarness(t *testing.T, kind pipelineKind, preload int) *harness {
 		t.Fatalf("memjournal.New: %v", err)
 	}
 	for index := range preload {
-		if err := journal.Append(t.Context(), slices.Clone(processingtest.Pairs(t, uint64(index), 1).Spans())); err != nil {
+		if err := journal.Append(t.Context(), slices.Clone(processingtest.Pairs(t, uint64(index), 1).Spans)); err != nil {
 			t.Fatalf("Append: %v", err)
 		}
 	}

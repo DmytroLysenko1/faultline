@@ -33,7 +33,7 @@ func TestPercentilesOfLognormalLatencyStayWithinTwoPercent(t *testing.T) {
 				t.Fatal("Percentiles reported no values after 100 000 adds")
 			}
 			assertPercentilesAccurate(t, got, exactPercentiles(values))
-			if collapsed := arena.Stats().CollapsedAdds; collapsed != 0 {
+			if collapsed := arena.Stats.CollapsedAdds; collapsed != 0 {
 				t.Errorf("CollapsedAdds = %d, want 0 with an ample budget", collapsed)
 			}
 		})
@@ -92,7 +92,7 @@ func TestNormalLoadFitsTheBudgetWithoutCollapsing(t *testing.T) {
 			for cell := range subjectCells {
 				record(arena, values[cell*tt.eventsPerCell:(cell+1)*tt.eventsPerCell])
 			}
-			stats := arena.Stats()
+			stats := arena.Stats
 			if stats.CollapsedAdds != 0 || stats.DroppedSamples != 0 {
 				t.Fatalf("%d cells of %d events: collapsed %d, dropped %d; want 0 and 0 (in use %d of %d)", subjectCells,
 					tt.eventsPerCell, stats.CollapsedAdds, stats.DroppedSamples, stats.InUse, stats.Budget)
@@ -107,7 +107,7 @@ func TestReleasedWideSketchesLeaveRoomForManyNarrowOnes(t *testing.T) {
 	for _, s := range wide {
 		arena.Release(s)
 	}
-	afterBurst := arena.Stats()
+	afterBurst := arena.Stats
 	if afterBurst.InUse != 0 {
 		t.Fatalf("InUse after releasing every wide sketch = %d, want 0", afterBurst.InUse)
 	}
@@ -117,7 +117,7 @@ func TestReleasedWideSketchesLeaveRoomForManyNarrowOnes(t *testing.T) {
 		record(arena, narrow)
 	}
 
-	stats := arena.Stats()
+	stats := arena.Stats
 	dropped := stats.DroppedSamples - afterBurst.DroppedSamples
 	collapsed := stats.CollapsedAdds - afterBurst.CollapsedAdds
 	if dropped != 0 || collapsed != 0 {
@@ -130,7 +130,7 @@ func fillWithWideSketches(arena *sketch.Arena) []*sketch.Sketch {
 	var wide []*sketch.Sketch
 	for range maxFillers(arena) {
 		wide = append(wide, record(arena, wideValues))
-		if arena.Stats().CollapsedAdds != 0 || arena.Stats().DroppedSamples != 0 {
+		if arena.Stats.CollapsedAdds != 0 || arena.Stats.DroppedSamples != 0 {
 			return wide
 		}
 	}
@@ -151,10 +151,10 @@ func TestFullArenaMergesLowestEntriesAndKeepsHighPercentiles(t *testing.T) {
 	if !withinAccuracy(got.P99, exactPercentiles(values).P99) {
 		t.Errorf("p99 after collapsing = %d, exact %d", got.P99, exactPercentiles(values).P99)
 	}
-	if target.Count() != uint64(len(values)) {
-		t.Errorf("Count = %d, want %d: collapsing must keep every sample", target.Count(), len(values))
+	if target.Count != uint64(len(values)) {
+		t.Errorf("Count = %d, want %d: collapsing must keep every sample", target.Count, len(values))
 	}
-	stats := arena.Stats()
+	stats := arena.Stats
 	if stats.CollapsedSketches != 1 || stats.CollapsedAdds != uint64(len(values)-16) {
 		t.Errorf("collapsed sketches %d, adds %d; want 1 and %d", stats.CollapsedSketches, stats.CollapsedAdds,
 			len(values)-16)
@@ -166,7 +166,7 @@ func fillArena(arena *sketch.Arena) []*sketch.Sketch {
 	var fillers []*sketch.Sketch
 	for range maxFillers(arena) {
 		fillers = append(fillers, record(arena, []int64{1}))
-		if arena.Stats().DroppedSamples != 0 {
+		if arena.Stats.DroppedSamples != 0 {
 			return fillers
 		}
 	}
@@ -174,7 +174,7 @@ func fillArena(arena *sketch.Arena) []*sketch.Sketch {
 }
 
 func maxFillers(arena *sketch.Arena) int {
-	return arena.Stats().Budget/sketch.MinEntriesPerSketch + 1
+	return arena.Stats.Budget/sketch.MinEntriesPerSketch + 1
 }
 
 func releaseAll(arena *sketch.Arena, sketches []*sketch.Sketch) {
@@ -189,19 +189,19 @@ func TestSketchWithoutSpaceDropsSamplesUntilSpaceReturns(t *testing.T) {
 	starved := new(sketch.Sketch)
 
 	arena.Add(starved, valueInBin(300))
-	if starved.Count() != 0 {
-		t.Fatalf("Count of a sketch that got no block = %d, want 0", starved.Count())
+	if starved.Count != 0 {
+		t.Fatalf("Count of a sketch that got no block = %d, want 0", starved.Count)
 	}
-	droppedWhileFull := arena.Stats().DroppedSamples
+	droppedWhileFull := arena.Stats.DroppedSamples
 
 	releaseAll(arena, fillers)
 	arena.Add(starved, valueInBin(300))
 
-	if starved.Count() != 1 {
-		t.Errorf("Count after space returned = %d, want 1", starved.Count())
+	if starved.Count != 1 {
+		t.Errorf("Count after space returned = %d, want 1", starved.Count)
 	}
-	if arena.Stats().DroppedSamples != droppedWhileFull {
-		t.Errorf("DroppedSamples grew after space returned: %d → %d", droppedWhileFull, arena.Stats().DroppedSamples)
+	if arena.Stats.DroppedSamples != droppedWhileFull {
+		t.Errorf("DroppedSamples grew after space returned: %d → %d", droppedWhileFull, arena.Stats.DroppedSamples)
 	}
 }
 
@@ -211,11 +211,11 @@ func TestReleaseReturnsEveryEntryAndEmptiesTheSketch(t *testing.T) {
 
 	arena.Release(s)
 
-	if s.Count() != 0 {
-		t.Errorf("Count after Release = %d, want 0", s.Count())
+	if s.Count != 0 {
+		t.Errorf("Count after Release = %d, want 0", s.Count)
 	}
 	want := sketch.ArenaStats{Budget: minimalBudget}
-	if diff := cmp.Diff(want, arena.Stats()); diff != "" {
+	if diff := cmp.Diff(want, arena.Stats); diff != "" {
 		t.Errorf("stats after Release mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -316,14 +316,14 @@ func assertNarrowBurstMergesBack(t *testing.T, budget int) {
 	t.Helper()
 	arena := newArena(t, budget)
 	releaseAll(arena, fillArena(arena))
-	afterRelease := arena.Stats()
+	afterRelease := arena.Stats
 
 	wideValues := distinctBinValues(0, allBins)
 	for range budget / sketch.MaxEntriesPerSketch {
 		record(arena, wideValues)
 	}
 
-	stats := arena.Stats()
+	stats := arena.Stats
 	if collapsed := stats.CollapsedAdds - afterRelease.CollapsedAdds; collapsed != 0 {
 		t.Errorf("collapsed adds = %d, want 0: released neighbours were not merged back", collapsed)
 	}
@@ -337,13 +337,13 @@ func TestSingleSketchFillsTheMinimalBudgetWithoutCollapsing(t *testing.T) {
 
 	s := record(arena, distinctBinValues(0, allBins))
 
-	stats := arena.Stats()
+	stats := arena.Stats
 	if stats.CollapsedAdds != 0 || stats.InUse != minimalBudget {
 		t.Fatalf("one sketch over every bin: collapsed %d, in use %d; want 0 and %d (it must grow into its free buddy)",
 			stats.CollapsedAdds, stats.InUse, minimalBudget)
 	}
-	if s.Count() != uint64(allBins) {
-		t.Errorf("Count = %d, want %d", s.Count(), allBins)
+	if s.Count != uint64(allBins) {
+		t.Errorf("Count = %d, want %d", s.Count, allBins)
 	}
 }
 
@@ -356,7 +356,7 @@ func TestSketchGrowsThroughPowerOfTwoClasses(t *testing.T) {
 
 	for _, value := range values {
 		arena.Add(s, value)
-		got = append(got, arena.Stats().InUse)
+		got = append(got, arena.Stats.InUse)
 	}
 
 	if diff := cmp.Diff(want, got); diff != "" {
@@ -377,8 +377,8 @@ func TestValueBelowEveryKeptBinFoldsIntoTheLowestEntry(t *testing.T) {
 	if diff := cmp.Diff(want, got, approxNanos()); diff != "" {
 		t.Errorf("percentiles after folding a lower value mismatch (-want +got):\n%s", diff)
 	}
-	if target.Count() != 3 {
-		t.Errorf("Count = %d, want 3", target.Count())
+	if target.Count != 3 {
+		t.Errorf("Count = %d, want 3", target.Count)
 	}
 	releaseAll(arena, fillers)
 }
@@ -392,8 +392,8 @@ func TestStarvedSketchCountsZerosButDropsPositiveSamples(t *testing.T) {
 	arena.Add(starved, valueInBin(300))
 
 	got, ok := arena.Percentiles(starved)
-	if !ok || starved.Count() != 1 {
-		t.Fatalf("Count = %d, ok = %v; want 1 and true: zeros need no entries", starved.Count(), ok)
+	if !ok || starved.Count != 1 {
+		t.Fatalf("Count = %d, ok = %v; want 1 and true: zeros need no entries", starved.Count, ok)
 	}
 	if diff := cmp.Diff(sketch.Percentiles{}, got); diff != "" {
 		t.Errorf("percentiles of a starved sketch with one zero mismatch (-want +got):\n%s", diff)

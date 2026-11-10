@@ -13,17 +13,13 @@ const (
 )
 
 type Sketch struct {
-	count      uint64
+	Count      uint64
 	offset     uint32
 	zero       uint32
 	generation uint32
 	length     uint16
 	order      uint8
 	collapsed  bool
-}
-
-func (s *Sketch) Count() uint64 {
-	return s.count
 }
 
 func (s *Sketch) capacity() int {

@@ -60,7 +60,7 @@ func (l Limits) graphLimits() graph.Limits {
 }
 
 func (b *Builder) Apply(received batch.Batch) {
-	receivedAt, spans := received.ReceivedAt(), received.Spans()
+	receivedAt, spans := received.ReceivedAt, received.Spans
 	change := graph.Change{
 		ReceivedAt: receivedAt,
 		Unanswered: b.Matcher.Expire(receivedAt),
