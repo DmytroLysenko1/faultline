@@ -30,6 +30,9 @@ var (
 	errEmptyHost    = errors.New("host is empty")
 	errPort         = errors.New("port must be 1 … 65535")
 	errWhitespace   = errors.New("contains whitespace")
+	errNotDivisor   = errors.New("must divide")
+	errAbove        = errors.New("must not be above")
+	errPowerOfTwo   = errors.New("must be a power of two")
 )
 
 type lookupFunc func(name string) (string, bool)
@@ -75,6 +78,10 @@ func (r *envReader) size(name string, fallback, low, high int64) int64 {
 }
 
 func (r *envReader) count(name string, fallback, high int64) int {
+	return r.countWithin(name, fallback, minCount, high)
+}
+
+func (r *envReader) countWithin(name string, fallback, low, high int64) int {
 	raw, set := r.value(name)
 	if !set {
 		return int(fallback)
@@ -84,7 +91,7 @@ func (r *envReader) count(name string, fallback, high int64) int {
 		r.fail(name, fmt.Errorf("%w integer %q (%w), want e.g. %d", errInvalid, raw, err, fallback))
 		return int(fallback)
 	}
-	return int(within(r, name, parsed, fallback, minCount, high, formatCount))
+	return int(within(r, name, parsed, fallback, low, high, formatCount))
 }
 
 func (r *envReader) duration(name string, fallback, low, high time.Duration) time.Duration {
@@ -149,6 +156,42 @@ func (r *envReader) atLeast(name string, value int64, need string, floor int64) 
 		return
 	}
 	r.fail(name, fmt.Errorf("%d %w %s (%d)", value, errBelow, need, floor))
+}
+
+func (r *envReader) divides(name string, value, whole time.Duration) {
+	if r.failed[name] || whole%value == 0 {
+		return
+	}
+	r.fail(name, fmt.Errorf("%s %w %s without a remainder", value, errNotDivisor, whole))
+}
+
+func (r *envReader) notAbove(name string, value time.Duration, ceilingName string, ceiling time.Duration) {
+	if r.failed[name] || r.failed[ceilingName] || value <= ceiling {
+		return
+	}
+	r.fail(name, fmt.Errorf("%s %w %s (%s)", value, errAbove, ceilingName, ceiling))
+}
+
+func (r *envReader) powerOfTwo(name string, value int64) {
+	if r.failed[name] || value&(value-1) == 0 {
+		return
+	}
+	r.fail(name, fmt.Errorf("%d %w", value, errPowerOfTwo))
+}
+
+func (r *envReader) valid(name string, err error) {
+	if r.failed[name] || err == nil {
+		return
+	}
+	r.fail(name, err)
+}
+
+func (r *envReader) path(name string) string {
+	raw, set := r.value(name)
+	if !set {
+		return ""
+	}
+	return raw
 }
 
 func (r *envReader) distinct(name, value, otherName, other string) {

@@ -94,6 +94,15 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 				envLogLevel:          "debug",
 				envSelfTracing:       "collector:4317",
 				envAPIResponseBudget: "320MiB",
+				envWindowSize:        "30s",
+				envWatermarkDelay:    "0s",
+				envAllowedLateness:   "2m",
+				envSlackWindows:      "4",
+				envEarlyFirePeriod:   "500ms",
+				envMaxSeries:         "200000",
+				envOperationsEach:    "999",
+				envSketchEntries:     "16777216",
+				envRouteRulesFile:    "/etc/faultline/routes.yaml",
 			},
 			Want: Config{
 				OTLPAddr: "0.0.0.0:4317",
@@ -111,17 +120,18 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 					MaxNodes:      20_000,
 					MaxEdges:      1,
 					Windows: stream.Config{
-						Size:            10 * time.Second,
-						Delay:           30 * time.Second,
-						AllowedLateness: 30 * time.Second,
-						SlackWindows:    2,
+						Size:            30 * time.Second,
+						Delay:           0,
+						AllowedLateness: 2 * time.Minute,
+						SlackWindows:    4,
 					},
-					EarlyFirePeriod:         time.Second,
-					MaxSeries:               100_000,
-					MaxOperationsPerService: 500,
-					SketchEntries:           8 << 20,
+					EarlyFirePeriod:         500 * time.Millisecond,
+					MaxSeries:               200_000,
+					MaxOperationsPerService: 999,
+					SketchEntries:           16 << 20,
 				},
 				APIResponseBudget:   320 << 20,
+				RouteRulesFile:      "/etc/faultline/routes.yaml",
 				LogLevel:            slog.LevelDebug,
 				SelfTracingEndpoint: "collector:4317",
 			},
@@ -403,6 +413,114 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			},
 			Want:    "FAULTLINE_TOMBSTONE_TTL: 20s must not be below FAULTLINE_PAIRING_TTL (30s)",
 			WantErr: errBelow,
+		},
+		{
+			Name: "window that does not divide an hour",
+			Args: map[string]string{
+				envWindowSize: "7s",
+			},
+			Want:    "FAULTLINE_WINDOW_SIZE: 7s must divide 1h0m0s without a remainder",
+			WantErr: errNotDivisor,
+		},
+		{
+			Name: "window above five minutes",
+			Args: map[string]string{
+				envWindowSize: "10m",
+			},
+			Want:    "FAULTLINE_WINDOW_SIZE: 10m0s out of range, want 1s … 5m0s",
+			WantErr: errOutOfRange,
+		},
+		{
+			Name: "allowed lateness above ten minutes",
+			Args: map[string]string{
+				envAllowedLateness: "11m",
+			},
+			Want:    "FAULTLINE_ALLOWED_LATENESS: 11m0s out of range, want 0s … 10m0s",
+			WantErr: errOutOfRange,
+		},
+		{
+			Name: "slack windows above sixteen",
+			Args: map[string]string{
+				envSlackWindows: "17",
+			},
+			Want:    "FAULTLINE_HORIZON_SLACK_WINDOWS: 17 out of range, want 1 … 16",
+			WantErr: errOutOfRange,
+		},
+		{
+			Name: "delay and lateness that need too many live windows",
+			Args: map[string]string{
+				envWindowSize:      "1s",
+				envWatermarkDelay:  "5m",
+				envAllowedLateness: "10m",
+			},
+			Want: "FAULTLINE_WINDOW_SIZE: invalid window config: delay 5m0s and lateness 10m0s need more than 256 " +
+				"live windows of 1s per series",
+			WantErr: stream.ErrInvalidConfig,
+		},
+		{
+			Name: "early fire period below 100ms",
+			Args: map[string]string{
+				envEarlyFirePeriod: "50ms",
+			},
+			Want:    "FAULTLINE_EARLY_FIRE_PERIOD: 50ms out of range, want 100ms … 5m0s",
+			WantErr: errOutOfRange,
+		},
+		{
+			Name: "early fire period above the window",
+			Args: map[string]string{
+				envEarlyFirePeriod: "15s",
+			},
+			Want:    "FAULTLINE_EARLY_FIRE_PERIOD: 15s must not be above FAULTLINE_WINDOW_SIZE (10s)",
+			WantErr: errAbove,
+		},
+		{
+			Name: "idle pulse sooner than the early fire period",
+			Args: map[string]string{
+				envEarlyFirePeriod:  "2s",
+				envIdleAdvanceAfter: "1s",
+			},
+			Want:    "FAULTLINE_IDLE_ADVANCE_AFTER: 1s must not be below FAULTLINE_EARLY_FIRE_PERIOD (2s)",
+			WantErr: errBelow,
+		},
+		{
+			Name: "operations per service above 999",
+			Args: map[string]string{
+				envOperationsEach: "1000",
+			},
+			Want:    "FAULTLINE_MAX_OPERATIONS_PER_SERVICE: 1000 out of range, want 1 … 999",
+			WantErr: errOutOfRange,
+		},
+		{
+			Name: "series above a million",
+			Args: map[string]string{
+				envMaxSeries: "1000001",
+			},
+			Want:    "FAULTLINE_MAX_SERIES: 1000001 out of range, want 1 … 1000000",
+			WantErr: errOutOfRange,
+		},
+		{
+			Name: "sketch arena that is not a power of two",
+			Args: map[string]string{
+				envSketchEntries: "3000000",
+			},
+			Want:    "FAULTLINE_SKETCH_MAX_ENTRIES: 3000000 must be a power of two",
+			WantErr: errPowerOfTwo,
+		},
+		{
+			Name: "sketch arena below one Mi entries",
+			Args: map[string]string{
+				envSketchEntries: "1024",
+			},
+			Want:    "FAULTLINE_SKETCH_MAX_ENTRIES: 1024 out of range, want 1048576 … 268435456",
+			WantErr: errOutOfRange,
+		},
+		{
+			Name: "empty route rules path",
+			Args: map[string]string{
+				envRouteRulesFile: "",
+			},
+			Want:    "FAULTLINE_ROUTE_RULES_FILE: empty value, unset the variable to use the default",
+			WantErr: errEmpty,
 		},
 		{
 			Name: "response budget below the worst response at the graph limits",

@@ -46,7 +46,7 @@ func start(current process) (startup, error) {
 	if len(current.Args) != 1 || current.Args[0] != commandAll {
 		return startup{}, errUsage
 	}
-	cfg, err := Load(current.Lookup)
+	cfg, err := loadConfig(current.Lookup)
 	if err != nil {
 		return startup{}, err
 	}
@@ -58,6 +58,17 @@ func start(current process) (startup, error) {
 		Config: cfg,
 		Memory: memory,
 	}, nil
+}
+
+func loadConfig(lookup lookupFunc) (Config, error) {
+	cfg, err := Load(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg.RouteRules, err = loadRouteRules(cfg.RouteRulesFile); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
 }
 
 func enforceMemoryBudget(current process, cfg *Config) (memorySetting, error) {

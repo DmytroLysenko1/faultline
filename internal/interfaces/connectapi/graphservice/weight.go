@@ -26,7 +26,12 @@ func ResponseTreeBytes(nodes, edges int) int64 {
 	return int64(nodes)*nodeTreeBytes + int64(edges)*edgeTreeBytes
 }
 
+func WrittenWeight(nodes, edges int) int64 {
+	return ResponseTreeBytes(nodes, edges) + ResponseBytes(nodes, edges)
+}
+
 func ResponseWeight(nodes, edges int) int64 {
 	view := int64(nodes)*nodeViewBytes + int64(edges)*edgeViewBytes
-	return view + ResponseTreeBytes(nodes, edges) + ResponseBytes(nodes, edges)*marshalPeakNumerator/marshalPeakDenominator
+	return view + ResponseTreeBytes(nodes, edges) +
+		ResponseBytes(nodes, edges)*marshalPeakNumerator/marshalPeakDenominator
 }

@@ -136,7 +136,7 @@ func assemble(cfg *Config, logger *slog.Logger, seams wiring) (*system, error) {
 	if err != nil {
 		return nil, err
 	}
-	server, counters := provideIngest(stored.journal, logger)
+	server, counters := provideIngest(stored.journal, cfg.RouteRules, logger)
 	pipeline, err := providePipeline(seams.feedOf(stored), stored, cfg)
 	if err != nil {
 		return nil, err
@@ -174,8 +174,12 @@ func provideStorage(cfg *Config) (storage, error) {
 	}, nil
 }
 
-func provideIngest(journal *memjournal.Journal, logger *slog.Logger) (ingestServer, *ingest.AcceptBatch) {
-	accept := ingest.NewAcceptBatch(journal, operation.NewNormalizer(nil))
+func provideIngest(
+	journal *memjournal.Journal,
+	rules *operation.Rules,
+	logger *slog.Logger,
+) (ingestServer, *ingest.AcceptBatch) {
+	accept := ingest.NewAcceptBatch(journal, operation.NewNormalizer(rules))
 	return otlp.NewServer(accept, otlp.DefaultOptions(logger, systemClock{})), accept
 }
 

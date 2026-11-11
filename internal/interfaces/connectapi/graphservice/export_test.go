@@ -14,3 +14,7 @@ func AdmittedContext(ctx context.Context, budget int64) (context.Context, func()
 	}
 	return context.WithValue(ctx, reservationKey{}, held), held.release
 }
+
+func Reserve(ctx context.Context, nodes, edges int) error {
+	return reserve(ctx, nodes, edges)
+}

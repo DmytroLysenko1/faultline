@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
@@ -192,4 +193,59 @@ func TestResponseTreeModelCoversTheWorstMapping(t *testing.T) {
 	if model := graphservice.ResponseTreeBytes(probeNodes, probeEdges); int64(grown) > model {
 		t.Errorf("the worst response tree took %d bytes, model %d", grown, model)
 	}
+}
+
+const slowReaderWindow = time.Second
+
+// TestASlowReaderHoldsOnlyTheWrittenWeight: while a client reads nothing past the headers, the
+// server keeps the response tree and its encoded bytes (and the compressed copy), not the
+// marshal peak; that is what the reservation shrinks to after the first write.
+func TestASlowReaderHoldsOnlyTheWrittenWeight(t *testing.T) {
+	snapshot := snapshotOf(randomServices())
+	written := graphservice.WrittenWeight(probeNodes, probeEdges)
+	tests := []struct {
+		Name string
+		Args string
+		Want int64
+	}{
+		{Name: "identity", Args: encodingIdentity, Want: written},
+		{Name: "gzip", Args: encodingGzip, Want: written + graphservice.ResponseBytes(probeNodes, probeEdges)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.Name, func(t *testing.T) {
+			server := startGraphServer(t, &staticReader{Snapshot: snapshot}, defaultOptions())
+			before := int64(telemetrytest.HeapInUse())
+			response := openWithoutReading(t, server.URL, server.Client(), tt.Args)
+			sampler := telemetrytest.StartPeakSampler(t)
+			time.Sleep(slowReaderWindow)
+			held := int64(sampler.Stop()) - before
+			if err := response.Body.Close(); err != nil {
+				t.Errorf("close response: %v", err)
+			}
+			t.Logf("slow reader held %.1f MiB, model %.1f MiB", float64(held)/mebibyte, float64(tt.Want)/mebibyte)
+			if held > tt.Want {
+				t.Errorf("a slow reader held %d bytes, written weight %d", held, tt.Want)
+			}
+			if tree := graphservice.ResponseTreeBytes(probeNodes, probeEdges); held < tree {
+				t.Errorf("a slow reader held %d bytes, less than the response tree %d: the probe missed the write", held, tree)
+			}
+		})
+	}
+	runtime.KeepAlive(snapshot)
+}
+
+func openWithoutReading(t *testing.T, address string, client *http.Client, encoding string) *http.Response {
+	t.Helper()
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+		address+faultlinev1connect.GraphServiceGetGraphProcedure, strings.NewReader(emptyJSONRequest))
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	request.Header.Set(headerContentType, jsonContentType)
+	request.Header.Set(headerAccept, encoding)
+	response, err := client.Transport.RoundTrip(request)
+	if err != nil {
+		t.Fatalf("GetGraph: %v", err)
+	}
+	return response
 }

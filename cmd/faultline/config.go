@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi"
@@ -27,6 +28,15 @@ const (
 	envLogLevel          = "FAULTLINE_LOG_LEVEL"
 	envSelfTracing       = "FAULTLINE_SELF_TRACING_ENDPOINT"
 	envAPIResponseBudget = "FAULTLINE_API_RESPONSE_BUDGET"
+	envWindowSize        = "FAULTLINE_WINDOW_SIZE"
+	envWatermarkDelay    = "FAULTLINE_WATERMARK_DELAY"
+	envAllowedLateness   = "FAULTLINE_ALLOWED_LATENESS"
+	envSlackWindows      = "FAULTLINE_HORIZON_SLACK_WINDOWS"
+	envEarlyFirePeriod   = "FAULTLINE_EARLY_FIRE_PERIOD"
+	envMaxSeries         = "FAULTLINE_MAX_SERIES"
+	envOperationsEach    = "FAULTLINE_MAX_OPERATIONS_PER_SERVICE"
+	envSketchEntries     = "FAULTLINE_SKETCH_MAX_ENTRIES"
+	envRouteRulesFile    = "FAULTLINE_ROUTE_RULES_FILE"
 	worstResponseAtLimit = "the worst response at the graph limits"
 
 	defaultOTLPAddr          = "127.0.0.1:4317"
@@ -64,6 +74,17 @@ const (
 	defaultMaxSeries         = 100_000
 	defaultOperationsEach    = 500
 	defaultSketchEntries     = 8 << 20
+	minWindowSize            = time.Second
+	maxWindowSize            = 5 * time.Minute
+	windowsDivide            = time.Hour
+	maxWatermarkDelay        = 5 * time.Minute
+	maxAllowedLateness       = 10 * time.Minute
+	maxSlackWindows          = 16
+	minEarlyFirePeriod       = 100 * time.Millisecond
+	maxMaxSeries             = 1_000_000
+	maxOperationsEach        = 999
+	minSketchEntries         = 1 << 20
+	maxSketchEntries         = 256 << 20
 )
 
 type Config struct {
@@ -72,6 +93,8 @@ type Config struct {
 	Journal             memjournal.Limits
 	Topology            topology.Limits
 	APIResponseBudget   int64
+	RouteRulesFile      string
+	RouteRules          *operation.Rules
 	LogLevel            slog.Level
 	SelfTracingEndpoint string
 }
@@ -85,14 +108,25 @@ func Load(lookup lookupFunc) (Config, error) {
 		Topology: topologyLimits(reader),
 		APIResponseBudget: reader.size(envAPIResponseBudget, connectapi.DefaultResponseBudget, minAPIResponseBudget,
 			maxAPIResponseBudget),
+		RouteRulesFile:      reader.path(envRouteRulesFile),
 		LogLevel:            reader.level(envLogLevel, slog.LevelInfo),
 		SelfTracingEndpoint: reader.endpoint(envSelfTracing),
 	}
-	reader.notBelow(envTombstoneTTL, cfg.Topology.TombstoneTTL, envPairingTTL, cfg.Topology.PairingTTL)
+	crossCheck(reader, &cfg)
+	return cfg, errors.Join(reader.errs...)
+}
+
+func crossCheck(reader *envReader, cfg *Config) {
+	topology := &cfg.Topology
+	reader.notBelow(envTombstoneTTL, topology.TombstoneTTL, envPairingTTL, topology.PairingTTL)
 	reader.distinct(envSelfTracing, cfg.SelfTracingEndpoint, envOTLPAddr, cfg.OTLPAddr)
 	reader.atLeast(envAPIResponseBudget, cfg.APIResponseBudget, worstResponseAtLimit,
-		graphservice.ResponseWeight(cfg.Topology.MaxNodes, cfg.Topology.MaxEdges))
-	return cfg, errors.Join(reader.errs...)
+		graphservice.ResponseWeight(topology.MaxNodes, topology.MaxEdges))
+	reader.divides(envWindowSize, topology.Windows.Size, windowsDivide)
+	reader.valid(envWindowSize, topology.Windows.Validate())
+	reader.notAbove(envEarlyFirePeriod, topology.EarlyFirePeriod, envWindowSize, topology.Windows.Size)
+	reader.notBelow(envIdleAdvanceAfter, cfg.Journal.IdleAfter, envEarlyFirePeriod, topology.EarlyFirePeriod)
+	reader.powerOfTwo(envSketchEntries, int64(topology.SketchEntries))
 }
 
 func journalLimits(reader *envReader) memjournal.Limits {
@@ -105,21 +139,25 @@ func journalLimits(reader *envReader) memjournal.Limits {
 
 func topologyLimits(reader *envReader) topology.Limits {
 	return topology.Limits{
-		PairingTTL:    reader.duration(envPairingTTL, defaultPairingTTL, minPairingTTL, maxPairingTTL),
-		MaxPending:    reader.count(envPairingMaxPending, defaultMaxPending, maxMaxPending),
-		TombstoneTTL:  reader.duration(envTombstoneTTL, defaultTombstoneTTL, minTombstoneTTL, maxTombstoneTTL),
-		MaxTombstones: reader.count(envTombstoneMax, defaultTombstoneMax, maxTombstoneMax),
-		MaxNodes:      reader.count(envGraphMaxNodes, defaultGraphMaxNodes, maxGraphMaxNodes),
-		MaxEdges:      reader.count(envGraphMaxEdges, defaultGraphMaxEdges, maxGraphMaxEdges),
-		Windows: stream.Config{
-			Size:            defaultWindowSize,
-			Delay:           defaultWatermarkDelay,
-			AllowedLateness: defaultAllowedLateness,
-			SlackWindows:    defaultSlackWindows,
-		},
-		EarlyFirePeriod:         defaultEarlyFirePeriod,
-		MaxSeries:               defaultMaxSeries,
-		MaxOperationsPerService: defaultOperationsEach,
-		SketchEntries:           defaultSketchEntries,
+		PairingTTL:              reader.duration(envPairingTTL, defaultPairingTTL, minPairingTTL, maxPairingTTL),
+		MaxPending:              reader.count(envPairingMaxPending, defaultMaxPending, maxMaxPending),
+		TombstoneTTL:            reader.duration(envTombstoneTTL, defaultTombstoneTTL, minTombstoneTTL, maxTombstoneTTL),
+		MaxTombstones:           reader.count(envTombstoneMax, defaultTombstoneMax, maxTombstoneMax),
+		MaxNodes:                reader.count(envGraphMaxNodes, defaultGraphMaxNodes, maxGraphMaxNodes),
+		MaxEdges:                reader.count(envGraphMaxEdges, defaultGraphMaxEdges, maxGraphMaxEdges),
+		Windows:                 windowsConfig(reader),
+		EarlyFirePeriod:         reader.duration(envEarlyFirePeriod, defaultEarlyFirePeriod, minEarlyFirePeriod, maxWindowSize),
+		MaxSeries:               reader.count(envMaxSeries, defaultMaxSeries, maxMaxSeries),
+		MaxOperationsPerService: reader.count(envOperationsEach, defaultOperationsEach, maxOperationsEach),
+		SketchEntries:           reader.countWithin(envSketchEntries, defaultSketchEntries, minSketchEntries, maxSketchEntries),
+	}
+}
+
+func windowsConfig(reader *envReader) stream.Config {
+	return stream.Config{
+		Size:            reader.duration(envWindowSize, defaultWindowSize, minWindowSize, maxWindowSize),
+		Delay:           reader.duration(envWatermarkDelay, defaultWatermarkDelay, 0, maxWatermarkDelay),
+		AllowedLateness: reader.duration(envAllowedLateness, defaultAllowedLateness, 0, maxAllowedLateness),
+		SlackWindows:    reader.count(envSlackWindows, defaultSlackWindows, maxSlackWindows),
 	}
 }

@@ -39,7 +39,10 @@ func (a *Admission) ServeHTTP(response http.ResponseWriter, request *http.Reques
 		capacity: a.Capacity,
 	}
 	defer held.release()
-	a.Next.ServeHTTP(response,
+	a.Next.ServeHTTP(&shrinkingWriter{
+		ResponseWriter: response,
+		held:           held,
+	},
 		request.WithContext(context.WithValue(
 			request.Context(),
 			reservationKey{},
@@ -49,11 +52,12 @@ func (a *Admission) ServeHTTP(response http.ResponseWriter, request *http.Reques
 	)
 }
 
-func reserve(ctx context.Context, weight int64) error {
+func reserve(ctx context.Context, nodes, edges int) error {
 	held, admitted := ctx.Value(reservationKey{}).(*reservation)
 	if !admitted {
 		return ErrNotAdmitted
 	}
+	weight := ResponseWeight(nodes, edges)
 	if weight > held.capacity {
 		return fmt.Errorf("%w: %d bytes, budget %d", ErrTooLarge, weight, held.capacity)
 	}
@@ -61,6 +65,7 @@ func reserve(ctx context.Context, weight int64) error {
 		return ErrBusy
 	}
 	held.held += weight
+	held.nodes, held.edges = nodes, edges
 	return nil
 }
 
@@ -70,6 +75,20 @@ type reservation struct {
 	budget   *semaphore.Weighted
 	capacity int64
 	held     int64
+	nodes    int
+	edges    int
+}
+
+func (r *reservation) shrink(compressed bool) {
+	written := WrittenWeight(r.nodes, r.edges)
+	if compressed {
+		written += ResponseBytes(r.nodes, r.edges)
+	}
+	if r.held <= written {
+		return
+	}
+	r.budget.Release(r.held - written)
+	r.held = written
 }
 
 func (r *reservation) release() {

@@ -46,7 +46,7 @@ func (h *Handler) GetGraph(
 	if snapshot == nil {
 		return nil, h.connectError(ctx, graphmap.ErrNilSnapshot)
 	}
-	if err := reserve(ctx, ResponseWeight(len(snapshot.Nodes), len(snapshot.Edges))); err != nil {
+	if err := reserve(ctx, len(snapshot.Nodes), len(snapshot.Edges)); err != nil {
 		return nil, h.connectError(ctx, err)
 	}
 	graph, err := graphmap.Graph(snapshot)
