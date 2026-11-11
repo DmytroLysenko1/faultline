@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	defaultWorstCaseBytes = 1_192_771_416
-	manifestMemoryLimit   = 1408 << 20
+	defaultWorstCaseBytes = 1_418_350_848
+	manifestMemoryLimit   = 1600 << 20
 	tightMemoryLimit      = defaultWorstCaseBytes/budgetSharePercent*percent - mib
 	applyProbeSpans       = 148_470
 )

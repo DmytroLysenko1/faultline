@@ -32,20 +32,20 @@ func Graph(snapshot *topology.Snapshot) (*faultlinev1.Graph, error) {
 	}, nil
 }
 
-func indexByID(nodes []graph.Node) map[string]uint32 {
+func indexByID(nodes []topology.NodeView) map[string]uint32 {
 	positions := make(map[string]uint32, len(nodes))
 	var position uint32
-	for _, current := range nodes {
-		positions[current.ID] = position
+	for i := range nodes {
+		positions[nodes[i].ID] = position
 		position++
 	}
 	return positions
 }
 
-func nodes(source []graph.Node) []*faultlinev1.Node {
+func nodes(source []topology.NodeView) []*faultlinev1.Node {
 	mapped := make([]*faultlinev1.Node, 0, len(source))
 	for i := range source {
-		mapped = append(mapped, node(&source[i]))
+		mapped = append(mapped, node(&source[i].Node))
 	}
 	return mapped
 }
@@ -62,9 +62,10 @@ func node(source *graph.Node) *faultlinev1.Node {
 	}
 }
 
-func edges(source []graph.Edge, positions map[string]uint32) ([]*faultlinev1.Edge, error) {
+func edges(source []topology.EdgeView, positions map[string]uint32) ([]*faultlinev1.Edge, error) {
 	mapped := make([]*faultlinev1.Edge, 0, len(source))
-	for _, edge := range source {
+	for i := range source {
+		edge := &source[i]
 		caller, callerFound := positions[edge.Source]
 		callee, calleeFound := positions[edge.Target]
 		if !callerFound || !calleeFound {

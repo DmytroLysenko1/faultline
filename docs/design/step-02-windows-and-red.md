@@ -657,13 +657,14 @@ publish: Publish(Snapshot()) — ошибка → return (held не освобо
 | движок операций | 100 000 × 9 × 32 B + индекс + серии | 36 MiB |
 | движок переполнения | 60 000 × 9 × 32 B + индекс + серии | 20 MiB |
 | списки `late` и члены корзин | ≤ живых слотов × 8 B | 16 MiB |
-| арена скетчей | 8 Mi записей × 8 B + битовые карты | 65 MiB |
+| арена скетчей | **4 Mi** записей × 8 B + битовые карты (срез 6d: первая уступка D-MEM до среза 8; 8 Mi вернётся вместе с `api_response_budget`) | 33 MiB |
 | реестр | 100 000 × (256 имя + 160) B + 60 000 владельцев × 8 B; 114–152 B служебных на операцию замерены (пик — шаг роста map), `cardinality.WorstHeapBytes` закреплён пробой кучи (срез 5, ревью osmani) | 40 MiB |
 | `Builder.Apply` | самый большой пакет (≈ 148 000 спанов × 196 B: участник 32, вызов 112, обслуженный 32, три хэндла `Applied` 12, индекс обслуженного спана 8 для `RecordServed` среза 6c; замер 177 B без индекса, срез 6a) | 28 MiB |
 | ответы API | `api_response_budget` | 224 MiB |
-| **итого** | | **≈ 1 331 MiB** |
+| **итого** | | **≈ 1 331 MiB** (план при 8 Mi) |
+| **итого по коду среза 6d** (`TestDefaultWorstCaseIsPinned`) | OTLP 440 (проба шага 1, рост до 525 — в пробах среза 8), pairing + граф + traffic 418,4, ответы API 378,7 (до `api_response_budget` среза 8), журнал 64,4, `Apply` 27,8, снимки 23,5 | **1 352,6 MiB**, запас 7,4 MiB при 1 360; срез 8: ответы API 378,7 → 224, арена 4 → 8 Mi (+32), OTLP по пробе |
 
-**D-MEM (апрув 08.11): `GOMEMLIMIT` 1408 → 1600 MiB при лимите пода 2 GiB.** Порог 0,85 × 1 600 = 1 360 MiB, запас ≈ 29 MiB (2,1 %; срез 5: реестр 32 → 40 MiB, срез 6a: `Apply` 21 → 28 MiB, граф +1 MiB, буфер ожидания +1 MiB — по замерам; срез 6b: сводки 88 → 72 B, view 39 → 35 MiB): узкий, поэтому пробы среза 8 — блокирующие, и первая уступка (арена 8 → 4 Mi, −32 MiB) заранее проверена тестом среза 1: 420 000 ячеек по 5 событий (NFR-PERF-002, класс 8) укладываются в 4 Mi без слияния; 10 событий на ячейку (класс 16, 6,7 Mi) — уже нет, это граница уступки. Между `GOMEMLIMIT` и лимитом пода — 448 MiB (бинарник, память вне Go, превышение мягкого предела под давлением GC); давление GC падает (слоты и арена без указателей). **Условие апрува — «без потери производительности»** — проверяется в срезе 8: `BenchmarkIteration50kEdges` и дренаж под нагрузкой при `GOMEMLIMIT=1600MiB` не хуже, чем при 1408 MiB (`benchstat`), доля CPU на GC по `GODEBUG=gctrace=1` ≤ 10 %. Если пробы среза 8 дадут итог выше 1 360 MiB — порядок уступок: арена 8 → 4 Mi записей (−32 MiB, демо и NFR-PERF-002 при 5 событиях на ячейку укладываются), затем `max_held_bytes`-независимый резерв журнала; **лимит пода и `GOMEMLIMIT` без нового апрува не меняются**.
+**D-MEM (апрув 08.11): `GOMEMLIMIT` 1408 → 1600 MiB при лимите пода 2 GiB** (введено в срезе 6d: `defaultMemoryLimit` и манифест; там же применена первая уступка — арена 4 Mi до среза 8). Порог 0,85 × 1 600 = 1 360 MiB, запас ≈ 29 MiB (2,1 %; срез 5: реестр 32 → 40 MiB, срез 6a: `Apply` 21 → 28 MiB, граф +1 MiB, буфер ожидания +1 MiB — по замерам; срез 6b: сводки 88 → 72 B, view 39 → 35 MiB): узкий, поэтому пробы среза 8 — блокирующие, и первая уступка (арена 8 → 4 Mi, −32 MiB) заранее проверена тестом среза 1: 420 000 ячеек по 5 событий (NFR-PERF-002, класс 8) укладываются в 4 Mi без слияния; 10 событий на ячейку (класс 16, 6,7 Mi) — уже нет, это граница уступки. Между `GOMEMLIMIT` и лимитом пода — 448 MiB (бинарник, память вне Go, превышение мягкого предела под давлением GC); давление GC падает (слоты и арена без указателей). **Условие апрува — «без потери производительности»** — проверяется в срезе 8: `BenchmarkIteration50kEdges` и дренаж под нагрузкой при `GOMEMLIMIT=1600MiB` не хуже, чем при 1408 MiB (`benchstat`), доля CPU на GC по `GODEBUG=gctrace=1` ≤ 10 %. Если пробы среза 8 дадут итог выше 1 360 MiB — порядок уступок: арена 8 → 4 Mi записей (−32 MiB, демо и NFR-PERF-002 при 5 событиях на ячейку укладываются), затем `max_held_bytes`-независимый резерв журнала; **лимит пода и `GOMEMLIMIT` без нового апрува не меняются**.
 
 Типичный случай на демо — ≈ 330 MiB (арена и слоты выделены заранее; нетронутые страницы ОС в RSS не отдаёт).
 
@@ -730,7 +731,7 @@ publish: Publish(Snapshot()) — ошибка → return (held не освобо
 | B1 | Часы источников демо расходятся с часами приёма ≤ 1 s (A-03) | проверить на дампе (срез 3) |
 | B2 | «Конец спана → приём» в демо < 30 s | проверить на дампе (срез 3) |
 | B3 | У server-спанов демо есть `http.route` или RPC-метод | частично подтверждено (срез 0 шага 1) |
-| B4 | Записей скетча на ячейку на реальных данных — единицы–десятки | проверить на replay (срез 6) |
+| B4 | Записей скетча на ячейку на реальных данных — единицы–десятки | ✔ срез 6e: дамп OTel Demo — пик 4,4 записи на серию субъекта (`TestReplaySketchEntriesPerSeriesStaySmall`, порог 16) |
 | B5 | Семантика `time.Timer` Go ≥ 1.23 | `go doc time.Timer` на `go1.27.3`, срез 7 |
 | B6 | В шаге 2 часы журнала — монотонное показание Go одного процесса | верно по построению; в шаге 3 время ставит журнал NATS |
 
@@ -756,7 +757,7 @@ publish: Publish(Snapshot()) — ошибка → return (held не освобо
 | `BenchmarkLocateRecord` (100 000 серий, случайный доступ) | ≤ 50 ns (замер среза 2: 32 ns), 0 аллокаций |
 | `BenchmarkNormalize` (типичные входы) / враждебный путь 64 сегмента / `BenchmarkRouteRulesWorst` (2⁸ сочетаний) | ≤ 400 ns / ≤ 4 µs / ≤ 15 µs, ≤ 1 аллокация (замер среза 3a: 50–300 ns / 2,1–2,5 µs / 2,8 µs — худшие принятые правила, 2⁶ сочетаний) |
 | `BenchmarkAcceptBatch` (512 спанов) | не хуже шага 1 + нормализация; аллокации — ≤ шага 1 + 1 на спан |
-| `BenchmarkBuilderApplyPerSpan` | ≤ 1 µs на спан, 0 аллокаций на спан |
+| `BenchmarkBuilderApplyPerSpan` | ≤ 1 µs на спан (срез 6d: 380 ns), 0 аллокаций на спан — кроме ожидающей половинки матчера (2 на пару, `container/list` шага 1; пул — срез 8, тест закрепляет 2) |
 | `BenchmarkWindowClose160k` | ≤ 60 ms |
 | `BenchmarkFire60k` | ≤ 20 ms |
 | `BenchmarkIteration50kEdges` (со сводками) | ≤ 25 ms на итерацию с публикацией |
@@ -882,7 +883,7 @@ publish: Publish(Snapshot()) — ошибка → return (held не освобо
 | 3 | telemetry: `eventtime`, `operation` (`Normalizer`, `Rules`, дерево), `response.Attributes` struct, нормализация в `AcceptBatch`, проверка операции в `span.New`, `batch.Heartbeat`; `spanmap`. Удаление `clock` из `AcceptBatch`, forbidigo на `batch.NewOwning`/`batch.Heartbeat` вне журнала и инкапсуляция `Batch.Spans` (пульс без спанов по построению) — в срезе 4 вместе с журналом, ставящим `ReceivedAt`; загрузка файла правил из env — в срезе 8 (до него `NewNormalizer(nil)`) | таблицы интервала и нормализации, FR-STR-006, fuzz, параллельный нормализатор, бенчмарки до/после, `span.Span` ≤ 128 B, ratio OTLP, B1, B2 |
 | 4 ✔ 10.11 | `memjournal`: `Append(spans)` с `ReceivedAt` под мьютексом, `Receive(maxWait)` с пульсом | synctest, монотонность под `-race`, goleak |
 | 5 ✔ 10.11 | `cardinality.Registry` (+ `handle` из среза 6) | FR-STR-007, утечка 0, глобальный лимит, фронты |
-| 6 | `handle`, `role.Entry`, `matcher` (`Outcome`), `call`, `graph.Applied`, `red`, `traffic`, `Builder` (`Fire`, ревизия, `FinalSink`), `Snapshot` | I10–I12, `Served`, `SeriesKey`, оракул RED, replay = golden, `live`/`final`, B4 |
+| 6 | `handle`, `role.Entry`, `matcher` (`Outcome`), `call`, `graph.Applied`, `red`, `traffic`, `Builder` (`Fire`, ревизия, `FinalSink`), `Snapshot`; 6d — `Builder` + `Snapshot`, 6e — replay с финалами | I10–I12, `Served`, `SeriesKey`, оракул RED (6d), I8 на `Builder` (6d), replay = golden и B4 (6e), `live`/`final` |
 | ✔ | **Контрольная точка 1:** дамп OTel Demo → финальные панели = golden | |
 | 7 | `processing`: `Cadence`, `clock`, пульсы | каденс, I2 со сводками под `test-stress`, дренаж ≤ 2,5 s |
 | 8 | `graph.proto` + маппинг; допуск в хэндлере; `SendMaxBytes`; пробы памяти; env, файл правил, `GOMEMLIMIT` + проверка условия апрува; `pipeline.stats` и self-alert | `buf breaking`, gRPC = JSON, размеры, golden вкладов, фронты |
@@ -1194,7 +1195,8 @@ func (t *Traffic) RecordServed(node handle.Node, observed *span.Span)
 func (t *Traffic) End()
 func (t *Traffic) Fire()          // EARLY только у движка субъектов
 func (t *Traffic) Changed() bool  // с прошлого View изменилась хотя бы одна сводка live или final; сбрасывается только View()
-func (t *Traffic) View() View     // срезы — копия на снимок
+func (t *Traffic) View() View     // срезы — сами сводки traffic, без копии (срез 6d: копия — 8 MiB на снимок вне бюджета);
+                                  // действительны до следующего Begin/Fire, Builder.Snapshot сразу копирует их в NodeView/EdgeView
 type View struct {
 	Nodes, Edges []SubjectRED     // индекс = хэндл
 	WindowSize   time.Duration
@@ -1238,11 +1240,18 @@ type Stats struct {
 // Limits.Validate проверяет MaxNodes, MaxEdges, их сумму и MaxSeries против stream.MaxCapacity до любых аллокаций
 // хэндл за пределом лимитов — паника wiring "traffic: "; Builder (6d) берёт MaxNodes/MaxEdges графа и traffic из одного поля конфига
 
-// topology
-type Limits struct { /* шаг 1 */ Traffic traffic.Limits }
+// topology (срез 6d: поля traffic — плоские, MaxNodes/MaxEdges одни на граф и traffic; Limits 112 B — по указателю)
+type Limits struct {
+	/* шаг 1: PairingTTL, MaxPending, TombstoneTTL, MaxTombstones, MaxNodes, MaxEdges */
+	Windows                 stream.Config
+	EarlyFirePeriod         time.Duration
+	MaxSeries               int
+	MaxOperationsPerService int
+	SketchEntries           int
+}
 type Option func(*Builder)
 func WithFinalSink(sink traffic.FinalSink) Option
-func NewBuilder(limits Limits, startedAt time.Time, options ...Option) (*Builder, error)
+func NewBuilder(limits *Limits, startedAt time.Time, options ...Option) (*Builder, error)
 func (b *Builder) Fire()
 func (b *Builder) StructureChanged() bool
 type NodeView struct {
@@ -1254,7 +1263,10 @@ type EdgeView struct {
 	Live, Final red.WindowStats
 }
 // Snapshot: Nodes []NodeView, Edges []EdgeView, + WindowSize time.Duration, Watermark time.Time,
-// WatermarkKnown bool, TrafficStats traffic.Stats
+// WatermarkKnown bool, TrafficStats traffic.Stats; каждый снимок — своя копия (правка читателя не доходит до следующего)
+// StructureChanged — число узлов или рёбер графа отличается от последнего снимка (граф их не удаляет)
+// GeneratedAt — время графа; если изменилась сводка, — max(время графа, ReceivedAt последнего пакета)
+// Apply переиспользует буферы изменения и очищает их в конце (clear): иначе строки самого большого пакета жили бы после Release
 ```
 
 **`internal/application/processing`** (срез 7)
@@ -1327,6 +1339,24 @@ func ResponseWeight(nodes, edges int) int64                          // конс
 | Изменение порта журнала (`Append(spans)`) задевает тесты шага 1 | срез 4 — отдельный, тесты `memjournal` и `ingest` переводятся в нём |
 | Объём шага | линия отсечения |
 
+### Разбор ревью кода среза 6d (`Builder`, `Snapshot`)
+
+Четыре ревьюера (pocock, osmani, pstack, clean-arch со свежим контекстом), повторное ревью pocock — approve.
+
+| Находка | Решение |
+|---|---|
+| pocock HIGH, pstack MEDIUM: переиспользуемые буферы `Apply` держат строки самого большого пакета после `Release` (37 MiB на 50 000 пар) | `defer releaseChange()` — `clear` буферов; `TestApplyDoesNotKeepAReleasedBatchAlive` (`runtime.AddCleanup`, без `clear` освобождается 1 из 2 000) |
+| osmani, pstack MEDIUM: `traffic.View()` копировал сводки на каждый снимок (8 MiB вне бюджета при запасе 7,7 MiB) | `View` отдаёт сами сводки; `TestSnapshotHeapIsTheViewModel`; модель снимка + 64 KiB (заголовок, статистики, округление страниц) |
+| pocock LOW: watermark в снимке дважды, второй раз — `stream.Mark` | watermark только из `traffic.View`, `traffic.Stats` без него |
+| osmani LOW: I8 на уровне `Builder` | `TestFinalsAreAFunctionOfTheJournal`: тот же журнал при разном числе `Fire` — те же финалы целиком |
+| pstack LOW: бенчмарк возвращался к старым пакетам | пересборка без таймера, когда пакеты кончились |
+| pocock LOW: `Snapshot()` > 25 строк | ревизия — `advance()` |
+| clean-arch MEDIUM: `Snapshot()` — запрос с побочным эффектом | Отклонено: ревизия двигается только с данными, повтор без данных её не меняет (тест), как в шаге 1 |
+| clean-arch MEDIUM: `Builder` читает `Graph.Dirty`, `Graph.Clock` | Отклонено: правило проекта — публичные поля вместо геттеров |
+| clean-arch LOW: env для окон, `FinalSink` из `traffic` | env и проверки диапазонов — срез 8; `traffic.FinalSink` — по контракту API |
+| pocock LOW: `TrafficStats` несёт типы `pkg/stream` | Маппинг в типы `topology` — срез 7 вместе с `pipeline.stats` |
+| `role.Of` дважды, аллокации матчера | Срез 8 (см. бенчмарк) |
+
 ### Разбор ревью кода среза 6c (`traffic`)
 
 Четыре ревьюера (pocock, osmani, pstack, clean-arch со свежим контекстом). HIGH нет; четыре MEDIUM исправлены.
@@ -1377,7 +1407,7 @@ func ResponseWeight(nodes, edges int) int64                          // конс
 | pocock, osmani LOW: непокрытые строки таблицы | Тесты: callee после истечения caller, повтор после собственного истечения, повтор после вытеснения, повтор после пары, обслуженный спан отказанного узла |
 | pocock LOW: golden replay и тест утечки мутаций снимка не видят `Served` | `served` в golden (дифф — только новое поле, ревизия та же); тест утечки сравнивает снимки целиком; `shapeOnly()` убран у сравнений строк ошибок |
 | pocock, pstack LOW: документы (буферы `Applied` в строке графа, сигнатура `Match`, I2 шага 1, резерв 106 MiB) | Исправлено |
-| pstack NIT: `role.Of` дважды на спан | В 6d вместе с буферами и тестом «0 аллокаций на событие» |
+| pstack NIT: `role.Of` дважды на спан | Перенесено в срез 8 вместе с пулом половинок матчера (срез 6d: 380 ns на спан при цели ≤ 1 µs) |
 
 Числа: 14 мутаций убиты; бюджет шага 1 1 137,5 MiB (пин 1 192 771 416 B, порог 1 197); бюджет шага 2 ≈ 1 335 MiB, запас ≈ 25 MiB.
 

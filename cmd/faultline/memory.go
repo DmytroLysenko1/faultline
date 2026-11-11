@@ -10,7 +10,7 @@ import (
 const (
 	envMemoryLimit            = "GOMEMLIMIT"
 	memoryLimitOff            = "off"
-	defaultMemoryLimit        = 1408 * mib
+	defaultMemoryLimit        = 1600 * mib
 	manifestPodMemory         = 2 * gib
 	containerShareNumerator   = defaultMemoryLimit / mib
 	containerShareDenominator = manifestPodMemory / mib

@@ -60,8 +60,8 @@ func balanced(pairing map[string]any) bool {
 func sampleSnapshot() *topology.Snapshot {
 	return &topology.Snapshot{
 		Revision: 7,
-		Nodes:    make([]graph.Node, 2),
-		Edges:    make([]graph.Edge, 1),
+		Nodes:    make([]topology.NodeView, 2),
+		Edges:    make([]topology.EdgeView, 1),
 		PairingStats: matcher.Stats{
 			Observed:         21,
 			Matched:          5,

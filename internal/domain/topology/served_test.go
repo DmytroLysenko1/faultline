@@ -73,9 +73,9 @@ func TestAServedSpanOfARefusedNodeCountsOnlyAsNodeOverflow(t *testing.T) {
 }
 
 func servedOf(snapshot *topology.Snapshot, service string) uint64 {
-	for _, node := range snapshot.Nodes {
-		if node.Service.Name == service {
-			return node.Served
+	for i := range snapshot.Nodes {
+		if found := &snapshot.Nodes[i]; found.Service.Name == service {
+			return found.Served
 		}
 	}
 	return 0

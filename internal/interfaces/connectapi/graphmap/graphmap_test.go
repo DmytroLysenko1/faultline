@@ -16,13 +16,13 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/graphmap"
 )
 
-func node(name string, unanswered, unansweredFailed uint64) graph.Node {
-	return graph.Node{
+func node(name string, unanswered, unansweredFailed uint64) topology.NodeView {
+	return topology.NodeView{Node: graph.Node{
 		ID:                    graph.ServiceNodeID(telemetrytest.Service(name)),
 		Service:               telemetrytest.Service(name),
 		UnansweredCalls:       unanswered,
 		UnansweredFailedCalls: unansweredFailed,
-	}
+	}}
 }
 
 func wireNode(name string, unanswered, unansweredFailed uint64) *faultlinev1.Node {
@@ -37,13 +37,13 @@ func wireNode(name string, unanswered, unansweredFailed uint64) *faultlinev1.Nod
 	}
 }
 
-func edge(caller, callee string, calls, failed uint64) graph.Edge {
-	return graph.Edge{
+func edge(caller, callee string, calls, failed uint64) topology.EdgeView {
+	return topology.EdgeView{Edge: graph.Edge{
 		Source:      graph.ServiceNodeID(telemetrytest.Service(caller)),
 		Target:      graph.ServiceNodeID(telemetrytest.Service(callee)),
 		Calls:       calls,
 		FailedCalls: failed,
-	}
+	}}
 }
 
 func TestGraph(t *testing.T) {
@@ -67,7 +67,7 @@ func TestGraph(t *testing.T) {
 			Args: &topology.Snapshot{
 				Revision:    3,
 				GeneratedAt: generatedAt,
-				Nodes: []graph.Node{
+				Nodes: []topology.NodeView{
 					node("cart", 0, 0),
 					node("frontend", 5, 2),
 				},
@@ -86,12 +86,12 @@ func TestGraph(t *testing.T) {
 			Args: &topology.Snapshot{
 				Revision:    9,
 				GeneratedAt: generatedAt,
-				Nodes: []graph.Node{
+				Nodes: []topology.NodeView{
 					node("cart", 0, 0),
 					node("checkout", 0, 0),
 					node("frontend", 0, 0),
 				},
-				Edges: []graph.Edge{
+				Edges: []topology.EdgeView{
 					edge("checkout", "cart", 4, 0),
 					edge("frontend", "cart", 10, 3),
 					edge("frontend", "checkout", 1, 1),
@@ -143,7 +143,7 @@ func TestGraph(t *testing.T) {
 func TestGraphRejectsDanglingEdge(t *testing.T) {
 	tests := []struct {
 		Name    string
-		Args    graph.Edge
+		Args    topology.EdgeView
 		Want    string
 		WantErr error
 	}{
@@ -163,10 +163,10 @@ func TestGraphRejectsDanglingEdge(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
 			_, err := graphmap.Graph(&topology.Snapshot{
-				Nodes: []graph.Node{
+				Nodes: []topology.NodeView{
 					node("cart", 0, 0),
 				},
-				Edges: []graph.Edge{
+				Edges: []topology.EdgeView{
 					tt.Args,
 				},
 			})

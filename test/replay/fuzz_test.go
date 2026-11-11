@@ -9,21 +9,19 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology/topologytest"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/graphmap"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/otlptest"
 )
 
 const fuzzLimit = 64
 
-func fuzzLimits() topology.Limits {
-	return topology.Limits{
-		PairingTTL:    pairingTTL,
-		MaxPending:    fuzzLimit,
-		TombstoneTTL:  tombstoneTTL,
-		MaxTombstones: fuzzLimit,
-		MaxNodes:      fuzzLimit,
-		MaxEdges:      fuzzLimit,
-	}
+func fuzzLimits() *topology.Limits {
+	limits := topologytest.Limits()
+	limits.PairingTTL, limits.MaxPending = pairingTTL, fuzzLimit
+	limits.TombstoneTTL, limits.MaxTombstones = tombstoneTTL, fuzzLimit
+	limits.MaxNodes, limits.MaxEdges = fuzzLimit, fuzzLimit
+	return &limits
 }
 
 func FuzzExportReachesGraph(f *testing.F) {

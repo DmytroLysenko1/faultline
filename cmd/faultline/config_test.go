@@ -11,6 +11,7 @@ import (
 
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
+	"github.com/DmytroLysenko1/faultline/pkg/stream"
 )
 
 func environment(values map[string]string) lookupFunc {
@@ -36,6 +37,16 @@ func defaultConfig() Config {
 			MaxTombstones: 1_000_000,
 			MaxNodes:      10_000,
 			MaxEdges:      50_000,
+			Windows: stream.Config{
+				Size:            10 * time.Second,
+				Delay:           30 * time.Second,
+				AllowedLateness: 30 * time.Second,
+				SlackWindows:    2,
+			},
+			EarlyFirePeriod:         time.Second,
+			MaxSeries:               100_000,
+			MaxOperationsPerService: 500,
+			SketchEntries:           4 << 20,
 		},
 		LogLevel: slog.LevelInfo,
 	}
@@ -97,6 +108,16 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 					MaxTombstones: 600,
 					MaxNodes:      20_000,
 					MaxEdges:      1,
+					Windows: stream.Config{
+						Size:            10 * time.Second,
+						Delay:           30 * time.Second,
+						AllowedLateness: 30 * time.Second,
+						SlackWindows:    2,
+					},
+					EarlyFirePeriod:         time.Second,
+					MaxSeries:               100_000,
+					MaxOperationsPerService: 500,
+					SketchEntries:           4 << 20,
 				},
 				LogLevel:            slog.LevelDebug,
 				SelfTracingEndpoint: "collector:4317",

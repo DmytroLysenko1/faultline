@@ -17,22 +17,16 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/graph"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/matcher"
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology/topologytest"
 )
 
-func builderLimits() topology.Limits {
-	return topology.Limits{
-		PairingTTL:    10 * time.Second,
-		MaxPending:    100,
-		TombstoneTTL:  60 * time.Second,
-		MaxTombstones: 100,
-		MaxNodes:      100,
-		MaxEdges:      100,
-	}
+func builderLimits() *topology.Limits {
+	return new(topologytest.Limits())
 }
 
-func newTestBuilder(t *testing.T, limits topology.Limits) *topology.Builder {
+func newTestBuilder(t *testing.T, limits *topology.Limits, options ...topology.Option) *topology.Builder {
 	t.Helper()
-	builder, err := topology.NewBuilder(limits, telemetrytest.Epoch())
+	builder, err := topology.NewBuilder(limits, telemetrytest.Epoch(), options...)
 	if err != nil {
 		t.Fatalf("NewBuilder: %v", err)
 	}
@@ -77,10 +71,14 @@ func viewOfSnapshot(snapshot *topology.Snapshot) snapshotView {
 	return snapshotView{
 		Revision:    snapshot.Revision,
 		GeneratedAt: snapshot.GeneratedAt,
-		Nodes:       snapshot.Nodes,
-		Edges:       snapshot.Edges,
-		Pairing:     snapshot.PairingStats,
-		Graph:       snapshot.GraphStats,
+		Nodes: lo.Map(snapshot.Nodes, func(view topology.NodeView, _ int) graph.Node {
+			return view.Node
+		}),
+		Edges: lo.Map(snapshot.Edges, func(view topology.EdgeView, _ int) graph.Edge {
+			return view.Edge
+		}),
+		Pairing: snapshot.PairingStats,
+		Graph:   snapshot.GraphStats,
 	}
 }
 
@@ -88,7 +86,7 @@ func TestBuilderEmptySnapshot(t *testing.T) {
 	got := viewOfSnapshot(newTestBuilder(t, builderLimits()).Snapshot())
 	if diff := cmp.Diff(snapshotView{
 		GeneratedAt: telemetrytest.Epoch(),
-	}, got, shapeOnly()); diff != "" {
+	}, got, shapeOnly(), cmpopts.EquateEmpty()); diff != "" {
 		t.Errorf("empty snapshot mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -335,7 +333,7 @@ func TestSnapshotMutationDoesNotLeakIntoNextSnapshot(t *testing.T) {
 	want := viewOfSnapshot(first)
 	want.Nodes = slices.Clone(want.Nodes)
 	want.Edges = slices.Clone(want.Edges)
-	first.Nodes[0] = graph.Node{}
+	first.Nodes[0] = topology.NodeView{}
 	first.Edges[0].Calls = 0
 
 	if diff := cmp.Diff(want, viewOfSnapshot(builder.Snapshot())); diff != "" {
@@ -382,12 +380,12 @@ func TestBuilderCountsUnansweredCallsOnTheCaller(t *testing.T) {
 func TestBuilderLimits(t *testing.T) {
 	tests := []struct {
 		Name string
-		Args func(t *testing.T) (topology.Limits, []batch.Batch)
+		Args func(t *testing.T) (*topology.Limits, []batch.Batch)
 		Want snapshotView
 	}{
 		{
 			Name: "services beyond max nodes are counted per span and their calls overflow",
-			Args: func(t *testing.T) (topology.Limits, []batch.Batch) {
+			Args: func(t *testing.T) (*topology.Limits, []batch.Batch) {
 				limits := builderLimits()
 				limits.MaxNodes = 2
 				return limits, []batch.Batch{
@@ -432,7 +430,7 @@ func TestBuilderLimits(t *testing.T) {
 		},
 		{
 			Name: "a new edge between existing nodes overflows at max edges",
-			Args: func(t *testing.T) (topology.Limits, []batch.Batch) {
+			Args: func(t *testing.T) (*topology.Limits, []batch.Batch) {
 				limits := builderLimits()
 				limits.MaxEdges = 1
 				return limits, []batch.Batch{
@@ -520,7 +518,7 @@ func TestNewBuilderRejectsInvalidLimits(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
 			limits := builderLimits()
-			tt.Args(&limits)
+			tt.Args(limits)
 			_, err := topology.NewBuilder(limits, telemetrytest.Epoch())
 			if !errors.Is(err, tt.WantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.WantErr)

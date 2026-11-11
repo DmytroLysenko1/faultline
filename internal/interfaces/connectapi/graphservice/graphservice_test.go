@@ -45,11 +45,11 @@ func TestGetGraphMapsTheSnapshot(t *testing.T) {
 	snapshot := &topology.Snapshot{
 		Revision:    2,
 		GeneratedAt: telemetrytest.Epoch(),
-		Nodes: []graph.Node{
-			{
+		Nodes: []topology.NodeView{
+			{Node: graph.Node{
 				ID:      graph.ServiceNodeID(telemetrytest.Service("cart")),
 				Service: telemetrytest.Service("cart"),
-			},
+			}},
 		},
 	}
 	want, err := graphmap.Graph(snapshot)
@@ -112,11 +112,11 @@ func TestGetGraphPassesContextErrors(t *testing.T) {
 
 func TestGetGraphHidesInternalFailures(t *testing.T) {
 	dangling := &topology.Snapshot{
-		Edges: []graph.Edge{
-			{
+		Edges: []topology.EdgeView{
+			{Edge: graph.Edge{
 				Source: "svc:shop/a",
 				Target: "svc:shop/b",
-			},
+			}},
 		},
 	}
 	tests := []struct {

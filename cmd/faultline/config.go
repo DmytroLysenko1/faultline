@@ -7,6 +7,7 @@ import (
 
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
+	"github.com/DmytroLysenko1/faultline/pkg/stream"
 )
 
 const (
@@ -49,6 +50,14 @@ const (
 	defaultGraphMaxEdges     = 50_000
 	maxGraphMaxEdges         = 100_000
 	minCount                 = 1
+	defaultWindowSize        = 10 * time.Second
+	defaultWatermarkDelay    = 30 * time.Second
+	defaultAllowedLateness   = 30 * time.Second
+	defaultSlackWindows      = 2
+	defaultEarlyFirePeriod   = time.Second
+	defaultMaxSeries         = 100_000
+	defaultOperationsEach    = 500
+	defaultSketchEntries     = 4 << 20
 )
 
 type Config struct {
@@ -91,5 +100,15 @@ func topologyLimits(reader *envReader) topology.Limits {
 		MaxTombstones: reader.count(envTombstoneMax, defaultTombstoneMax, maxTombstoneMax),
 		MaxNodes:      reader.count(envGraphMaxNodes, defaultGraphMaxNodes, maxGraphMaxNodes),
 		MaxEdges:      reader.count(envGraphMaxEdges, defaultGraphMaxEdges, maxGraphMaxEdges),
+		Windows: stream.Config{
+			Size:            defaultWindowSize,
+			Delay:           defaultWatermarkDelay,
+			AllowedLateness: defaultAllowedLateness,
+			SlackWindows:    defaultSlackWindows,
+		},
+		EarlyFirePeriod:         defaultEarlyFirePeriod,
+		MaxSeries:               defaultMaxSeries,
+		MaxOperationsPerService: defaultOperationsEach,
+		SketchEntries:           defaultSketchEntries,
 	}
 }

@@ -155,7 +155,7 @@ func provideStorage(cfg *Config) (storage, error) {
 	if err != nil {
 		return storage{}, fmt.Errorf("build journal: %w", err)
 	}
-	builder, err := topology.NewBuilder(cfg.Topology, systemClock{}.Now())
+	builder, err := topology.NewBuilder(&cfg.Topology, systemClock{}.Now())
 	if err != nil {
 		return storage{}, fmt.Errorf("build topology: %w", err)
 	}

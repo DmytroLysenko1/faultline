@@ -33,7 +33,7 @@ spec:
             - name: FAULTLINE_API_ADDR
               value: 0.0.0.0:8080
             - name: GOMEMLIMIT
-              value: 1408MiB
+              value: 1600MiB
           ports:
             - name: otlp-grpc
               containerPort: 4317

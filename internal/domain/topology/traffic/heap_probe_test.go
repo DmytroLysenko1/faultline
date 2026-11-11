@@ -63,7 +63,7 @@ func TestWorstCaseHeapCoversEverySubjectSeriesAndOperationWithTheLongestNames(t 
 	grown := telemetrytest.HeapGrowth(func() any {
 		return fullTraffic(t, limits)
 	})
-	model := uint64(limits.WorstCaseHeapBytes() + limits.ViewHeapBytes())
+	model := uint64(limits.WorstCaseHeapBytes())
 	if grown > model {
 		t.Errorf("traffic took %d bytes with every subject and series full, model %d", grown, model)
 	}

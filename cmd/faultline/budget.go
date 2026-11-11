@@ -38,7 +38,7 @@ func coreContributions(cfg *Config) []contribution {
 	view := cfg.Topology.ViewHeapBytes()
 	return []contribution{
 		{name: "journal", bytes: cfg.Journal.WorstCaseHeapBytes()},
-		{name: "pairing and graph", bytes: cfg.Topology.WorstCaseHeapBytes()},
+		{name: "pairing, graph and traffic", bytes: cfg.Topology.WorstCaseHeapBytes()},
 		{name: "snapshots", bytes: (memgraph.HeldSnapshots + processing.HeldSnapshots) * view},
 		{name: "batch apply", bytes: topology.ApplyHeapBytes(otlp.MaxSpansPerRequest)},
 		{name: "api responses", bytes: connectapi.WorstHeapBytes(cfg.Topology.MaxNodes, cfg.Topology.MaxEdges, view)},

@@ -58,23 +58,23 @@ func randomServices() serviceNaming {
 }
 
 func snapshotOf(naming serviceNaming) *topology.Snapshot {
-	nodes := make([]graph.Node, 0, probeNodes)
+	nodes := make([]topology.NodeView, 0, probeNodes)
 	for index := range probeNodes {
 		node := graph.NewNode(naming(index))
 		node.UnansweredCalls = math.MaxUint64
 		node.UnansweredFailedCalls = math.MaxUint64
-		nodes = append(nodes, node)
+		nodes = append(nodes, topology.NodeView{Node: node})
 	}
-	edges := make([]graph.Edge, 0, probeEdges)
+	edges := make([]topology.EdgeView, 0, probeEdges)
 	for index := range probeEdges {
 		source := index % probeNodes
 		target := (source + 1 + index/probeNodes) % probeNodes
-		edges = append(edges, graph.Edge{
+		edges = append(edges, topology.EdgeView{Edge: graph.Edge{
 			Source:      nodes[source].ID,
 			Target:      nodes[target].ID,
 			Calls:       math.MaxUint64,
 			FailedCalls: math.MaxUint64,
-		})
+		}})
 	}
 	return &topology.Snapshot{
 		Revision: math.MaxUint64,

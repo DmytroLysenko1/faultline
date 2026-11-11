@@ -20,6 +20,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/graph"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/matcher"
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology/topologytest"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/otlptest"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/spanmap"
 	"github.com/DmytroLysenko1/faultline/test/demo/reference"
@@ -97,22 +98,29 @@ func later(first, second time.Time) time.Time {
 	return first
 }
 
-func defaultLimits() topology.Limits {
-	return topology.Limits{
-		PairingTTL:    pairingTTL,
-		MaxPending:    maxPending,
-		TombstoneTTL:  tombstoneTTL,
-		MaxTombstones: maxTombstones,
-		MaxNodes:      maxNodes,
-		MaxEdges:      maxEdges,
-	}
+func defaultLimits() *topology.Limits {
+	limits := topologytest.Limits()
+	limits.PairingTTL, limits.MaxPending = pairingTTL, maxPending
+	limits.TombstoneTTL, limits.MaxTombstones = tombstoneTTL, maxTombstones
+	limits.MaxNodes, limits.MaxEdges = maxNodes, maxEdges
+	return &limits
 }
 
-func replay(t *testing.T, limits topology.Limits, lines []ptrace.Traces) *topology.Snapshot {
+func replay(t *testing.T, limits *topology.Limits, lines []ptrace.Traces) *topology.Snapshot {
+	t.Helper()
+	builder, _ := replayInto(t, limits, lines, func(*topology.Builder) {})
+	return builder.Snapshot()
+}
+
+// replayInto feeds the dump through ingest and the builder, calling afterApply after every journal
+// record, and returns the builder with the journal time of the last record.
+func replayInto(t *testing.T, limits *topology.Limits, lines []ptrace.Traces, afterApply func(*topology.Builder),
+	options ...topology.Option,
+) (*topology.Builder, time.Time) {
 	t.Helper()
 	clock := &monotonicClock{}
 	clock.AdvanceTo(lastEnd(lines[0]))
-	builder, err := topology.NewBuilder(limits, clock.Now())
+	builder, err := topology.NewBuilder(limits, clock.Now(), options...)
 	if err != nil {
 		t.Fatalf("NewBuilder: %v", err)
 	}
@@ -125,9 +133,10 @@ func replay(t *testing.T, limits topology.Limits, lines []ptrace.Traces) *topolo
 		}
 		for _, received := range journal.Take() {
 			builder.Apply(received)
+			afterApply(builder)
 		}
 	}
-	return builder.Snapshot()
+	return builder, clock.Now()
 }
 
 type goldenNode struct {
@@ -160,7 +169,8 @@ func goldenOf(snapshot *topology.Snapshot) golden {
 		Pairing:     snapshot.PairingStats,
 		Graph:       snapshot.GraphStats,
 	}
-	for _, node := range snapshot.Nodes {
+	for i := range snapshot.Nodes {
+		node := &snapshot.Nodes[i]
 		result.Nodes = append(result.Nodes, goldenNode{
 			ID:                    node.ID,
 			UnansweredCalls:       node.UnansweredCalls,
@@ -168,7 +178,8 @@ func goldenOf(snapshot *topology.Snapshot) golden {
 			Served:                node.Served,
 		})
 	}
-	for _, edge := range snapshot.Edges {
+	for i := range snapshot.Edges {
+		edge := &snapshot.Edges[i]
 		result.Edges = append(result.Edges, goldenEdge{
 			Source:      edge.Source,
 			Target:      edge.Target,

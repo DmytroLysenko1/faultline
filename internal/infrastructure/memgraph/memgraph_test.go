@@ -19,11 +19,11 @@ const (
 func snapshotAt(revision uint64) *topology.Snapshot {
 	return &topology.Snapshot{
 		Revision: revision,
-		Nodes: []graph.Node{
-			{
+		Nodes: []topology.NodeView{
+			{Node: graph.Node{
 				ID:              "svc:shop/cart",
 				UnansweredCalls: revision,
-			},
+			}},
 		},
 	}
 }

@@ -169,7 +169,7 @@ func TestSkeletonDeploymentIsHardenedAndFitsTheMemoryBudget(t *testing.T) {
 		Env: map[string]string{
 			"FAULTLINE_OTLP_GRPC_ADDR": "0.0.0.0:4317",
 			"FAULTLINE_API_ADDR":       "0.0.0.0:8080",
-			memoryLimitEnv:             "1408MiB",
+			memoryLimitEnv:             "1600MiB",
 		},
 	}
 	got := hardeningOf(&spec)

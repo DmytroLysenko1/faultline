@@ -1,7 +1,6 @@
 package traffic
 
 import (
-	"slices"
 	"time"
 
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/red"
@@ -80,8 +79,8 @@ func (t *Traffic) Changed() bool {
 func (t *Traffic) View() View {
 	t.views.changed = false
 	return View{
-		Nodes:      slices.Clone(t.views.nodes),
-		Edges:      slices.Clone(t.views.edges),
+		Nodes:      t.views.nodes,
+		Edges:      t.views.edges,
 		WindowSize: t.limits.Windows.Size,
 		Watermark:  t.watermark.Current,
 	}

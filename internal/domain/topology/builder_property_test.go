@@ -13,7 +13,6 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/kind"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
-	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/graph"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/topologytest"
 )
@@ -30,15 +29,12 @@ func TestBuilderKeepsEdgeAccounting(t *testing.T) {
 	rng := rand.New(rand.NewPCG(invariantSeed, invariantSeed))
 	for scenario := range invariantRounds {
 		pairing := topologytest.RandomLimits(rng)
-		limits := topology.Limits{
-			PairingTTL:    pairing.TTL,
-			MaxPending:    pairing.MaxPending,
-			TombstoneTTL:  pairing.TombstoneTTL,
-			MaxTombstones: pairing.MaxTombstones,
-			MaxNodes:      1 + rng.IntN(topologytest.ServiceCount),
-			MaxEdges:      1 + rng.IntN(6),
-		}
-		builder := newTestBuilder(t, limits)
+		limits := topologytest.Limits()
+		limits.PairingTTL, limits.MaxPending = pairing.TTL, pairing.MaxPending
+		limits.TombstoneTTL, limits.MaxTombstones = pairing.TombstoneTTL, pairing.MaxTombstones
+		limits.MaxNodes = 1 + rng.IntN(topologytest.ServiceCount)
+		limits.MaxEdges = 1 + rng.IntN(6)
+		builder := newTestBuilder(t, &limits)
 		previous := viewOfSnapshot(builder.Snapshot())
 		var fed uint64
 		for _, generated := range topologytest.RandomSteps(t, rng) {
@@ -151,7 +147,7 @@ func TestBuilderGraphMatchesOracle(t *testing.T) {
 		for _, received := range oracleBatches(t, rng, spans) {
 			builder.Apply(received)
 		}
-		got := lo.SliceToMap(builder.Snapshot().Edges, func(e graph.Edge) (oracleEdge, oracleCounts) {
+		got := lo.SliceToMap(viewOfSnapshot(builder.Snapshot()).Edges, func(e graph.Edge) (oracleEdge, oracleCounts) {
 			return oracleEdge{
 				Caller: e.Source,
 				Callee: e.Target,

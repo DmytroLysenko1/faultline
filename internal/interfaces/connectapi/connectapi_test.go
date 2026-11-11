@@ -194,22 +194,22 @@ func smallSnapshot() *topology.Snapshot {
 	return &topology.Snapshot{
 		Revision:    4,
 		GeneratedAt: telemetrytest.Epoch().Add(time.Second),
-		Nodes: []graph.Node{
-			graph.NewNode(cart),
-			{
+		Nodes: []topology.NodeView{
+			{Node: graph.NewNode(cart)},
+			{Node: graph.Node{
 				ID:                    graph.ServiceNodeID(frontend),
 				Service:               frontend,
 				UnansweredCalls:       2,
 				UnansweredFailedCalls: 1,
-			},
+			}},
 		},
-		Edges: []graph.Edge{
-			{
+		Edges: []topology.EdgeView{
+			{Edge: graph.Edge{
 				Source:      graph.ServiceNodeID(frontend),
 				Target:      graph.ServiceNodeID(cart),
 				Calls:       12,
 				FailedCalls: 3,
-			},
+			}},
 		},
 	}
 }
@@ -711,13 +711,13 @@ func checkWireSize(t *testing.T, got *faultlinev1.Graph) {
 	}
 }
 
-func worstNodes(count int) []graph.Node {
-	nodes := make([]graph.Node, 0, count)
+func worstNodes(count int) []topology.NodeView {
+	nodes := make([]topology.NodeView, 0, count)
 	for i := range count {
 		node := graph.NewNode(telemetrytest.WorstService(i))
 		node.UnansweredCalls = math.MaxUint64
 		node.UnansweredFailedCalls = math.MaxUint64
-		nodes = append(nodes, node)
+		nodes = append(nodes, topology.NodeView{Node: node})
 	}
 	return nodes
 }
@@ -731,16 +731,16 @@ func snapshotOfNodes(count int) *topology.Snapshot {
 
 func largestSnapshot() *topology.Snapshot {
 	nodes := worstNodes(maxConfiguredNodes)
-	edges := make([]graph.Edge, 0, maxConfiguredEdges)
+	edges := make([]topology.EdgeView, 0, maxConfiguredEdges)
 	for i := range maxConfiguredEdges {
 		source := i % maxConfiguredNodes
 		target := (source + 1 + i/maxConfiguredNodes) % maxConfiguredNodes
-		edges = append(edges, graph.Edge{
+		edges = append(edges, topology.EdgeView{Edge: graph.Edge{
 			Source:      nodes[source].ID,
 			Target:      nodes[target].ID,
 			Calls:       math.MaxUint64,
 			FailedCalls: math.MaxUint64,
-		})
+		}})
 	}
 	return &topology.Snapshot{
 		Revision:    math.MaxUint64,

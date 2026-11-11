@@ -13,6 +13,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology/topologytest"
 )
 
 const (
@@ -84,14 +85,11 @@ func (f *IterationFeed) Receive(ctx context.Context, _ int, _ time.Duration) ([]
 
 func NewBuilder(tb testing.TB) *topology.Builder {
 	tb.Helper()
-	builder, err := topology.NewBuilder(topology.Limits{
-		PairingTTL:    pairingTTL,
-		MaxPending:    maxPending,
-		TombstoneTTL:  tombstoneTTL,
-		MaxTombstones: maxTombstones,
-		MaxNodes:      maxNodes,
-		MaxEdges:      maxEdges,
-	}, telemetrytest.Epoch())
+	limits := topologytest.Limits()
+	limits.PairingTTL, limits.MaxPending = pairingTTL, maxPending
+	limits.TombstoneTTL, limits.MaxTombstones = tombstoneTTL, maxTombstones
+	limits.MaxNodes, limits.MaxEdges = maxNodes, maxEdges
+	builder, err := topology.NewBuilder(&limits, telemetrytest.Epoch())
 	if err != nil {
 		tb.Fatalf("NewBuilder: %v", err)
 	}
@@ -143,8 +141,8 @@ func CallerHalvesAfterPrefill(tb testing.TB, first uint64, count int) batch.Batc
 
 func TotalCalls(snapshot *topology.Snapshot) uint64 {
 	var total uint64
-	for _, edge := range snapshot.Edges {
-		total += edge.Calls
+	for i := range snapshot.Edges {
+		total += snapshot.Edges[i].Calls
 	}
 	return total
 }
