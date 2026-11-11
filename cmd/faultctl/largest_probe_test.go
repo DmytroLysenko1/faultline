@@ -6,7 +6,9 @@ import (
 	"bytes"
 	"math"
 	"testing"
+	"time"
 
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
@@ -29,10 +31,28 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+func worstStats(kind faultlinev1.PaneKind) *faultlinev1.WindowStats {
+	longest := durationpb.New(time.Duration(math.MaxInt64))
+	return &faultlinev1.WindowStats{
+		Start:          timestamppb.New(time.Unix(0, math.MaxInt64)),
+		Kind:           kind,
+		Revision:       math.MaxUint32,
+		Requests:       math.MaxUint64,
+		FailedRequests: math.MaxUint64,
+		LatencySamples: math.MaxUint64,
+		P50:            longest,
+		P95:            longest,
+		P99:            longest,
+		Observed:       longest,
+	}
+}
+
 func largestGraph() *faultlinev1.Graph {
 	largest := &faultlinev1.Graph{
 		Revision:    math.MaxUint64,
 		GeneratedAt: timestamppb.New(telemetrytest.Epoch()),
+		WindowSize:  durationpb.New(time.Duration(math.MaxInt64)),
+		Watermark:   timestamppb.New(time.Unix(0, math.MaxInt64)),
 	}
 	for index := range maxNodes {
 		service := telemetrytest.WorstService(index)
@@ -41,6 +61,9 @@ func largestGraph() *faultlinev1.Graph {
 			Service:               &faultlinev1.ServiceRef{Namespace: service.Namespace, Name: service.Name},
 			UnansweredCalls:       math.MaxUint64,
 			UnansweredFailedCalls: math.MaxUint64,
+			ServedRequests:        math.MaxUint64,
+			Live:                  worstStats(faultlinev1.PaneKind_PANE_KIND_EARLY),
+			Final:                 worstStats(faultlinev1.PaneKind_PANE_KIND_ON_TIME),
 		})
 	}
 	for index := range maxEdges {
@@ -50,6 +73,8 @@ func largestGraph() *faultlinev1.Graph {
 			TargetIndex: uint32((source + 1 + index/maxNodes) % maxNodes),
 			Calls:       math.MaxUint64,
 			FailedCalls: math.MaxUint64,
+			Live:        worstStats(faultlinev1.PaneKind_PANE_KIND_EARLY),
+			Final:       worstStats(faultlinev1.PaneKind_PANE_KIND_ON_TIME),
 		})
 	}
 	return largest

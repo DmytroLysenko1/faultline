@@ -7,6 +7,8 @@ import (
 
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi"
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/graphservice"
 	"github.com/DmytroLysenko1/faultline/pkg/stream"
 )
 
@@ -24,6 +26,8 @@ const (
 	envGraphMaxEdges     = "FAULTLINE_GRAPH_MAX_EDGES"
 	envLogLevel          = "FAULTLINE_LOG_LEVEL"
 	envSelfTracing       = "FAULTLINE_SELF_TRACING_ENDPOINT"
+	envAPIResponseBudget = "FAULTLINE_API_RESPONSE_BUDGET"
+	worstResponseAtLimit = "the worst response at the graph limits"
 
 	defaultOTLPAddr          = "127.0.0.1:4317"
 	defaultAPIAddr           = "127.0.0.1:8080"
@@ -50,6 +54,8 @@ const (
 	defaultGraphMaxEdges     = 50_000
 	maxGraphMaxEdges         = 100_000
 	minCount                 = 1
+	minAPIResponseBudget     = mib
+	maxAPIResponseBudget     = 1 << 30
 	defaultWindowSize        = 10 * time.Second
 	defaultWatermarkDelay    = 30 * time.Second
 	defaultAllowedLateness   = 30 * time.Second
@@ -57,7 +63,7 @@ const (
 	defaultEarlyFirePeriod   = time.Second
 	defaultMaxSeries         = 100_000
 	defaultOperationsEach    = 500
-	defaultSketchEntries     = 4 << 20
+	defaultSketchEntries     = 8 << 20
 )
 
 type Config struct {
@@ -65,6 +71,7 @@ type Config struct {
 	APIAddr             string
 	Journal             memjournal.Limits
 	Topology            topology.Limits
+	APIResponseBudget   int64
 	LogLevel            slog.Level
 	SelfTracingEndpoint string
 }
@@ -72,15 +79,19 @@ type Config struct {
 func Load(lookup lookupFunc) (Config, error) {
 	reader := newEnvReader(lookup)
 	cfg := Config{
-		OTLPAddr:            reader.address(envOTLPAddr, defaultOTLPAddr),
-		APIAddr:             reader.address(envAPIAddr, defaultAPIAddr),
-		Journal:             journalLimits(reader),
-		Topology:            topologyLimits(reader),
+		OTLPAddr: reader.address(envOTLPAddr, defaultOTLPAddr),
+		APIAddr:  reader.address(envAPIAddr, defaultAPIAddr),
+		Journal:  journalLimits(reader),
+		Topology: topologyLimits(reader),
+		APIResponseBudget: reader.size(envAPIResponseBudget, connectapi.DefaultResponseBudget, minAPIResponseBudget,
+			maxAPIResponseBudget),
 		LogLevel:            reader.level(envLogLevel, slog.LevelInfo),
 		SelfTracingEndpoint: reader.endpoint(envSelfTracing),
 	}
 	reader.notBelow(envTombstoneTTL, cfg.Topology.TombstoneTTL, envPairingTTL, cfg.Topology.PairingTTL)
 	reader.distinct(envSelfTracing, cfg.SelfTracingEndpoint, envOTLPAddr, cfg.OTLPAddr)
+	reader.atLeast(envAPIResponseBudget, cfg.APIResponseBudget, worstResponseAtLimit,
+		graphservice.ResponseWeight(cfg.Topology.MaxNodes, cfg.Topology.MaxEdges))
 	return cfg, errors.Join(reader.errs...)
 }
 

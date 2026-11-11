@@ -23,6 +23,8 @@ import (
 
 var errQueryBroken = errors.New("query broken")
 
+const roomyBudget = 1 << 30
+
 type fakeQuery struct {
 	Snapshot *topology.Snapshot
 	Err      error
@@ -34,7 +36,9 @@ func (f *fakeQuery) Execute(_ context.Context) (*topology.Snapshot, error) {
 
 func getGraph(t *testing.T, handler *graphservice.Handler) (*faultlinev1.Graph, error) {
 	t.Helper()
-	response, err := handler.GetGraph(t.Context(), connect.NewRequest(&faultlinev1.GetGraphRequest{}))
+	ctx, release := graphservice.AdmittedContext(t.Context(), roomyBudget)
+	defer release()
+	response, err := handler.GetGraph(ctx, connect.NewRequest(&faultlinev1.GetGraphRequest{}))
 	if err != nil {
 		return nil, err
 	}

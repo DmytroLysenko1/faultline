@@ -40,7 +40,10 @@ func NewOwning(spans []span.Span) (Batch, error) {
 }
 
 func Heartbeat(receivedAt time.Time) Batch {
-	return Batch{ReceivedAt: receivedAt, Heartbeat: true}
+	return Batch{
+		ReceivedAt: receivedAt,
+		Heartbeat:  true,
+	}
 }
 
 func (b Batch) Candidate() (time.Time, bool) {

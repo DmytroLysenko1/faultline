@@ -7,11 +7,13 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/protobuf/testing/protocmp"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/graph"
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology/red"
 	faultlinev1 "github.com/DmytroLysenko1/faultline/internal/gen/proto/faultline/v1"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/graphmap"
 )
@@ -60,6 +62,7 @@ func TestGraph(t *testing.T) {
 			},
 			Want: &faultlinev1.Graph{
 				GeneratedAt: timestamppb.New(generatedAt),
+				WindowSize:  durationpb.New(0),
 			},
 		},
 		{
@@ -75,6 +78,7 @@ func TestGraph(t *testing.T) {
 			Want: &faultlinev1.Graph{
 				Revision:    3,
 				GeneratedAt: timestamppb.New(generatedAt),
+				WindowSize:  durationpb.New(0),
 				Nodes: []*faultlinev1.Node{
 					wireNode("cart", 0, 0),
 					wireNode("frontend", 5, 2),
@@ -100,6 +104,7 @@ func TestGraph(t *testing.T) {
 			Want: &faultlinev1.Graph{
 				Revision:    9,
 				GeneratedAt: timestamppb.New(generatedAt),
+				WindowSize:  durationpb.New(0),
 				Nodes: []*faultlinev1.Node{
 					wireNode("cart", 0, 0),
 					wireNode("checkout", 0, 0),
@@ -183,5 +188,136 @@ func TestGraphRejectsDanglingEdge(t *testing.T) {
 func TestGraphRejectsNilSnapshot(t *testing.T) {
 	if _, err := graphmap.Graph(nil); !errors.Is(err, graphmap.ErrNilSnapshot) {
 		t.Errorf("err = %v, want %v", err, graphmap.ErrNilSnapshot)
+	}
+}
+
+const (
+	windowSize    = 10 * time.Second
+	earlyObserved = 4 * time.Second
+	p50           = 3 * time.Millisecond
+	p95           = 9 * time.Millisecond
+	p99           = 14 * time.Millisecond
+	unknownPane   = red.PaneKind(9)
+)
+
+func summary(kind red.PaneKind, start time.Time, revision uint32, samples uint64) red.WindowStats {
+	stats := red.WindowStats{
+		StartUnixNano:  start.UnixNano(),
+		Kind:           kind,
+		Revision:       revision,
+		Requests:       12,
+		Failed:         2,
+		LatencySamples: samples,
+		Observed:       windowSize,
+	}
+	if samples > 0 {
+		stats.P50, stats.P95, stats.P99 = p50, p95, p99
+	}
+	return stats
+}
+
+func wireSummary(kind faultlinev1.PaneKind, start time.Time, revision uint32, samples uint64) *faultlinev1.WindowStats {
+	stats := &faultlinev1.WindowStats{
+		Start:          timestamppb.New(start),
+		Kind:           kind,
+		Revision:       revision,
+		Requests:       12,
+		FailedRequests: 2,
+		LatencySamples: samples,
+		Observed:       durationpb.New(windowSize),
+	}
+	if samples > 0 {
+		stats.P50, stats.P95, stats.P99 = durationpb.New(p50), durationpb.New(p95), durationpb.New(p99)
+	}
+	return stats
+}
+
+// TestGraphCarriesTheREDOfEverySubject: a zero summary is an unset field, percentiles are set only
+// with latency samples, and the watermark only once it is known.
+func TestGraphCarriesTheREDOfEverySubject(t *testing.T) {
+	window := telemetrytest.Epoch()
+	previous := window.Add(-windowSize)
+	cart := node("cart", 0, 0)
+	cart.Served = 7
+	cart.Live = summary(red.PaneEarly, window, 0, 12)
+	cart.Live.Observed = earlyObserved
+	cart.Final = summary(red.PaneOnTime, previous, 1, 0)
+	call := edge("frontend", "cart", 30, 4)
+	call.Final = summary(red.PaneLate, previous, 3, 12)
+	call.Live = summary(red.PaneEarly, window, 0, 12)
+	unknown := node("frontend", 0, 0)
+	unknown.Final = summary(unknownPane, previous, 1, 0)
+	tests := []struct {
+		Name string
+		Args *topology.Snapshot
+		Want *faultlinev1.Graph
+	}{
+		{
+			Name: "live and final of a node and an edge, served requests, window size and watermark",
+			Args: &topology.Snapshot{
+				WindowSize:     windowSize,
+				Watermark:      previous,
+				WatermarkKnown: true,
+				Nodes:          []topology.NodeView{cart, unknown},
+				Edges:          []topology.EdgeView{call},
+			},
+			Want: &faultlinev1.Graph{
+				GeneratedAt: timestamppb.New(time.Time{}),
+				WindowSize:  durationpb.New(windowSize),
+				Watermark:   timestamppb.New(previous),
+				Nodes: []*faultlinev1.Node{
+					{
+						Id:             cart.ID,
+						Service:        &faultlinev1.ServiceRef{Namespace: telemetrytest.Namespace, Name: "cart"},
+						ServedRequests: 7,
+						Live: func() *faultlinev1.WindowStats {
+							live := wireSummary(faultlinev1.PaneKind_PANE_KIND_EARLY, window, 0, 12)
+							live.Observed = durationpb.New(earlyObserved)
+							return live
+						}(),
+						Final: wireSummary(faultlinev1.PaneKind_PANE_KIND_ON_TIME, previous, 1, 0),
+					},
+					{
+						Id:      unknown.ID,
+						Service: &faultlinev1.ServiceRef{Namespace: telemetrytest.Namespace, Name: "frontend"},
+						Final:   wireSummary(faultlinev1.PaneKind_PANE_KIND_UNSPECIFIED, previous, 1, 0),
+					},
+				},
+				Edges: []*faultlinev1.Edge{
+					{
+						SourceIndex: 1,
+						TargetIndex: 0,
+						Calls:       30,
+						FailedCalls: 4,
+						Live:        wireSummary(faultlinev1.PaneKind_PANE_KIND_EARLY, window, 0, 12),
+						Final:       wireSummary(faultlinev1.PaneKind_PANE_KIND_LATE, previous, 3, 12),
+					},
+				},
+			},
+		},
+		{
+			Name: "no summaries and an unknown watermark leave the fields unset",
+			Args: &topology.Snapshot{
+				WindowSize: windowSize,
+				Watermark:  previous,
+				Nodes:      []topology.NodeView{node("cart", 0, 0)},
+			},
+			Want: &faultlinev1.Graph{
+				GeneratedAt: timestamppb.New(time.Time{}),
+				WindowSize:  durationpb.New(windowSize),
+				Nodes:       []*faultlinev1.Node{wireNode("cart", 0, 0)},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.Name, func(t *testing.T) {
+			got, err := graphmap.Graph(tt.Args)
+			if err != nil {
+				t.Fatalf("Graph: %v", err)
+			}
+			if diff := cmp.Diff(tt.Want, got, protocmp.Transform()); diff != "" {
+				t.Errorf("wire graph mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }

@@ -2,5 +2,7 @@
   "revision": "42",
   "generated_at": "2026-11-08T00:00:00Z",
   "nodes": [],
-  "edges": []
+  "edges": [],
+  "window_size": null,
+  "watermark": null
 }

@@ -11,7 +11,6 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memgraph"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/selftrace"
-	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
 )
 
@@ -41,7 +40,7 @@ func coreContributions(cfg *Config) []contribution {
 		{name: "pairing, graph and traffic", bytes: cfg.Topology.WorstCaseHeapBytes()},
 		{name: "snapshots", bytes: (memgraph.HeldSnapshots + processing.HeldSnapshots) * view},
 		{name: "batch apply", bytes: topology.ApplyHeapBytes(otlp.MaxSpansPerRequest)},
-		{name: "api responses", bytes: connectapi.WorstHeapBytes(cfg.Topology.MaxNodes, cfg.Topology.MaxEdges, view)},
+		{name: "api responses", bytes: cfg.APIResponseBudget},
 		{name: "otlp requests", bytes: otlp.WorstHeapBytes()},
 	}
 }

@@ -144,6 +144,13 @@ func (r *envReader) notBelow(name string, value time.Duration, floorName string,
 	r.fail(name, fmt.Errorf("%s %w %s (%s)", value, errBelow, floorName, floor))
 }
 
+func (r *envReader) atLeast(name string, value int64, need string, floor int64) {
+	if r.failed[name] || value >= floor {
+		return
+	}
+	r.fail(name, fmt.Errorf("%d %w %s (%d)", value, errBelow, need, floor))
+}
+
 func (r *envReader) distinct(name, value, otherName, other string) {
 	if r.failed[name] || r.failed[otherName] || value != other {
 		return

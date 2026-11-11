@@ -46,9 +46,10 @@ func defaultConfig() Config {
 			EarlyFirePeriod:         time.Second,
 			MaxSeries:               100_000,
 			MaxOperationsPerService: 500,
-			SketchEntries:           4 << 20,
+			SketchEntries:           8 << 20,
 		},
-		LogLevel: slog.LevelInfo,
+		APIResponseBudget: 256 << 20,
+		LogLevel:          slog.LevelInfo,
 	}
 }
 
@@ -92,6 +93,7 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 				envGraphMaxEdges:     "1",
 				envLogLevel:          "debug",
 				envSelfTracing:       "collector:4317",
+				envAPIResponseBudget: "320MiB",
 			},
 			Want: Config{
 				OTLPAddr: "0.0.0.0:4317",
@@ -117,8 +119,9 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 					EarlyFirePeriod:         time.Second,
 					MaxSeries:               100_000,
 					MaxOperationsPerService: 500,
-					SketchEntries:           4 << 20,
+					SketchEntries:           8 << 20,
 				},
+				APIResponseBudget:   320 << 20,
 				LogLevel:            slog.LevelDebug,
 				SelfTracingEndpoint: "collector:4317",
 			},
@@ -400,6 +403,23 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			},
 			Want:    "FAULTLINE_TOMBSTONE_TTL: 20s must not be below FAULTLINE_PAIRING_TTL (30s)",
 			WantErr: errBelow,
+		},
+		{
+			Name: "response budget below the worst response at the graph limits",
+			Args: map[string]string{
+				envAPIResponseBudget: "128MiB",
+			},
+			Want: "FAULTLINE_API_RESPONSE_BUDGET: 134217728 must not be below the worst response at the graph limits " +
+				"(257762560)",
+			WantErr: errBelow,
+		},
+		{
+			Name: "response budget above 1 GiB",
+			Args: map[string]string{
+				envAPIResponseBudget: "2GiB",
+			},
+			Want:    "FAULTLINE_API_RESPONSE_BUDGET: 2GiB out of range, want 1MiB … 1GiB",
+			WantErr: errOutOfRange,
 		},
 	}
 	for _, tt := range tests {

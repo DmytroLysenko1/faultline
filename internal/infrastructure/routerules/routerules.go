@@ -55,7 +55,10 @@ func Parse(data []byte) (*operation.Rules, error) {
 	}
 	rules, err := operation.NewRules(servicesOf(parsed))
 	if ruleErr, ok := errors.AsType[*operation.RuleError](err); ok {
-		return nil, &LineError{Line: lineOf(data, ruleErr), Err: ruleErr}
+		return nil, &LineError{
+			Line: lineOf(data, ruleErr),
+			Err:  ruleErr,
+		}
 	}
 	return rules, err
 }
@@ -76,8 +79,11 @@ func decodeStrict(data []byte) (document, error) {
 			operation.ErrInvalidRules, err)
 	}
 	if parsed.Version != supportedFormat {
-		return document{}, &LineError{Line: versionLine(data), Err: fmt.Errorf("%w: version %d, want %d",
-			operation.ErrInvalidRules, parsed.Version, supportedFormat)}
+		return document{}, &LineError{
+			Line: versionLine(data),
+			Err: fmt.Errorf("%w: version %d, want %d",
+				operation.ErrInvalidRules, parsed.Version, supportedFormat),
+		}
 	}
 	return parsed, nil
 }
@@ -86,8 +92,11 @@ func servicesOf(parsed document) []operation.ServiceRoutes {
 	services := make([]operation.ServiceRoutes, 0, len(parsed.Services))
 	for _, entry := range parsed.Services {
 		services = append(services, operation.ServiceRoutes{
-			Service: resource.ServiceRef{Namespace: entry.Namespace, Name: entry.Name},
-			Routes:  entry.Routes,
+			Service: resource.ServiceRef{
+				Namespace: entry.Namespace,
+				Name:      entry.Name,
+			},
+			Routes: entry.Routes,
 		})
 	}
 	return services

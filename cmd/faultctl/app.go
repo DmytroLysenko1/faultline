@@ -19,7 +19,7 @@ import (
 
 const (
 	usage        = "usage: faultctl graph export -o dot|json [--server URL] [--timeout 10s]"
-	readMaxBytes = 80 << 20
+	readMaxBytes = 192 << 20
 	formatDOT    = "dot"
 	formatJSON   = "json"
 	exitOK       = 0

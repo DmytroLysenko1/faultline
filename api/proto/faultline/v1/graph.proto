@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package faultline.v1;
 
+import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
 service GraphService {
@@ -19,6 +20,8 @@ message Graph {
   google.protobuf.Timestamp generated_at = 2;
   repeated Node nodes = 3;
   repeated Edge edges = 4;
+  google.protobuf.Duration window_size = 5;
+  google.protobuf.Timestamp watermark = 6;
 }
 
 message Node {
@@ -26,6 +29,9 @@ message Node {
   ServiceRef service = 2;
   uint64 unanswered_calls = 3;
   uint64 unanswered_failed_calls = 4;
+  uint64 served_requests = 5;
+  WindowStats live = 6;
+  WindowStats final = 7;
 }
 
 message ServiceRef {
@@ -38,4 +44,26 @@ message Edge {
   uint32 target_index = 2;
   uint64 calls = 3;
   uint64 failed_calls = 4;
+  WindowStats live = 5;
+  WindowStats final = 6;
+}
+
+message WindowStats {
+  google.protobuf.Timestamp start = 1;
+  PaneKind kind = 2;
+  uint32 revision = 3;
+  uint64 requests = 4;
+  uint64 failed_requests = 5;
+  uint64 latency_samples = 6;
+  google.protobuf.Duration p50 = 7;
+  google.protobuf.Duration p95 = 8;
+  google.protobuf.Duration p99 = 9;
+  google.protobuf.Duration observed = 10;
+}
+
+enum PaneKind {
+  PANE_KIND_UNSPECIFIED = 0;
+  PANE_KIND_EARLY = 1;
+  PANE_KIND_ON_TIME = 2;
+  PANE_KIND_LATE = 3;
 }

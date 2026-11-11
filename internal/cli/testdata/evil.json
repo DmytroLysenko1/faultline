@@ -9,7 +9,10 @@
         "name": "bare"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:team%2Fa/svc",
@@ -18,7 +21,10 @@
         "name": "svc"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:demo/say%20%22hi%22",
@@ -27,7 +33,10 @@
         "name": "say \"hi\""
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:demo/back%5Cslash",
@@ -36,7 +45,10 @@
         "name": "back\\slash"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:demo/ends%5C",
@@ -45,7 +57,10 @@
         "name": "ends\\"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:demo/slash%5C%0Anewline",
@@ -54,7 +69,10 @@
         "name": "slash\\\nnewline"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:demo/%5CN",
@@ -63,7 +81,10 @@
         "name": "\\N"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:demo/%5CG",
@@ -72,7 +93,10 @@
         "name": "\\G"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:demo/%5Cl",
@@ -81,7 +105,10 @@
         "name": "\\l"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:demo/line%0Abreak",
@@ -90,7 +117,10 @@
         "name": "line\nbreak"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:demo/car%0Driage",
@@ -99,7 +129,10 @@
         "name": "car\rriage"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:demo/%1B%5B31mred",
@@ -108,7 +141,10 @@
         "name": "\u001b[31mred"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:demo/%7B%7D%3B-%3E--",
@@ -117,7 +153,10 @@
         "name": "{};->--"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:demo/a%3Cb%3E",
@@ -126,7 +165,10 @@
         "name": "a<b>"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:demo/%D0%BF%D1%80%D0%BE%D0%B1%D0%B5%D0%BB%20%E2%9C%93",
@@ -135,7 +177,10 @@
         "name": "пробел ✓"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:demo/back%5Cnslash",
@@ -144,7 +189,10 @@
         "name": "back\\nslash"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:demo/a&amp%3Bb",
@@ -153,7 +201,10 @@
         "name": "a&amp;b"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:demo/&%23x1B%3B%5B31m",
@@ -162,7 +213,10 @@
         "name": "&#x1B;[31m"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:demo/&lt%3Bb&gt%3B",
@@ -171,7 +225,10 @@
         "name": "&lt;b&gt;"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:demo/&",
@@ -180,7 +237,10 @@
         "name": "&"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:demo/rtl%E2%80%AEevil",
@@ -189,7 +249,10 @@
         "name": "rtl‮evil"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     },
     {
       "id": "svc:demo/line%E2%80%A8sep",
@@ -198,7 +261,10 @@
         "name": "line sep"
       },
       "unanswered_calls": "0",
-      "unanswered_failed_calls": "0"
+      "unanswered_failed_calls": "0",
+      "served_requests": "0",
+      "live": null,
+      "final": null
     }
   ],
   "edges": [
@@ -206,7 +272,11 @@
       "source_index": 2,
       "target_index": 3,
       "calls": "1",
-      "failed_calls": "0"
+      "failed_calls": "0",
+      "live": null,
+      "final": null
     }
-  ]
+  ],
+  "window_size": null,
+  "watermark": null
 }

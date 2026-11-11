@@ -109,7 +109,7 @@ func startAPI(t *testing.T, store *memgraph.Store) faultlinev1connect.GraphServi
 	t.Helper()
 	logger := slog.New(slog.DiscardHandler)
 	options := connectapi.DefaultOptions(logger)
-	mux, err := connectapi.NewMux(graphservice.NewHandler(query.NewGetGraph(store), logger), options)
+	mux, err := connectapi.NewMux(graphservice.NewHandler(query.NewGetGraph(store), logger), &options)
 	if err != nil {
 		t.Fatalf("NewMux: %v", err)
 	}

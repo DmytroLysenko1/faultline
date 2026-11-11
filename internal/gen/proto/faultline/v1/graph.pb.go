@@ -9,6 +9,7 @@ package faultlinev1
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	durationpb "google.golang.org/protobuf/types/known/durationpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
@@ -21,6 +22,58 @@ const (
 	// Verify that runtime/protoimpl is sufficiently up-to-date.
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
+
+type PaneKind int32
+
+const (
+	PaneKind_PANE_KIND_UNSPECIFIED PaneKind = 0
+	PaneKind_PANE_KIND_EARLY       PaneKind = 1
+	PaneKind_PANE_KIND_ON_TIME     PaneKind = 2
+	PaneKind_PANE_KIND_LATE        PaneKind = 3
+)
+
+// Enum value maps for PaneKind.
+var (
+	PaneKind_name = map[int32]string{
+		0: "PANE_KIND_UNSPECIFIED",
+		1: "PANE_KIND_EARLY",
+		2: "PANE_KIND_ON_TIME",
+		3: "PANE_KIND_LATE",
+	}
+	PaneKind_value = map[string]int32{
+		"PANE_KIND_UNSPECIFIED": 0,
+		"PANE_KIND_EARLY":       1,
+		"PANE_KIND_ON_TIME":     2,
+		"PANE_KIND_LATE":        3,
+	}
+)
+
+func (x PaneKind) Enum() *PaneKind {
+	p := new(PaneKind)
+	*p = x
+	return p
+}
+
+func (x PaneKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PaneKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_faultline_v1_graph_proto_enumTypes[0].Descriptor()
+}
+
+func (PaneKind) Type() protoreflect.EnumType {
+	return &file_faultline_v1_graph_proto_enumTypes[0]
+}
+
+func (x PaneKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PaneKind.Descriptor instead.
+func (PaneKind) EnumDescriptor() ([]byte, []int) {
+	return file_faultline_v1_graph_proto_rawDescGZIP(), []int{0}
+}
 
 type GetGraphRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -108,6 +161,8 @@ type Graph struct {
 	GeneratedAt   *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=generated_at,json=generatedAt,proto3" json:"generated_at,omitempty"`
 	Nodes         []*Node                `protobuf:"bytes,3,rep,name=nodes,proto3" json:"nodes,omitempty"`
 	Edges         []*Edge                `protobuf:"bytes,4,rep,name=edges,proto3" json:"edges,omitempty"`
+	WindowSize    *durationpb.Duration   `protobuf:"bytes,5,opt,name=window_size,json=windowSize,proto3" json:"window_size,omitempty"`
+	Watermark     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=watermark,proto3" json:"watermark,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -170,12 +225,29 @@ func (x *Graph) GetEdges() []*Edge {
 	return nil
 }
 
+func (x *Graph) GetWindowSize() *durationpb.Duration {
+	if x != nil {
+		return x.WindowSize
+	}
+	return nil
+}
+
+func (x *Graph) GetWatermark() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Watermark
+	}
+	return nil
+}
+
 type Node struct {
 	state                 protoimpl.MessageState `protogen:"open.v1"`
 	Id                    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Service               *ServiceRef            `protobuf:"bytes,2,opt,name=service,proto3" json:"service,omitempty"`
 	UnansweredCalls       uint64                 `protobuf:"varint,3,opt,name=unanswered_calls,json=unansweredCalls,proto3" json:"unanswered_calls,omitempty"`
 	UnansweredFailedCalls uint64                 `protobuf:"varint,4,opt,name=unanswered_failed_calls,json=unansweredFailedCalls,proto3" json:"unanswered_failed_calls,omitempty"`
+	ServedRequests        uint64                 `protobuf:"varint,5,opt,name=served_requests,json=servedRequests,proto3" json:"served_requests,omitempty"`
+	Live                  *WindowStats           `protobuf:"bytes,6,opt,name=live,proto3" json:"live,omitempty"`
+	Final                 *WindowStats           `protobuf:"bytes,7,opt,name=final,proto3" json:"final,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -238,6 +310,27 @@ func (x *Node) GetUnansweredFailedCalls() uint64 {
 	return 0
 }
 
+func (x *Node) GetServedRequests() uint64 {
+	if x != nil {
+		return x.ServedRequests
+	}
+	return 0
+}
+
+func (x *Node) GetLive() *WindowStats {
+	if x != nil {
+		return x.Live
+	}
+	return nil
+}
+
+func (x *Node) GetFinal() *WindowStats {
+	if x != nil {
+		return x.Final
+	}
+	return nil
+}
+
 type ServiceRef struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
@@ -296,6 +389,8 @@ type Edge struct {
 	TargetIndex   uint32                 `protobuf:"varint,2,opt,name=target_index,json=targetIndex,proto3" json:"target_index,omitempty"`
 	Calls         uint64                 `protobuf:"varint,3,opt,name=calls,proto3" json:"calls,omitempty"`
 	FailedCalls   uint64                 `protobuf:"varint,4,opt,name=failed_calls,json=failedCalls,proto3" json:"failed_calls,omitempty"`
+	Live          *WindowStats           `protobuf:"bytes,5,opt,name=live,proto3" json:"live,omitempty"`
+	Final         *WindowStats           `protobuf:"bytes,6,opt,name=final,proto3" json:"final,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -358,33 +453,188 @@ func (x *Edge) GetFailedCalls() uint64 {
 	return 0
 }
 
+func (x *Edge) GetLive() *WindowStats {
+	if x != nil {
+		return x.Live
+	}
+	return nil
+}
+
+func (x *Edge) GetFinal() *WindowStats {
+	if x != nil {
+		return x.Final
+	}
+	return nil
+}
+
+type WindowStats struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Start          *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=start,proto3" json:"start,omitempty"`
+	Kind           PaneKind               `protobuf:"varint,2,opt,name=kind,proto3,enum=faultline.v1.PaneKind" json:"kind,omitempty"`
+	Revision       uint32                 `protobuf:"varint,3,opt,name=revision,proto3" json:"revision,omitempty"`
+	Requests       uint64                 `protobuf:"varint,4,opt,name=requests,proto3" json:"requests,omitempty"`
+	FailedRequests uint64                 `protobuf:"varint,5,opt,name=failed_requests,json=failedRequests,proto3" json:"failed_requests,omitempty"`
+	LatencySamples uint64                 `protobuf:"varint,6,opt,name=latency_samples,json=latencySamples,proto3" json:"latency_samples,omitempty"`
+	P50            *durationpb.Duration   `protobuf:"bytes,7,opt,name=p50,proto3" json:"p50,omitempty"`
+	P95            *durationpb.Duration   `protobuf:"bytes,8,opt,name=p95,proto3" json:"p95,omitempty"`
+	P99            *durationpb.Duration   `protobuf:"bytes,9,opt,name=p99,proto3" json:"p99,omitempty"`
+	Observed       *durationpb.Duration   `protobuf:"bytes,10,opt,name=observed,proto3" json:"observed,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *WindowStats) Reset() {
+	*x = WindowStats{}
+	mi := &file_faultline_v1_graph_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WindowStats) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WindowStats) ProtoMessage() {}
+
+func (x *WindowStats) ProtoReflect() protoreflect.Message {
+	mi := &file_faultline_v1_graph_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WindowStats.ProtoReflect.Descriptor instead.
+func (*WindowStats) Descriptor() ([]byte, []int) {
+	return file_faultline_v1_graph_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *WindowStats) GetStart() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Start
+	}
+	return nil
+}
+
+func (x *WindowStats) GetKind() PaneKind {
+	if x != nil {
+		return x.Kind
+	}
+	return PaneKind_PANE_KIND_UNSPECIFIED
+}
+
+func (x *WindowStats) GetRevision() uint32 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *WindowStats) GetRequests() uint64 {
+	if x != nil {
+		return x.Requests
+	}
+	return 0
+}
+
+func (x *WindowStats) GetFailedRequests() uint64 {
+	if x != nil {
+		return x.FailedRequests
+	}
+	return 0
+}
+
+func (x *WindowStats) GetLatencySamples() uint64 {
+	if x != nil {
+		return x.LatencySamples
+	}
+	return 0
+}
+
+func (x *WindowStats) GetP50() *durationpb.Duration {
+	if x != nil {
+		return x.P50
+	}
+	return nil
+}
+
+func (x *WindowStats) GetP95() *durationpb.Duration {
+	if x != nil {
+		return x.P95
+	}
+	return nil
+}
+
+func (x *WindowStats) GetP99() *durationpb.Duration {
+	if x != nil {
+		return x.P99
+	}
+	return nil
+}
+
+func (x *WindowStats) GetObserved() *durationpb.Duration {
+	if x != nil {
+		return x.Observed
+	}
+	return nil
+}
+
 var File_faultline_v1_graph_proto protoreflect.FileDescriptor
 
 const file_faultline_v1_graph_proto_rawDesc = "" +
 	"\n" +
-	"\x18faultline/v1/graph.proto\x12\ffaultline.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x11\n" +
+	"\x18faultline/v1/graph.proto\x12\ffaultline.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x11\n" +
 	"\x0fGetGraphRequest\"=\n" +
 	"\x10GetGraphResponse\x12)\n" +
-	"\x05graph\x18\x01 \x01(\v2\x13.faultline.v1.GraphR\x05graph\"\xb6\x01\n" +
+	"\x05graph\x18\x01 \x01(\v2\x13.faultline.v1.GraphR\x05graph\"\xac\x02\n" +
 	"\x05Graph\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\x04R\brevision\x12=\n" +
 	"\fgenerated_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\vgeneratedAt\x12(\n" +
 	"\x05nodes\x18\x03 \x03(\v2\x12.faultline.v1.NodeR\x05nodes\x12(\n" +
-	"\x05edges\x18\x04 \x03(\v2\x12.faultline.v1.EdgeR\x05edges\"\xad\x01\n" +
+	"\x05edges\x18\x04 \x03(\v2\x12.faultline.v1.EdgeR\x05edges\x12:\n" +
+	"\vwindow_size\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\n" +
+	"windowSize\x128\n" +
+	"\twatermark\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\twatermark\"\xb6\x02\n" +
 	"\x04Node\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x122\n" +
 	"\aservice\x18\x02 \x01(\v2\x18.faultline.v1.ServiceRefR\aservice\x12)\n" +
 	"\x10unanswered_calls\x18\x03 \x01(\x04R\x0funansweredCalls\x126\n" +
-	"\x17unanswered_failed_calls\x18\x04 \x01(\x04R\x15unansweredFailedCalls\">\n" +
+	"\x17unanswered_failed_calls\x18\x04 \x01(\x04R\x15unansweredFailedCalls\x12'\n" +
+	"\x0fserved_requests\x18\x05 \x01(\x04R\x0eservedRequests\x12-\n" +
+	"\x04live\x18\x06 \x01(\v2\x19.faultline.v1.WindowStatsR\x04live\x12/\n" +
+	"\x05final\x18\a \x01(\v2\x19.faultline.v1.WindowStatsR\x05final\">\n" +
 	"\n" +
 	"ServiceRef\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\"\x85\x01\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\"\xe5\x01\n" +
 	"\x04Edge\x12!\n" +
 	"\fsource_index\x18\x01 \x01(\rR\vsourceIndex\x12!\n" +
 	"\ftarget_index\x18\x02 \x01(\rR\vtargetIndex\x12\x14\n" +
 	"\x05calls\x18\x03 \x01(\x04R\x05calls\x12!\n" +
-	"\ffailed_calls\x18\x04 \x01(\x04R\vfailedCalls2Y\n" +
+	"\ffailed_calls\x18\x04 \x01(\x04R\vfailedCalls\x12-\n" +
+	"\x04live\x18\x05 \x01(\v2\x19.faultline.v1.WindowStatsR\x04live\x12/\n" +
+	"\x05final\x18\x06 \x01(\v2\x19.faultline.v1.WindowStatsR\x05final\"\xb3\x03\n" +
+	"\vWindowStats\x120\n" +
+	"\x05start\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x05start\x12*\n" +
+	"\x04kind\x18\x02 \x01(\x0e2\x16.faultline.v1.PaneKindR\x04kind\x12\x1a\n" +
+	"\brevision\x18\x03 \x01(\rR\brevision\x12\x1a\n" +
+	"\brequests\x18\x04 \x01(\x04R\brequests\x12'\n" +
+	"\x0ffailed_requests\x18\x05 \x01(\x04R\x0efailedRequests\x12'\n" +
+	"\x0flatency_samples\x18\x06 \x01(\x04R\x0elatencySamples\x12+\n" +
+	"\x03p50\x18\a \x01(\v2\x19.google.protobuf.DurationR\x03p50\x12+\n" +
+	"\x03p95\x18\b \x01(\v2\x19.google.protobuf.DurationR\x03p95\x12+\n" +
+	"\x03p99\x18\t \x01(\v2\x19.google.protobuf.DurationR\x03p99\x125\n" +
+	"\bobserved\x18\n" +
+	" \x01(\v2\x19.google.protobuf.DurationR\bobserved*e\n" +
+	"\bPaneKind\x12\x19\n" +
+	"\x15PANE_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
+	"\x0fPANE_KIND_EARLY\x10\x01\x12\x15\n" +
+	"\x11PANE_KIND_ON_TIME\x10\x02\x12\x12\n" +
+	"\x0ePANE_KIND_LATE\x10\x032Y\n" +
 	"\fGraphService\x12I\n" +
 	"\bGetGraph\x12\x1d.faultline.v1.GetGraphRequest\x1a\x1e.faultline.v1.GetGraphResponseB\xc0\x01\n" +
 	"\x10com.faultline.v1B\n" +
@@ -402,29 +652,45 @@ func file_faultline_v1_graph_proto_rawDescGZIP() []byte {
 	return file_faultline_v1_graph_proto_rawDescData
 }
 
-var file_faultline_v1_graph_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_faultline_v1_graph_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_faultline_v1_graph_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_faultline_v1_graph_proto_goTypes = []any{
-	(*GetGraphRequest)(nil),       // 0: faultline.v1.GetGraphRequest
-	(*GetGraphResponse)(nil),      // 1: faultline.v1.GetGraphResponse
-	(*Graph)(nil),                 // 2: faultline.v1.Graph
-	(*Node)(nil),                  // 3: faultline.v1.Node
-	(*ServiceRef)(nil),            // 4: faultline.v1.ServiceRef
-	(*Edge)(nil),                  // 5: faultline.v1.Edge
-	(*timestamppb.Timestamp)(nil), // 6: google.protobuf.Timestamp
+	(PaneKind)(0),                 // 0: faultline.v1.PaneKind
+	(*GetGraphRequest)(nil),       // 1: faultline.v1.GetGraphRequest
+	(*GetGraphResponse)(nil),      // 2: faultline.v1.GetGraphResponse
+	(*Graph)(nil),                 // 3: faultline.v1.Graph
+	(*Node)(nil),                  // 4: faultline.v1.Node
+	(*ServiceRef)(nil),            // 5: faultline.v1.ServiceRef
+	(*Edge)(nil),                  // 6: faultline.v1.Edge
+	(*WindowStats)(nil),           // 7: faultline.v1.WindowStats
+	(*timestamppb.Timestamp)(nil), // 8: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),   // 9: google.protobuf.Duration
 }
 var file_faultline_v1_graph_proto_depIdxs = []int32{
-	2, // 0: faultline.v1.GetGraphResponse.graph:type_name -> faultline.v1.Graph
-	6, // 1: faultline.v1.Graph.generated_at:type_name -> google.protobuf.Timestamp
-	3, // 2: faultline.v1.Graph.nodes:type_name -> faultline.v1.Node
-	5, // 3: faultline.v1.Graph.edges:type_name -> faultline.v1.Edge
-	4, // 4: faultline.v1.Node.service:type_name -> faultline.v1.ServiceRef
-	0, // 5: faultline.v1.GraphService.GetGraph:input_type -> faultline.v1.GetGraphRequest
-	1, // 6: faultline.v1.GraphService.GetGraph:output_type -> faultline.v1.GetGraphResponse
-	6, // [6:7] is the sub-list for method output_type
-	5, // [5:6] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	3,  // 0: faultline.v1.GetGraphResponse.graph:type_name -> faultline.v1.Graph
+	8,  // 1: faultline.v1.Graph.generated_at:type_name -> google.protobuf.Timestamp
+	4,  // 2: faultline.v1.Graph.nodes:type_name -> faultline.v1.Node
+	6,  // 3: faultline.v1.Graph.edges:type_name -> faultline.v1.Edge
+	9,  // 4: faultline.v1.Graph.window_size:type_name -> google.protobuf.Duration
+	8,  // 5: faultline.v1.Graph.watermark:type_name -> google.protobuf.Timestamp
+	5,  // 6: faultline.v1.Node.service:type_name -> faultline.v1.ServiceRef
+	7,  // 7: faultline.v1.Node.live:type_name -> faultline.v1.WindowStats
+	7,  // 8: faultline.v1.Node.final:type_name -> faultline.v1.WindowStats
+	7,  // 9: faultline.v1.Edge.live:type_name -> faultline.v1.WindowStats
+	7,  // 10: faultline.v1.Edge.final:type_name -> faultline.v1.WindowStats
+	8,  // 11: faultline.v1.WindowStats.start:type_name -> google.protobuf.Timestamp
+	0,  // 12: faultline.v1.WindowStats.kind:type_name -> faultline.v1.PaneKind
+	9,  // 13: faultline.v1.WindowStats.p50:type_name -> google.protobuf.Duration
+	9,  // 14: faultline.v1.WindowStats.p95:type_name -> google.protobuf.Duration
+	9,  // 15: faultline.v1.WindowStats.p99:type_name -> google.protobuf.Duration
+	9,  // 16: faultline.v1.WindowStats.observed:type_name -> google.protobuf.Duration
+	1,  // 17: faultline.v1.GraphService.GetGraph:input_type -> faultline.v1.GetGraphRequest
+	2,  // 18: faultline.v1.GraphService.GetGraph:output_type -> faultline.v1.GetGraphResponse
+	18, // [18:19] is the sub-list for method output_type
+	17, // [17:18] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_faultline_v1_graph_proto_init() }
@@ -437,13 +703,14 @@ func file_faultline_v1_graph_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_faultline_v1_graph_proto_rawDesc), len(file_faultline_v1_graph_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   6,
+			NumEnums:      1,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_faultline_v1_graph_proto_goTypes,
 		DependencyIndexes: file_faultline_v1_graph_proto_depIdxs,
+		EnumInfos:         file_faultline_v1_graph_proto_enumTypes,
 		MessageInfos:      file_faultline_v1_graph_proto_msgTypes,
 	}.Build()
 	File_faultline_v1_graph_proto = out.File

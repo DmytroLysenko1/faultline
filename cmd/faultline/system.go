@@ -132,7 +132,7 @@ func assemble(cfg *Config, logger *slog.Logger, seams wiring) (*system, error) {
 		return nil, err
 	}
 	state := newLifecycle(logger)
-	api, err := provideAPI(stored.store, state, seams.tracing.TracerProvider(), logger)
+	api, err := provideAPI(stored.store, state, seams.tracing.TracerProvider(), logger, cfg.APIResponseBudget)
 	if err != nil {
 		return nil, err
 	}
@@ -194,10 +194,12 @@ func provideAPI(
 	state *lifecycle,
 	tracer trace.TracerProvider,
 	logger *slog.Logger,
+	responseBudget int64,
 ) (apiServer, error) {
 	options := connectapi.DefaultOptions(logger)
 	options.TracerProvider = tracer
-	mux, err := connectapi.NewMux(graphservice.NewHandler(query.NewGetGraph(store), logger), options)
+	options.ResponseBudget = responseBudget
+	mux, err := connectapi.NewMux(graphservice.NewHandler(query.NewGetGraph(store), logger), &options)
 	if err != nil {
 		return nil, fmt.Errorf("build api: %w", err)
 	}

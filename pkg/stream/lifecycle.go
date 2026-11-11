@@ -12,7 +12,11 @@ func (w *Windows[K, C]) Begin(mark Mark, anchor time.Time) {
 	}
 	nanos := w.monotonicMark(mark)
 	size := int64(w.cfg.Size)
-	w.batch = batchState{open: true, known: true, markNanos: nanos}
+	w.batch = batchState{
+		open:      true,
+		known:     true,
+		markNanos: nanos,
+	}
 	w.batch.dropBelow = nanos - int64(w.cfg.AllowedLateness)
 	w.batch.openFrom = floorDiv(nanos, size)
 	w.batch.firstLive = floorDiv(w.batch.dropBelow, size)

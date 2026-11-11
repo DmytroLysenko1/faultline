@@ -8,11 +8,12 @@ import (
 
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/selftrace"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi"
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/graphservice"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
 )
 
 const (
-	defaultWorstCaseBytes = 1_418_350_848
+	defaultWorstCaseBytes = 1_323_792_640
 	manifestMemoryLimit   = 1600 << 20
 	tightMemoryLimit      = defaultWorstCaseBytes/budgetSharePercent*percent - mib
 	applyProbeSpans       = 148_470
@@ -94,7 +95,7 @@ func TestBreakdownListsContributionsLargestFirstInMiB(t *testing.T) {
 }
 
 func TestLargestAllowedGraphResponseFitsTheSendLimit(t *testing.T) {
-	if got := connectapi.WorstResponseBytes(maxGraphMaxNodes, maxGraphMaxEdges); got > connectapi.SendMaxBytes {
+	if got := graphservice.ResponseBytes(maxGraphMaxNodes, maxGraphMaxEdges); got > connectapi.SendMaxBytes {
 		t.Errorf("worst response at the range limits = %s, SendMaxBytes %s", inMiB(got), inMiB(connectapi.SendMaxBytes))
 	}
 }
@@ -130,5 +131,26 @@ func TestSelfTracingAddsItsQueueOnlyWhenEnabled(t *testing.T) {
 				t.Errorf("self-tracing contribution = %d, want %d", got, tt.Want)
 			}
 		})
+	}
+}
+
+const (
+	pinnedDefaultResponseWeight = 257_762_560
+	responseBudgetStep          = 16 * mib
+)
+
+// TestDefaultResponseBudgetHoldsTheWorstResponseAtDefaultLimits: the default budget is the measured
+// weight of the worst response at the default graph limits, rounded up to 16 MiB, so the default
+// config serves a full graph and the budget table stays honest.
+func TestDefaultResponseBudgetHoldsTheWorstResponseAtDefaultLimits(t *testing.T) {
+	weight := graphservice.ResponseWeight(defaultGraphMaxNodes, defaultGraphMaxEdges)
+	if weight != pinnedDefaultResponseWeight {
+		t.Errorf("worst response at the default limits = %d B (%s), pinned %d: update the I5 table", weight,
+			inMiB(weight), pinnedDefaultResponseWeight)
+	}
+	roundedUp := (weight + responseBudgetStep - 1) / responseBudgetStep * responseBudgetStep
+	if got := int64(connectapi.DefaultResponseBudget); got != roundedUp {
+		t.Errorf("default response budget %s, want the worst response rounded up to 16 MiB: %s", inMiB(got),
+			inMiB(roundedUp))
 	}
 }

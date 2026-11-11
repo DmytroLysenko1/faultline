@@ -16,8 +16,10 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/graph"
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology/topologytest"
 	"github.com/DmytroLysenko1/faultline/internal/gen/proto/faultline/v1/faultlinev1connect"
-	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi"
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/graphmap"
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/graphservice"
 )
 
 const (
@@ -76,11 +78,11 @@ func snapshotOf(naming serviceNaming) *topology.Snapshot {
 			FailedCalls: math.MaxUint64,
 		}})
 	}
-	return &topology.Snapshot{
+	return topologytest.WithWorstRED(&topology.Snapshot{
 		Revision: math.MaxUint64,
 		Nodes:    nodes,
 		Edges:    edges,
-	}
+	})
 }
 
 func serverPeak(t *testing.T, snapshot *topology.Snapshot, encoding string) int64 {
@@ -130,7 +132,7 @@ func TestWorstCaseHeapCoversOneGetGraphOnTheRealHandler(t *testing.T) {
 		naming   serviceNaming
 		encoding string
 	}
-	model := connectapi.WorstHeapBytes(probeNodes, probeEdges, 0) / connectapi.MaxConcurrentGetGraph
+	model := graphservice.ResponseWeight(probeNodes, probeEdges)
 	tests := []struct {
 		Name string
 		Args args
@@ -172,5 +174,22 @@ func TestWorstCaseHeapCoversOneGetGraphOnTheRealHandler(t *testing.T) {
 				t.Errorf("server held %d bytes for one GetGraph, model %d", peak, model)
 			}
 		})
+	}
+}
+
+// TestResponseTreeModelCoversTheWorstMapping: the proto tree of the largest response, with both
+// summaries on every subject, stays within ResponseTreeBytes.
+func TestResponseTreeModelCoversTheWorstMapping(t *testing.T) {
+	snapshot := snapshotOf(randomServices())
+	grown := telemetrytest.HeapGrowth(func() any {
+		mapped, err := graphmap.Graph(snapshot)
+		if err != nil {
+			t.Fatalf("Graph: %v", err)
+		}
+		return mapped
+	})
+	runtime.KeepAlive(snapshot)
+	if model := graphservice.ResponseTreeBytes(probeNodes, probeEdges); int64(grown) > model {
+		t.Errorf("the worst response tree took %d bytes, model %d", grown, model)
 	}
 }

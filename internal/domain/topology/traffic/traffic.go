@@ -101,7 +101,9 @@ func (t *Traffic) buildState() error {
 	if t.arena, err = sketch.NewArena(t.limits.SketchEntries); err != nil {
 		return fmt.Errorf("sketch arena: %w", err)
 	}
-	perService := cardinality.Limits{MaxPerService: t.limits.MaxPerService}
+	perService := cardinality.Limits{
+		MaxPerService: t.limits.MaxPerService,
+	}
 	if t.registry, err = cardinality.NewRegistry(perService, t.limits.MaxNodes); err != nil {
 		return fmt.Errorf("operation registry: %w", err)
 	}

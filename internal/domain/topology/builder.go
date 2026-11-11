@@ -47,9 +47,11 @@ func NewBuilder(limits *Limits, startedAt time.Time, options ...Option) (*Builde
 		return nil, fmt.Errorf("%w: %w", ErrInvalidLimits, err)
 	}
 	built := &Builder{
-		Matcher:   pairing,
-		Graph:     services,
-		published: published{generatedAt: startedAt},
+		Matcher: pairing,
+		Graph:   services,
+		published: published{
+			generatedAt: startedAt,
+		},
 	}
 	for _, option := range options {
 		option(built)

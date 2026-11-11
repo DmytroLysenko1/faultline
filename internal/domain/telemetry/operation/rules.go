@@ -48,7 +48,9 @@ type node struct {
 }
 
 func NewRules(services []ServiceRoutes) (*Rules, error) {
-	rules := &Rules{services: make(map[resource.ServiceRef]*node, len(services))}
+	rules := &Rules{
+		services: make(map[resource.ServiceRef]*node, len(services)),
+	}
 	total := 0
 	for i, service := range services {
 		if err := rules.addService(i, service); err != nil {
@@ -56,7 +58,11 @@ func NewRules(services []ServiceRoutes) (*Rules, error) {
 		}
 		total += len(service.Routes)
 		if total > MaxRoutes {
-			return nil, &RuleError{Service: i, Route: noRoute, Reason: fmt.Sprintf("more than %d routes", MaxRoutes)}
+			return nil, &RuleError{
+				Service: i,
+				Route:   noRoute,
+				Reason:  fmt.Sprintf("more than %d routes", MaxRoutes),
+			}
 		}
 	}
 	return rules, nil
@@ -69,12 +75,19 @@ func (r *Rules) addService(index int, service ServiceRoutes) error {
 	root := &node{}
 	for i, route := range service.Routes {
 		if reason := root.insert(route); reason != "" {
-			return &RuleError{Service: index, Route: i, Reason: reason}
+			return &RuleError{
+				Service: index,
+				Route:   i,
+				Reason:  reason,
+			}
 		}
 	}
 	if visits := root.worstWalk(); visits > MaxMatchVisits {
-		return &RuleError{Service: index, Route: noRoute,
-			Reason: fmt.Sprintf("rules too ambiguous: a path can visit %d nodes, at most %d", visits, MaxMatchVisits)}
+		return &RuleError{
+			Service: index,
+			Route:   noRoute,
+			Reason:  fmt.Sprintf("rules too ambiguous: a path can visit %d nodes, at most %d", visits, MaxMatchVisits),
+		}
 	}
 	r.services[service.Service] = root
 	return nil
@@ -83,12 +96,23 @@ func (r *Rules) addService(index int, service ServiceRoutes) error {
 func (r *Rules) checkService(index int, service ServiceRoutes) error {
 	switch {
 	case service.Service.Name == "":
-		return &RuleError{Service: index, Route: noRoute, Reason: "service name is missing"}
+		return &RuleError{
+			Service: index,
+			Route:   noRoute,
+			Reason:  "service name is missing",
+		}
 	case r.services[service.Service] != nil:
-		return &RuleError{Service: index, Route: noRoute, Reason: "service is listed twice"}
+		return &RuleError{
+			Service: index,
+			Route:   noRoute,
+			Reason:  "service is listed twice",
+		}
 	case len(service.Routes) > MaxRoutesPerService:
-		return &RuleError{Service: index, Route: noRoute,
-			Reason: fmt.Sprintf("more than %d routes", MaxRoutesPerService)}
+		return &RuleError{
+			Service: index,
+			Route:   noRoute,
+			Reason:  fmt.Sprintf("more than %d routes", MaxRoutesPerService),
+		}
 	}
 	return nil
 }

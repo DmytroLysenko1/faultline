@@ -34,7 +34,10 @@ func (w *Windows[K, C]) Locate(key K, t time.Time) (*C, Placement, bool) {
 	}
 	series, created := w.seriesFor(key)
 	s, position := w.openSlot(series, id)
-	w.markDirty(s, slotRef{series: series, position: position}, placement)
+	w.markDirty(s, slotRef{
+		series:   series,
+		position: position,
+	}, placement)
 	return &s.cell, placement, created
 }
 
@@ -82,7 +85,9 @@ func (w *Windows[K, C]) seriesFor(key K) (int32, bool) {
 	series := w.free[len(w.free)-1]
 	w.free = w.free[:len(w.free)-1]
 	w.index[key] = series
-	w.series[series] = seriesState[K]{key: key}
+	w.series[series] = seriesState[K]{
+		key: key,
+	}
 	return series, true
 }
 

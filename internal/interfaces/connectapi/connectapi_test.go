@@ -31,6 +31,8 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/graph"
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology/red"
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology/topologytest"
 	faultlinev1 "github.com/DmytroLysenko1/faultline/internal/gen/proto/faultline/v1"
 	"github.com/DmytroLysenko1/faultline/internal/gen/proto/faultline/v1/faultlinev1connect"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi"
@@ -116,8 +118,8 @@ func silentLogger() *slog.Logger {
 	return slog.New(slog.DiscardHandler)
 }
 
-func defaultOptions() connectapi.Options {
-	return connectapi.DefaultOptions(silentLogger())
+func defaultOptions() *connectapi.Options {
+	return new(connectapi.DefaultOptions(silentLogger()))
 }
 
 type transport struct {
@@ -146,7 +148,7 @@ func transports() []transport {
 	}
 }
 
-func newMux(t *testing.T, graphs reader, options connectapi.Options) *http.ServeMux {
+func newMux(t *testing.T, graphs reader, options *connectapi.Options) *http.ServeMux {
 	t.Helper()
 	mux, err := connectapi.NewMux(graphservice.NewHandler(query.NewGetGraph(graphs), options.Logger), options)
 	if err != nil {
@@ -164,7 +166,7 @@ func startServer(t *testing.T, handler http.Handler, http2 bool) *httptest.Serve
 	return server
 }
 
-func startGraphServer(t *testing.T, graphs reader, options connectapi.Options) *httptest.Server {
+func startGraphServer(t *testing.T, graphs reader, options *connectapi.Options) *httptest.Server {
 	t.Helper()
 	return startServer(t, newMux(t, graphs, options), true)
 }
@@ -191,11 +193,19 @@ func getGraph(ctx context.Context, graphs faultlinev1connect.GraphServiceClient)
 func smallSnapshot() *topology.Snapshot {
 	frontend := telemetrytest.Service("frontend")
 	cart := telemetrytest.Service("cart")
+	window := telemetrytest.Epoch()
 	return &topology.Snapshot{
-		Revision:    4,
-		GeneratedAt: telemetrytest.Epoch().Add(time.Second),
+		Revision:       4,
+		GeneratedAt:    telemetrytest.Epoch().Add(time.Second),
+		WindowSize:     smallWindow,
+		Watermark:      window,
+		WatermarkKnown: true,
 		Nodes: []topology.NodeView{
-			{Node: graph.NewNode(cart)},
+			{
+				Node:  graph.NewNode(cart),
+				Live:  smallSummary(red.PaneEarly, window, 0),
+				Final: smallSummary(red.PaneOnTime, window.Add(-smallWindow), 1),
+			},
 			{Node: graph.Node{
 				ID:                    graph.ServiceNodeID(frontend),
 				Service:               frontend,
@@ -209,8 +219,28 @@ func smallSnapshot() *topology.Snapshot {
 				Target:      graph.ServiceNodeID(cart),
 				Calls:       12,
 				FailedCalls: 3,
-			}},
+			}, Final: smallSummary(red.PaneLate, window.Add(-smallWindow), 2)},
 		},
+	}
+}
+
+const (
+	smallWindow  = 10 * time.Second
+	smallLatency = 7 * time.Millisecond
+)
+
+func smallSummary(kind red.PaneKind, start time.Time, revision uint32) red.WindowStats {
+	return red.WindowStats{
+		StartUnixNano:  start.UnixNano(),
+		Kind:           kind,
+		Revision:       revision,
+		Requests:       12,
+		Failed:         3,
+		LatencySamples: 12,
+		P50:            smallLatency,
+		P95:            smallLatency,
+		P99:            smallLatency,
+		Observed:       smallWindow,
 	}
 }
 
@@ -222,7 +252,8 @@ func TestProtocolsReturnTheSameGraph(t *testing.T) {
 	if err != nil {
 		t.Fatalf("gRPC GetGraph: %v", err)
 	}
-	if len(want.GetNodes()) != 2 || len(want.GetEdges()) != 1 {
+	if len(want.GetNodes()) != 2 || len(want.GetEdges()) != 1 || want.GetEdges()[0].GetFinal() == nil ||
+		want.GetNodes()[0].GetLive() == nil || want.GetWatermark() == nil {
 		t.Fatalf("gRPC graph is incomplete: %v", want)
 	}
 	protocols := map[string][]connect.ClientOption{
@@ -366,10 +397,11 @@ func TestDefaultOptions(t *testing.T) {
 	want := connectapi.Options{
 		Timeout:                 30 * time.Second,
 		SendTimeout:             30 * time.Second,
-		SendMaxBytes:            80 << 20,
+		SendMaxBytes:            192 << 20,
 		ReadMaxBytes:            1 << 20,
 		MaxConcurrent:           4,
 		MaxConcurrentReflection: 2,
+		ResponseBudget:          256 << 20,
 		Logger:                  logger,
 		TracerProvider:          noop.NewTracerProvider(),
 	}
@@ -676,10 +708,14 @@ func TestReflectionListsGraphService(t *testing.T) {
 	}
 }
 
+// TestLargestAllowedGraphFitsTheSendLimit runs with the response budget such a config must have:
+// the validator refuses a smaller one.
 func TestLargestAllowedGraphFitsTheSendLimit(t *testing.T) {
+	options := defaultOptions()
+	options.ResponseBudget = graphservice.ResponseWeight(maxConfiguredNodes, maxConfiguredEdges)
 	server := startGraphServer(t, &staticReader{
 		Snapshot: largestSnapshot(),
-	}, defaultOptions())
+	}, options)
 	protocols := map[string]connect.ClientOption{
 		"proto": connect.WithGRPC(),
 		"json":  connect.WithProtoJSON(),
@@ -709,6 +745,9 @@ func checkWireSize(t *testing.T, got *faultlinev1.Graph) {
 	if proto.Size(got) > connectapi.SendMaxBytes || len(encoded) > connectapi.SendMaxBytes {
 		t.Errorf("worst-case response exceeds SendMaxBytes: proto %d, json %d", proto.Size(got), len(encoded))
 	}
+	if model := graphservice.ResponseBytes(len(got.GetNodes()), len(got.GetEdges())); int64(len(encoded)) > model {
+		t.Errorf("worst-case JSON %d B above the response model %d B", len(encoded), model)
+	}
 }
 
 func worstNodes(count int) []topology.NodeView {
@@ -723,10 +762,10 @@ func worstNodes(count int) []topology.NodeView {
 }
 
 func snapshotOfNodes(count int) *topology.Snapshot {
-	return &topology.Snapshot{
+	return topologytest.WithWorstRED(&topology.Snapshot{
 		GeneratedAt: telemetrytest.Epoch(),
 		Nodes:       worstNodes(count),
-	}
+	})
 }
 
 func largestSnapshot() *topology.Snapshot {
@@ -742,10 +781,10 @@ func largestSnapshot() *topology.Snapshot {
 			FailedCalls: math.MaxUint64,
 		}})
 	}
-	return &topology.Snapshot{
+	return topologytest.WithWorstRED(&topology.Snapshot{
 		Revision:    math.MaxUint64,
 		GeneratedAt: telemetrytest.Epoch(),
 		Nodes:       nodes,
 		Edges:       edges,
-	}
+	})
 }

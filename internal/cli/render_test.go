@@ -17,6 +17,7 @@ import (
 	"gonum.org/v1/gonum/graph/simple"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/testing/protocmp"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/DmytroLysenko1/faultline/internal/cli"
@@ -51,10 +52,45 @@ type call struct {
 }
 
 type renderCase struct {
-	Name   string
-	Nodes  []namedNode
-	Calls  []call
-	Labels map[string]string
+	Name    string
+	Nodes   []namedNode
+	Calls   []call
+	Labels  map[string]string
+	WithRED bool
+}
+
+const (
+	redWindow  = 10 * time.Second
+	redLatency = 3 * time.Millisecond
+)
+
+// withRED fills the summaries the way a running server does: a live window with latency samples,
+// a final one without them (no percentiles), an edge final after one late pane.
+func withRED(built *faultlinev1.Graph) *faultlinev1.Graph {
+	window := built.GetGeneratedAt().AsTime().Truncate(redWindow)
+	stats := func(kind faultlinev1.PaneKind, start time.Time, revision uint32, samples uint64) *faultlinev1.WindowStats {
+		summary := &faultlinev1.WindowStats{
+			Start:          timestamppb.New(start),
+			Kind:           kind,
+			Revision:       revision,
+			Requests:       12,
+			FailedRequests: 2,
+			LatencySamples: samples,
+			Observed:       durationpb.New(redWindow),
+		}
+		if samples > 0 {
+			summary.P50, summary.P95, summary.P99 = durationpb.New(redLatency), durationpb.New(redLatency),
+				durationpb.New(redLatency)
+		}
+		return summary
+	}
+	built.WindowSize = durationpb.New(redWindow)
+	built.Watermark = timestamppb.New(window.Add(-redWindow))
+	built.Nodes[0].ServedRequests = 5
+	built.Nodes[0].Live = stats(faultlinev1.PaneKind_PANE_KIND_EARLY, window, 0, 12)
+	built.Nodes[0].Final = stats(faultlinev1.PaneKind_PANE_KIND_ON_TIME, window.Add(-redWindow), 1, 0)
+	built.Edges[0].Final = stats(faultlinev1.PaneKind_PANE_KIND_LATE, window.Add(-redWindow), 2, 12)
+	return built
 }
 
 func nodeID(of service) string {
@@ -154,6 +190,7 @@ func renderCases() []renderCase {
 				nodeID(demo[1].service): "demo/checkout",
 				nodeID(demo[2].service): "demo/frontend",
 			},
+			WithRED: true,
 		},
 		evilCase(),
 	}
@@ -297,6 +334,9 @@ func TestJSONIsGoldenStableAndParsesBackToTheSameGraph(t *testing.T) {
 	for _, tt := range renderCases() {
 		t.Run(tt.Name, func(t *testing.T) {
 			built := graphOf(tt.Nodes, tt.Calls)
+			if tt.WithRED {
+				built = withRED(built)
+			}
 			got := rendered(t, cli.JSON, built)
 			compareGolden(t, tt.Name+".json", got)
 			if again := rendered(t, cli.JSON, built); !bytes.Equal(got, again) {
