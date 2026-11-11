@@ -63,6 +63,6 @@ func BenchmarkFireEarly60k(b *testing.B) {
 		}
 		windows.End()
 		b.StartTimer()
-		windows.FireEarly()
+		windows.FireEarly(everything())
 	}
 }

@@ -40,7 +40,7 @@ func TestSteadyStateBatchesDoNotAllocate(t *testing.T) {
 			}
 		}
 		windows.End()
-		windows.FireEarly()
+		windows.FireEarly(everything())
 	}
 	for range 10 {
 		cycle()

@@ -21,7 +21,7 @@ func TestAcceptanceFRSTR001AtLeastNineEarlyResultsBeforeTheFinalOne(t *testing.T
 			events[i] = event{key: 1, at: window.Start.Add(second*time.Second + time.Duration(i)*time.Millisecond)}
 		}
 		r.apply(batch{receivedAt: window.Start.Add((second + 1) * time.Second), events: events})
-		r.windows.FireEarly()
+		r.windows.FireEarly(everything())
 	}
 	r.apply(heartbeat(flushAfter(window.End)))
 

@@ -539,7 +539,7 @@ enum PaneKind {
 
 1. **Приём:** по спанам `Normalize` → `span.New` (валидация) → `Append` (отметка `ReceivedAt`, постановка) → ответ OK.
 2. **Пакет:** `Expire → Match по спанам → Graph.Apply → Traffic.Begin (watermark, ON_TIME по возрастанию окна, пенсии) → Record → Traffic.End (LATE)`; пульс — `Expire → Graph.Apply (только Unanswered) → Begin → End`. Паника между шагами ломает I1, I3, I6, I10 вместе; `recover` в Pipeline нет (шаг 1).
-3. **Пенсия ячейки:** сначала `Sink.Retire` (блок арены возвращён), потом обнуление; **закрытие серии:** сначала `Sink.Closed` (`Registry.Release`), потом удаление из индекса. Счётчик ссылок двигается только в `Closed`. Обратный порядок терял бы блоки и ссылки до рестарта (I12).
+3. **Пенсия ячейки:** сначала `Sink.Retire` (блок арены возвращён), потом обнуление; **закрытие серии:** серия удаляется из индекса, затем `Sink.Closed` (`Registry.Release`) — до освобождения ссылки серию уже не найти, и новое событие откроет новую (уточнено в срезе 6c по коду `pkg/stream`). Счётчик ссылок двигается только в `Closed`. Обратный порядок терял бы блоки и ссылки до рестарта (I12).
 4. **Итерация Pipeline:** `Receive → Apply каждой записи → [Fire] → [Snapshot → Publish → Release held]`. Публикация, когда:
    - пора `Fire` (≤ 1 s);
    - новый узел или ребро (`StructureChanged`);
@@ -698,7 +698,7 @@ publish: Publish(Snapshot()) — ошибка → return (held не освобо
 | `FAULTLINE_WATERMARK_DELAY` | `30s` | 0 … 5 min |
 | `FAULTLINE_ALLOWED_LATENESS` | `30s` | 0 … 10 min |
 | `FAULTLINE_HORIZON_SLACK_WINDOWS` | `2` | 1 … 16 |
-| `FAULTLINE_EARLY_FIRE_PERIOD` | `1s` | 100 ms … размер окна |
+| `FAULTLINE_EARLY_FIRE_PERIOD` | `1s` | 100 ms … размер окна; `cmd` строит из него и каденс `Fire` (срез 7), и `traffic.Limits.EarlyFirePeriod` (покрытие EARLY) — одно значение на две роли |
 | `FAULTLINE_IDLE_ADVANCE_AFTER` | `35s` | ≥ `EARLY_FIRE_PERIOD`, ≤ 5 min (параметр журнала: когда писать пульс). По умолчанию больше `max_interval` повторов Collector (30 s): после эпизода перегрузки Collector молчит до 30 s, и более короткий порог дал бы пульс посреди его отката и `late_dropped` досланного (ревью osmani). Цена — финал последнего окна после остановки трафика на ≈ 25 s позже |
 | `FAULTLINE_MAX_SERIES` | `100000` | 1 … 1 000 000 |
 | `FAULTLINE_MAX_OPERATIONS_PER_SERVICE` | `500` | 1 … 999 (в шаге 4 операции субъекта — одна страница FR-API-007) |
@@ -997,7 +997,7 @@ func (w *Windows[K, C]) Classify(t time.Time) Placement
 func (w *Windows[K, C]) Drop(placement Placement)              // отброшенное событие без ключа: offered++ и счётчик причины
 func (w *Windows[K, C]) Locate(key K, t time.Time) (cell *C, placement Placement, created bool)
 func (w *Windows[K, C]) End()                                  // LATE
-func (w *Windows[K, C]) FireEarly()                            // только если Options.Early
+func (w *Windows[K, C]) FireEarly(reached time.Time)           // только если Options.Early; окна со стартом позже reached сохраняют флаги (срез 6c)
 func (w *Windows[K, C]) Has(key K) bool
 func (w *Windows[K, C]) Len() int
 func (w *Windows[K, C]) Capacity() int
@@ -1174,22 +1174,25 @@ func SummarizeCounts(pane stream.Pane, counts *Counts, observed time.Duration) W
 // Summarize дополнительно: образцов латентности больше, чем запросов
 // depguard: red и cardinality не импортируют matcher, graph, traffic (проверено пробным импортом)
 
-// traffic
+// traffic (срез 6c)
 type Limits struct {
-	Windows       stream.Config
-	MaxNodes      int
-	MaxEdges      int
-	MaxSeries     int
-	MaxPerService int
-	SketchEntries int
+	Windows         stream.Config
+	EarlyFirePeriod time.Duration // + к ред. 6: нижняя граница покрытия EARLY, clamp(maxReceivedAt − start, EarlyFirePeriod, size)
+	MaxNodes        int
+	MaxEdges        int
+	MaxSeries       int
+	MaxPerService   int
+	SketchEntries   int
 }
-func (l Limits) Validate() error
-func New(limits Limits, sink FinalSink) (*Traffic, error)
-func (t *Traffic) Begin(received batch.Batch)
-func (t *Traffic) RecordCall(edge handle.Edge, callee handle.Node, observed call.Call)
-func (t *Traffic) RecordServed(node handle.Node, observed span.Span)
+func (l *Limits) Validate() error              // Limits 80 B — по указателю (gocritic hugeParam)
+func (l *Limits) WorstCaseHeapBytes() int64    // три движка + арена + реестр + книга сервисов + сводки; проба кучи
+func (l *Limits) ViewHeapBytes() int64         // одна копия View
+func New(limits *Limits, sink FinalSink) (*Traffic, error) // nil sink — финалы никуда не идут
+func (t *Traffic) Begin(received batch.Batch)  // Advance watermark, якорь, Begin трёх движков; пульс — +Heartbeats
+func (t *Traffic) RecordCall(edge handle.Edge, callee handle.Node, observed *call.Call) // None — пропуск (graph_overflow)
+func (t *Traffic) RecordServed(node handle.Node, observed *span.Span)
 func (t *Traffic) End()
-func (t *Traffic) Fire()
+func (t *Traffic) Fire()          // EARLY только у движка субъектов
 func (t *Traffic) Changed() bool  // с прошлого View изменилась хотя бы одна сводка live или final; сбрасывается только View()
 func (t *Traffic) View() View     // срезы — копия на снимок
 type View struct {
@@ -1207,23 +1210,33 @@ type SeriesKey struct {
 	Protocol       operation.Protocol  // только у SeriesOperation
 	Operation      string              // только у SeriesOperation
 }
+// Final — значение с публичными полями (ред. 7, срез 6c): сводка считается сразу. Сводка субъекта с перцентилями
+// всё равно нужна для final во View, сводка операции — без скетча; ленивое Stats() с поколениями ничего не экономило.
 type Final struct {
 	Series SeriesKey
 	Pane   stream.Pane
-	Counts red.Counts
-	/* unexported: доступ к ячейке и поколение для Stats */
+	Stats  red.WindowStats
 }
-func (f Final) Stats() red.WindowStats // лениво; только во время вызова FinalSink.Final, иначе паника (поколение ячейки)
-type FinalSink interface{ Final(f Final) }
+type FinalSink interface{ Final(final *Final) } // синхронно, в порядке выдачи движков; *Final — одно переиспользуемое значение,
+                                                // действительно только на время вызова (иначе аллокация на каждую финальную панель — ревью pocock, osmani);
+                                                // из Final нельзя вызывать Begin/End (повторный вход в движок — паника stream)
+const MaxOwnersOverLimitListed = 64
 type Stats struct {
 	Subjects, Operations, Overflow stream.Stats
 	Sketch                         sketch.ArenaStats
 	Cardinality                    cardinality.Stats
-	OwnersOverLimit                []resource.ServiceRef // ≤ 64
-	SeriesLimitReached             bool
-	Untimed, LatencyUnknown        uint64
+	OwnersOverLimit                []resource.ServiceRef // ≤ 64, по порядку хэндлов; сервис берётся из книги traffic
+	SeriesLimitReached             bool                  // движок операций полон сейчас
+	Untimed, LatencyUnknown        uint64                // LatencyUnknown — принятые события субъекта без латентности, включая untimed
 	Heartbeats, Finals             uint64
 }
+// книга сервисов: хэндл узла → ServiceRef (из RecordServed и вызываемого RecordCall), ребро → (caller, callee, узел вызываемого);
+// SeriesKey собирается из неё, владелец операции ребра — узел вызываемого; срезы выделены под лимиты графа
+// depguard: application не импортирует traffic, red, cardinality, handle, pkg/stream, pkg/sketch; pkg не импортирует internal (pkg-pure)
+// Fire передаёт движку MaxReceivedAt: окно впереди журнала станет live, когда журнал дойдёт до его старта (ревью osmani, pstack)
+// спан без времени получает max(якорь, watermark − lateness): старый догоняющий пакет не теряет его как опоздавший (ревью pstack)
+// Limits.Validate проверяет MaxNodes, MaxEdges, их сумму и MaxSeries против stream.MaxCapacity до любых аллокаций
+// хэндл за пределом лимитов — паника wiring "traffic: "; Builder (6d) берёт MaxNodes/MaxEdges графа и traffic из одного поля конфига
 
 // topology
 type Limits struct { /* шаг 1 */ Traffic traffic.Limits }
@@ -1313,6 +1326,27 @@ func ResponseWeight(nodes, edges int) int64                          // конс
 | Дорогое закрытие окон и снимок | работа ∝ панелям; публикация по 4 причинам; бенчмарки |
 | Изменение порта журнала (`Append(spans)`) задевает тесты шага 1 | срез 4 — отдельный, тесты `memjournal` и `ingest` переводятся в нём |
 | Объём шага | линия отсечения |
+
+### Разбор ревью кода среза 6c (`traffic`)
+
+Четыре ревьюера (pocock, osmani, pstack, clean-arch со свежим контекстом). HIGH нет; четыре MEDIUM исправлены.
+
+| Находка | Решение |
+|---|---|
+| pocock, osmani MEDIUM: аллокация `Final` (232 B) на каждую финальную панель — ≈ 160 000 на закрытие окна | Одно переиспользуемое `Traffic.final`; тест «закрытие окон — меньше аллокации на финал»; мутация «свежий Final» убита |
+| osmani, pstack MEDIUM (pocock LOW): окно впереди журнала теряло live до финала | Движок: `FireEarly(reached)` не трогает окна со стартом позже `reached`; `Fire` передаёт `MaxReceivedAt`; проверка в `views` удалена; регрессионные тесты в `stream` и `traffic` |
+| clean-arch MEDIUM: запрет на весь `pkg/*` для `application` | Сужен до `pkg/stream`, `pkg/sketch` |
+| clean-arch MEDIUM: `pkg` мог импортировать `internal` | Правило `pkg-pure`; обе пробы срабатывают |
+| osmani, pstack LOW: ёмкости проверялись после аллокаций, сумма лимитов переполнялась | `fitEngines` до аллокаций, каждое слагаемое ограничено до сложения; тест `MaxNodes = MaxInt` (он и поймал переполнение) |
+| pstack LOW: спан без времени в старом догоняющем пакете терялся как опоздавший | Время `max(якорь, watermark − lateness)`; тест |
+| osmani, pstack LOW: хэндл за пределом — голая ошибка границ; срезы `View` короче графа | Паника wiring `traffic: `; doc у `View`; общий конфиг лимитов в 6d |
+| pocock, osmani, pstack LOW: нет property-теста I8/I11/I12; детерминизм без разной частоты `Fire`; FR-STR-007 «освобождение → допуск», «тихий рядом с шумным» | 300 случайных журналов × 60 пакетов (будущее, прошлое, без времени, сверх лимитов, пульсы, `Fire`): I6 и I11 после каждого пакета, ноль после сброса, повтор = те же финалы; тесты |
+| pocock, osmani LOW: проба памяти не худший случай | Все субъекты, `MaxSeries` операций с именами 256 B, переполнение, live-сводки, копия `View`: 14,9 MB против модели 15,5 MB |
+| pocock LOW: `EarlyFirePeriod` и каденс `Fire` — две ручки | Одна переменная `FAULTLINE_EARLY_FIRE_PERIOD` строит обе (раздел «Конфигурация») |
+| pstack: расхождение спеки о порядке `Closed` | Исправлено по коду `pkg/stream` |
+| clean-arch LOW: паника в `admit`; `Stats` с типами `pkg` | Паника — недостижимый инвариант (pstack доказал); `Builder` в 6d не выносит типы `pkg` в своё API |
+
+Числа: `RecordCall` в открытое окно — 0 аллокаций; покрытие см. `make verify`.
 
 ### Разбор ревью кода среза 6b (`red`)
 

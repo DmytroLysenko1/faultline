@@ -20,7 +20,7 @@ const (
 	mapRoundUp        = 2
 )
 
-const maxCapacity = 1 << 24
+const MaxCapacity = 1 << 24
 
 type Sink[K comparable, C any] interface {
 	Emit(key K, pane Pane, cell *C)
@@ -70,9 +70,9 @@ func New[K comparable, C any](cfg Config, options Options, sink Sink[K, C]) (*Wi
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	if options.Capacity <= 0 || options.Capacity > maxCapacity || sink == nil {
+	if options.Capacity <= 0 || options.Capacity > MaxCapacity || sink == nil {
 		return nil, fmt.Errorf("%w: capacity %d must be in [1, %d] and a sink is required", ErrInvalidOptions,
-			options.Capacity, maxCapacity)
+			options.Capacity, MaxCapacity)
 	}
 	slotsPer := cfg.Slots()
 	return &Windows[K, C]{

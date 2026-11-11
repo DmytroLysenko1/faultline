@@ -99,6 +99,13 @@ linters:
               desc: transport stays in interfaces
             - pkg: go.opentelemetry.io
               desc: OTLP/pdata types stay in interfaces; self-tracing lives in infrastructure/selftrace and the API adapter
+        # pkg holds reusable engines without business logic; the domain may use them, they never see internal.
+        pkg-pure:
+          files:
+            - "**/pkg/**"
+          deny:
+            - pkg: github.com/DmytroLysenko1/faultline/internal
+              desc: pkg is reusable and knows nothing of faultline's layers
         layer-application:
           files:
             - "**/internal/application/**"
@@ -127,6 +134,18 @@ linters:
               desc: only topology.Builder keeps the expire → match → apply order (I1, I3)
             - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/clock
               desc: only topology.Builder keeps the expire → match → apply order (I1, I3)
+            - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/traffic
+              desc: application drives RED through topology.Builder; traffic, red, cardinality and handle stay inside it
+            - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/red
+              desc: application drives RED through topology.Builder; traffic, red, cardinality and handle stay inside it
+            - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/cardinality
+              desc: application drives RED through topology.Builder; traffic, red, cardinality and handle stay inside it
+            - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/handle
+              desc: application drives RED through topology.Builder; traffic, red, cardinality and handle stay inside it
+            - pkg: github.com/DmytroLysenko1/faultline/pkg/stream
+              desc: application drives RED through topology.Builder; the window and sketch engines stay in the domain
+            - pkg: github.com/DmytroLysenko1/faultline/pkg/sketch
+              desc: application drives RED through topology.Builder; the window and sketch engines stay in the domain
         # Step 2: operation limits and RED cells sit below matcher, graph and traffic.
         topology-lower-layers:
           files:

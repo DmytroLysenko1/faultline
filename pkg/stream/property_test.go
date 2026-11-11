@@ -46,7 +46,7 @@ func runScenario(t *testing.T, s scenario, early bool, fire func() int) *run {
 		r.apply(b)
 		assertEveryEventAccounted(t, r)
 		for range fire() {
-			r.windows.FireEarly()
+			r.windows.FireEarly(everything())
 		}
 	}
 	return r

@@ -332,12 +332,12 @@ func TestSeveralLateEventsInOneBatchEmitOneLatePane(t *testing.T) {
 func TestEarlyPanesOnlyForChangedWindowsAndNeverAfterFinal(t *testing.T) {
 	r := newRun(t, true)
 	r.apply(singleEvent(at(delay), at(0)))
-	r.windows.FireEarly()
-	r.windows.FireEarly()
+	r.windows.FireEarly(everything())
+	r.windows.FireEarly(everything())
 	r.apply(heartbeat(at(delay + windowSize)))
-	r.windows.FireEarly()
+	r.windows.FireEarly(everything())
 	r.apply(singleEvent(at(delay+windowSize), at(time.Second)))
-	r.windows.FireEarly()
+	r.windows.FireEarly(everything())
 
 	want := []finalPane{
 		{Key: 1, Window: windowAt(0), Kind: stream.PaneEarly, Requests: 1},
@@ -357,7 +357,7 @@ func TestEngineWithoutEarlyFiringEmitsNoEarlyPanes(t *testing.T) {
 	r := newRun(t, false)
 	r.apply(singleEvent(at(delay), at(0)))
 
-	r.windows.FireEarly()
+	r.windows.FireEarly(everything())
 
 	if diff := cmp.Diff([]finalPane(nil), r.recorder.log); diff != "" {
 		t.Errorf("panes mismatch (-want +got):\n%s", diff)
@@ -407,5 +407,19 @@ func TestAnchorOutsideTheHorizonIsClampedInsteadOfBreakingTheRing(t *testing.T) 
 				t.Errorf("window of an event reassigned to an out-of-horizon anchor (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestAWindowAheadOfTheReachKeepsItsEarlyPaneForLater(t *testing.T) {
+	r := newRun(t, true)
+	r.apply(singleEvent(at(delay), at(windowSize+time.Second)))
+
+	r.windows.FireEarly(at(windowSize - time.Second))
+	before := len(r.recorder.log)
+	r.windows.FireEarly(at(windowSize))
+
+	want := []finalPane{{Key: 1, Window: windowAt(windowSize), Kind: stream.PaneEarly, Requests: 1}}
+	if diff := cmp.Diff(want, r.recorder.log); diff != "" || before != 0 {
+		t.Errorf("panes before the reach %d, log (-want +got):\n%s", before, diff)
 	}
 }

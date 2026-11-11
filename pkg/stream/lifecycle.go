@@ -40,12 +40,13 @@ func (w *Windows[K, C]) End() {
 	w.batch.open = false
 }
 
-func (w *Windows[K, C]) FireEarly() {
+func (w *Windows[K, C]) FireEarly(reached time.Time) {
 	if !w.early {
 		return
 	}
+	last := w.cfg.windowID(reached)
 	for _, position := range w.liveBucketsInOrder() {
-		if !w.buckets[position].final {
+		if b := &w.buckets[position]; !b.final && b.windowID <= last {
 			w.emitEarly(position)
 		}
 	}
