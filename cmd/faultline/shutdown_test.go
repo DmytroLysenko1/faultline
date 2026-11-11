@@ -84,6 +84,9 @@ func harnessStats(h *harness) *statsReporter {
 		},
 		ingest:   fixedCounters{},
 		journal:  h.journal,
+		timings:  fixedTimings{},
+		alerts:   testAlerts(),
+		clock:    systemClock{},
 		logger:   testLogger(h.logs),
 		interval: statsInterval,
 	}

@@ -2,17 +2,24 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
+	"github.com/DmytroLysenko1/faultline/internal/application/processing"
+	"github.com/DmytroLysenko1/faultline/internal/application/selfalert"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
-	"github.com/DmytroLysenko1/faultline/internal/domain/topology/graph"
-	"github.com/DmytroLysenko1/faultline/internal/domain/topology/matcher"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
 )
 
-const statsInterval = 30 * time.Second
+const (
+	statsInterval = 30 * time.Second
+	lagSlack      = 30 * time.Second
+)
+
+var errReporterStarted = errors.New("stats reporter already started")
 
 type snapshotSource interface {
 	Latest(ctx context.Context) (*topology.Snapshot, error)
@@ -26,15 +33,30 @@ type journalGauge interface {
 	Stats() memjournal.Stats
 }
 
+type pipelineTimings interface {
+	TakeTimings() processing.Timings
+}
+
+type wallClock interface {
+	Now() time.Time
+}
+
 type statsReporter struct {
 	snapshots snapshotSource
 	ingest    ingestCounters
 	journal   journalGauge
+	timings   pipelineTimings
+	alerts    *selfalert.Evaluator
+	clock     wallClock
 	logger    *slog.Logger
 	interval  time.Duration
+	started   atomic.Bool
 }
 
 func (r *statsReporter) Run(ctx context.Context) error {
+	if !r.started.CompareAndSwap(false, true) {
+		return errReporterStarted
+	}
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()
 	for {
@@ -49,59 +71,58 @@ func (r *statsReporter) Run(ctx context.Context) error {
 }
 
 func (r *statsReporter) report(ctx context.Context, final bool) {
-	snapshot, err := r.snapshots.Latest(context.WithoutCancel(ctx))
+	logCtx := context.WithoutCancel(ctx)
+	snapshot, err := r.snapshots.Latest(logCtx)
 	if err != nil {
-		r.logger.Warn("pipeline.stats_failed", "error", err)
+		r.logger.WarnContext(logCtx, "pipeline.stats_failed", "error", err)
 		return
 	}
-	r.logger.Info("pipeline.stats",
+	timings := r.timings.TakeTimings()
+	now := r.clock.Now()
+	if !final {
+		r.logTransitions(logCtx, r.alerts.Evaluate(sampleOf(snapshot, now)))
+	}
+	r.logger.LogAttrs(logCtx, slog.LevelInfo, "pipeline.stats",
 		slog.Bool("final", final),
 		slog.Uint64("revision", snapshot.Revision),
 		slog.Int("nodes", len(snapshot.Nodes)),
 		slog.Int("edges", len(snapshot.Edges)),
 		pairingGroup(&snapshot.PairingStats),
-		graphGroup(snapshot.GraphStats),
+		graphGroup(snapshot),
+		windowsGroup(snapshot, now),
+		cardinalityGroup(&snapshot.TrafficStats),
+		sketchGroup(&snapshot.TrafficStats),
+		pipelineGroup(timings),
+		alertsGroup(r.alerts.Alerts()),
 		ingestGroup(r.ingest.Stats()),
 		journalGroup(r.journal.Stats()),
 	)
 }
 
-func pairingGroup(stats *matcher.Stats) slog.Attr {
-	return slog.Group("pairing",
-		slog.Uint64("observed", stats.Observed),
-		slog.Uint64("matched", stats.Matched),
-		slog.Uint64("duplicate", stats.Duplicate),
-		slog.Uint64("unpairable", stats.Unpairable),
-		slog.Uint64("evicted", stats.Evicted),
-		slog.Uint64("expired", stats.Expired),
-		slog.Uint64("pending", stats.Pending),
-		slog.Uint64("expired_caller", stats.ExpiredCaller),
-		slog.Uint64("evicted_caller", stats.EvictedCaller),
-		slog.Uint64("tombstone_evicted", stats.TombstoneEvicted),
-	)
+func (r *statsReporter) logTransitions(ctx context.Context, transitions []selfalert.Transition) {
+	for index := range transitions {
+		transition := &transitions[index]
+		r.logger.LogAttrs(ctx, levelOf(transition), transition.Event, transitionAttrs(transition)...)
+	}
 }
 
-func graphGroup(stats graph.Stats) slog.Attr {
-	return slog.Group("graph",
-		slog.Uint64("graph_overflow", stats.GraphOverflow),
-		slog.Uint64("unanswered_overflow", stats.UnansweredOverflow),
-		slog.Uint64("node_overflow", stats.NodeOverflow),
-	)
+func provideStats(stored storage, counters ingestCounters, timings pipelineTimings, cfg *Config,
+	logger *slog.Logger,
+) *statsReporter {
+	return &statsReporter{
+		snapshots: stored.store,
+		ingest:    counters,
+		journal:   stored.journal,
+		timings:   timings,
+		alerts:    selfalert.NewEvaluator(alertThresholds(cfg)),
+		clock:     systemClock{},
+		logger:    logger,
+		interval:  statsInterval,
+	}
 }
 
-func ingestGroup(stats ingest.Stats) slog.Attr {
-	return slog.Group("ingest",
-		slog.Int64("accepted_spans", stats.AcceptedSpans),
-		slog.Int64("rejected_spans", stats.RejectedSpans),
-		slog.Int64("overloaded_responses", stats.OverloadedResponses),
-		slog.Int64("too_large_responses", stats.TooLargeResponses),
-	)
-}
-
-func journalGroup(stats memjournal.Stats) slog.Attr {
-	return slog.Group("journal",
-		slog.Int64("bytes", stats.Bytes),
-		slog.Int("batches", stats.Batches),
-		slog.Int("spans", stats.Spans),
-	)
+func alertThresholds(cfg *Config) selfalert.Thresholds {
+	return selfalert.Thresholds{
+		WatermarkLag: cfg.Topology.Windows.Delay + cfg.Journal.IdleAfter + cfg.Topology.EarlyFirePeriod + lagSlack,
+	}
 }

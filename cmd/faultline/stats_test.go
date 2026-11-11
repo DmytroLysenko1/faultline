@@ -10,14 +10,27 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
+	"github.com/DmytroLysenko1/faultline/internal/application/processing"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology/cardinality"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/graph"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/matcher"
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology/traffic"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memgraph"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
+	"github.com/DmytroLysenko1/faultline/pkg/sketch"
+	"github.com/DmytroLysenko1/faultline/pkg/stream"
 )
 
-const slowFinalWrite = time.Second
+const (
+	slowFinalWrite  = time.Second
+	subjectsBase    = 100
+	operationsBase  = 200
+	overflowBase    = 300
+	watermarkBehind = 45 * time.Second
+)
 
 var errSnapshotUnavailable = errors.New("snapshot unavailable")
 
@@ -57,11 +70,84 @@ func balanced(pairing map[string]any) bool {
 	return pairing["observed"].(float64) == accounted
 }
 
+func engineStats(base uint64) stream.Stats {
+	return stream.Stats{
+		Series:       int(base),
+		Capacity:     int(base + 1),
+		Offered:      base + 2,
+		OnTime:       base + 3,
+		LateAccepted: base + 4,
+		LateDropped:  base + 5,
+		NoWatermark:  base + 6,
+		Reassigned:   base + 7,
+		PanesEarly:   base + 8,
+		PanesOnTime:  base + 9,
+		PanesLate:    base + 10,
+		Retired:      base + 11,
+	}
+}
+
+func engineRecord(base float64) map[string]any {
+	return map[string]any{
+		"series":                base,
+		"capacity":              base + 1,
+		"offered":               base + 2,
+		"on_time":               base + 3,
+		"late_accepted":         base + 4,
+		"late_dropped":          base + 5,
+		"no_watermark":          base + 6,
+		"clock_skew_reassigned": base + 7,
+		"panes_early":           base + 8,
+		"panes_on_time":         base + 9,
+		"panes_late":            base + 10,
+		"retired":               base + 11,
+	}
+}
+
+func sampleTraffic() traffic.Stats {
+	return traffic.Stats{
+		Subjects:   engineStats(subjectsBase),
+		Operations: engineStats(operationsBase),
+		Overflow:   engineStats(overflowBase),
+		Sketch: sketch.ArenaStats{
+			Budget:            8_388_608,
+			InUse:             4_096,
+			CollapsedAdds:     41,
+			CollapsedSketches: 42,
+			DroppedSamples:    43,
+		},
+		Cardinality: cardinality.Stats{
+			Operations:      51,
+			OwnersOverLimit: 52,
+		},
+		OwnersOverLimit: []resource.ServiceRef{
+			{
+				Namespace: "shop",
+				Name:      "cart",
+			},
+		},
+		SeriesLimitReached: true,
+		Untimed:            61,
+		LatencyUnknown:     62,
+		Heartbeats:         63,
+		Finals:             64,
+	}
+}
+
 func sampleSnapshot() *topology.Snapshot {
 	return &topology.Snapshot{
 		Revision: 7,
-		Nodes:    make([]topology.NodeView, 2),
-		Edges:    make([]topology.EdgeView, 1),
+		Nodes: []topology.NodeView{
+			{Node: graph.Node{Served: 70}},
+			{Node: graph.Node{Served: 71}},
+		},
+		Edges: []topology.EdgeView{
+			{Edge: graph.Edge{Calls: 80}},
+		},
+		WindowSize:     10 * time.Second,
+		Watermark:      telemetrytest.Epoch(),
+		WatermarkKnown: true,
+		TrafficStats:   sampleTraffic(),
 		PairingStats: matcher.Stats{
 			Observed:         21,
 			Matched:          5,
@@ -100,8 +186,24 @@ func sampleReporter(logs *logBuffer, snapshots snapshotSource) *statsReporter {
 				Spans:   9,
 			},
 		},
+		timings: fixedTimings{
+			timings: sampleTimings(),
+		},
+		alerts: testAlerts(),
+		clock: fixedClock{
+			now: telemetrytest.Epoch().Add(watermarkBehind),
+		},
 		logger:   testLogger(logs),
 		interval: statsInterval,
+	}
+}
+
+func sampleTimings() processing.Timings {
+	return processing.Timings{
+		Iteration: 9 * time.Millisecond,
+		Apply:     2500 * time.Microsecond,
+		Fire:      700 * time.Microsecond,
+		Publish:   3 * time.Millisecond,
 	}
 }
 
@@ -146,6 +248,30 @@ func TestStatsRecordCarriesEveryCounter(t *testing.T) {
 		},
 		"graph": map[string]any{
 			"graph_overflow": 8.0, "unanswered_overflow": 9.0, "node_overflow": 10.0,
+			"calls_total": 80.0, "served_total": 141.0,
+		},
+		"windows": map[string]any{
+			"window_size_seconds": 10.0, "watermark_known": true,
+			"watermark": telemetrytest.Epoch().UTC().Format(time.RFC3339Nano), "watermark_lag_seconds": 45.0,
+			"heartbeats": 63.0, "finals": 64.0, "untimed": 61.0, "latency_unknown": 62.0,
+			"subjects": engineRecord(subjectsBase), "operations": engineRecord(operationsBase),
+			"overflow": engineRecord(overflowBase),
+		},
+		"cardinality": map[string]any{
+			"operations": 51.0, "operation_series": float64(operationsBase), "overflow_series": float64(overflowBase),
+			"services_over_limit": 52.0, "series_limit_reached": true,
+		},
+		"sketch": map[string]any{
+			"entries_in_use": 4096.0, "budget": 8388608.0, "collapsed_adds": 41.0, "collapsed_sketches": 42.0,
+			"dropped_samples": 43.0,
+		},
+		"pipeline": map[string]any{
+			"iteration_max_us": 9000.0, "apply_max_us": 2500.0, "fire_max_us": 700.0, "publish_max_us": 3000.0,
+		},
+		"alerts": map[string]any{
+			"windows.clock_skew_ratio_high": false, "windows.late_drop_ratio_high": false,
+			"windows.watermark_lag_high": false, "windows.cardinality_limit_reached": true,
+			"windows.series_limit_reached": true, "windows.sketch_budget_exhausted": true,
 		},
 		"ingest": map[string]any{
 			"accepted_spans": 30.0, "rejected_spans": 4.0, "overloaded_responses": 2.0, "too_large_responses": 1.0,

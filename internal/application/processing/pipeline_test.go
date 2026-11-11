@@ -26,6 +26,9 @@ const (
 	restOfPeriod   = firePeriod - shortWait
 	longPublish    = 3 * firePeriod / 2
 	heartbeatAhead = 10 * time.Minute
+	idleWait       = 5 * firePeriod
+	firstPublish   = 40 * time.Millisecond
+	drainPublish   = 90 * time.Millisecond
 )
 
 var (
@@ -644,5 +647,117 @@ func corrupt(snapshot *topology.Snapshot) {
 	}
 	for index := range snapshot.Nodes {
 		snapshot.Nodes[index].UnansweredCalls = 0
+	}
+}
+
+// TestTimingsLeaveOutTheWaitAndKeepTheDrainPublish: the time Receive waits is idle, not work; the
+// publish of the drain is the last work of the run and lands in the last take.
+func TestTimingsLeaveOutTheWaitAndKeepTheDrainPublish(t *testing.T) {
+	var batches scenario
+	clock := &fakeClock{now: telemetrytest.Epoch()}
+	feed := &scriptedFeed{
+		clock: clock,
+		answers: []answer{
+			waitedFor(idleWait, batches.pair(t)),
+		},
+	}
+	store := &recordingStore{
+		clock: clock,
+		takes: firstPublish,
+	}
+	store.afterPublish = func(*topology.Snapshot) {
+		store.takes = drainPublish
+	}
+	pipeline, err := processing.NewPipeline(feed, processingtest.NewBuilder(t), store, clock, cadence(roomyHeld))
+	if err != nil {
+		t.Fatalf("NewPipeline: %v", err)
+	}
+	if err := pipeline.Run(t.Context()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	want := processing.Timings{
+		Iteration: drainPublish,
+		Publish:   drainPublish,
+	}
+	if diff := gocmp.Diff(want, pipeline.TakeTimings()); diff != "" {
+		t.Errorf("timings (-want +got):\n%s", diff)
+	}
+}
+
+type tickingClock struct {
+	now time.Time
+}
+
+func (c *tickingClock) Now() time.Time {
+	c.now = c.now.Add(time.Millisecond)
+	return c.now
+}
+
+type timedParts struct {
+	Iteration bool
+	Apply     bool
+	Fire      bool
+	Publish   bool
+}
+
+func partsOf(timings processing.Timings) timedParts {
+	return timedParts{
+		Iteration: timings.Iteration > 0,
+		Apply:     timings.Apply > 0,
+		Fire:      timings.Fire > 0,
+		Publish:   timings.Publish > 0,
+	}
+}
+
+type takingFeed struct {
+	clock   *tickingClock
+	answers []answer
+	taken   []processing.Timings
+	source  func() processing.Timings
+}
+
+func (f *takingFeed) Receive(context.Context, int, time.Duration) ([]processing.Delivery, error) {
+	f.taken = append(f.taken, f.source())
+	if len(f.answers) == 0 {
+		return nil, processing.ErrFeedClosed
+	}
+	next := f.answers[0]
+	f.answers = f.answers[1:]
+	f.clock.now = f.clock.now.Add(next.waited)
+	return asDeliveries(next.deliveries), nil
+}
+
+// TestEveryIterationTimesOnlyTheWorkItDid: an iteration that fires and publishes times all four
+// parts; the next one, which only applies, times no Fire and no Publish of its own.
+func TestEveryIterationTimesOnlyTheWorkItDid(t *testing.T) {
+	var batches scenario
+	clock := &tickingClock{now: telemetrytest.Epoch()}
+	feed := &takingFeed{
+		clock: clock,
+		answers: []answer{
+			waitedFor(2*time.Hour, batches.pair(t)),
+			iterationOf(batches.callerHalf(t)),
+		},
+	}
+	pipeline, err := processing.NewPipeline(feed, processingtest.NewBuilder(t), &recordingStore{}, clock,
+		processing.Cadence{FirePeriod: time.Hour, MaxHeldBytes: roomyHeld})
+	if err != nil {
+		t.Fatalf("NewPipeline: %v", err)
+	}
+	feed.source = pipeline.TakeTimings
+	if err := pipeline.Run(t.Context()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got := make([]timedParts, 0, len(feed.taken))
+	for _, taken := range feed.taken {
+		got = append(got, partsOf(taken))
+	}
+	want := []timedParts{
+		{},
+		{Iteration: true, Apply: true, Fire: true, Publish: true},
+		{Iteration: true, Apply: true},
+	}
+	if diff := gocmp.Diff(want, got); diff != "" {
+		t.Errorf("timed parts per iteration (-want +got):\n%s", diff)
 	}
 }

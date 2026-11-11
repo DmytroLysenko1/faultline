@@ -146,7 +146,7 @@ func assemble(cfg *Config, logger *slog.Logger, seams wiring) (*system, error) {
 		ingest:    server,
 		api:       api,
 		pipeline:  pipeline,
-		stats:     provideStats(stored, counters, logger),
+		stats:     provideStats(stored, counters, pipeline, cfg, logger),
 		tracing:   seams.tracing,
 		store:     stored.store,
 		lifecycle: state,
@@ -183,16 +183,6 @@ func provideIngest(
 	return otlp.NewServer(accept, otlp.DefaultOptions(logger, systemClock{})), accept
 }
 
-func provideStats(stored storage, counters ingestCounters, logger *slog.Logger) *statsReporter {
-	return &statsReporter{
-		snapshots: stored.store,
-		ingest:    counters,
-		journal:   stored.journal,
-		logger:    logger,
-		interval:  statsInterval,
-	}
-}
-
 func provideAPI(
 	store *memgraph.Store,
 	state *lifecycle,
@@ -211,7 +201,7 @@ func provideAPI(
 	return connectapi.NewServer(mux), nil
 }
 
-func providePipeline(feed spanFeed, stored storage, cfg *Config) (pipelineRunner, error) {
+func providePipeline(feed spanFeed, stored storage, cfg *Config) (*processing.Pipeline, error) {
 	pipeline, err := processing.NewPipeline(feed, stored.builder, stored.store, systemClock{}, pipelineCadence(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("build pipeline: %w", err)

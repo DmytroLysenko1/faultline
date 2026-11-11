@@ -33,6 +33,8 @@ type Pipeline struct {
 	heldBytes int64
 	nextFire  time.Time
 	started   atomic.Bool
+	measured  Timings
+	timings   timings
 }
 
 func NewPipeline(feed spanFeed, builder *topology.Builder, publisher graphPublisher, clock clock,
@@ -65,16 +67,32 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	}
 }
 
+func (p *Pipeline) TakeTimings() Timings {
+	return p.timings.take()
+}
+
 func (p *Pipeline) iterate(ctx context.Context) error {
 	deliveries, err := p.feed.Receive(ctx, MaxBatchesPerIteration, p.untilFire())
 	if err != nil {
 		return fmt.Errorf("receive batches: %w", err)
 	}
+	started := p.clock.Now()
+	defer p.recordIteration(started)
 	p.apply(deliveries)
 	if !p.due() {
 		return nil
 	}
 	return p.publish(ctx)
+}
+
+func (p *Pipeline) recordIteration(started time.Time) {
+	p.measured.Iteration = p.since(started)
+	p.timings.record(p.measured)
+	p.measured = Timings{}
+}
+
+func (p *Pipeline) since(started time.Time) time.Duration {
+	return max(p.clock.Now().Sub(started), 0)
 }
 
 func (p *Pipeline) untilFire() time.Duration {
@@ -83,7 +101,9 @@ func (p *Pipeline) untilFire() time.Duration {
 
 func (p *Pipeline) apply(deliveries []Delivery) {
 	for _, delivery := range deliveries {
+		started := p.clock.Now()
 		p.builder.Apply(delivery.Batch())
+		p.measured.Apply = max(p.measured.Apply, p.since(started))
 		p.held = append(p.held, delivery)
 		p.heldBytes += delivery.Bytes()
 	}
@@ -92,6 +112,7 @@ func (p *Pipeline) apply(deliveries []Delivery) {
 func (p *Pipeline) due() bool {
 	if now := p.clock.Now(); !now.Before(p.nextFire) || p.nextFire.Sub(now) > p.cadence.FirePeriod {
 		p.builder.Fire()
+		p.measured.Fire = p.since(now)
 		p.nextFire = now.Add(p.cadence.FirePeriod)
 		return true
 	}
@@ -99,7 +120,10 @@ func (p *Pipeline) due() bool {
 }
 
 func (p *Pipeline) publish(ctx context.Context) error {
-	if err := p.publisher.Publish(ctx, p.builder.Snapshot()); err != nil {
+	started := p.clock.Now()
+	err := p.publisher.Publish(ctx, p.builder.Snapshot())
+	p.measured.Publish = p.since(started)
+	if err != nil {
 		return fmt.Errorf("publish after %d held batches: %w", len(p.held), err)
 	}
 	for _, delivery := range p.held {
@@ -121,6 +145,7 @@ func (p *Pipeline) stop(ctx context.Context, err error) error {
 }
 
 func (p *Pipeline) drain(ctx context.Context) error {
+	defer p.recordIteration(p.clock.Now())
 	if err := p.publish(ctx); err != nil {
 		return fmt.Errorf("drain: %w", err)
 	}

@@ -20,6 +20,7 @@ import (
 
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
 	"github.com/DmytroLysenko1/faultline/internal/application/processing"
+	"github.com/DmytroLysenko1/faultline/internal/application/selfalert"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
 )
@@ -171,6 +172,12 @@ func (b *logBuffer) Write(p []byte) (int, error) {
 	return b.buffer.Write(p)
 }
 
+func (b *logBuffer) String() string {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+	return b.buffer.String()
+}
+
 func (b *logBuffer) records(t *testing.T) []map[string]any {
 	t.Helper()
 	b.lock.Lock()
@@ -277,4 +284,24 @@ type fixedJournal struct {
 
 func (f fixedJournal) Stats() memjournal.Stats {
 	return f.stats
+}
+
+type fixedTimings struct {
+	timings processing.Timings
+}
+
+func (f fixedTimings) TakeTimings() processing.Timings {
+	return f.timings
+}
+
+type fixedClock struct {
+	now time.Time
+}
+
+func (c fixedClock) Now() time.Time {
+	return c.now
+}
+
+func testAlerts() *selfalert.Evaluator {
+	return selfalert.NewEvaluator(alertThresholds(new(defaultConfig())))
 }
