@@ -100,7 +100,7 @@ func drainingPipeline(t *testing.T, h *harness) pipelineRunner {
 	if err != nil {
 		t.Fatalf("memgraph.New: %v", err)
 	}
-	return processing.NewPipeline(h.journal.Journal, builder, store)
+	return processingtest.NewPipeline(t, h.journal.Journal, builder, store, systemClock{})
 }
 
 func crashingPipeline(_ *testing.T, h *harness) pipelineRunner {
@@ -131,7 +131,8 @@ func stuckPipeline(_ *testing.T, h *harness) pipelineRunner {
 func failingAfterDrainPipeline(_ *testing.T, h *harness) pipelineRunner {
 	return runnerFunc(func(ctx context.Context) error {
 		for {
-			if _, err := h.journal.Receive(ctx, processing.MaxBatchesPerIteration, processing.ReceiveWait); err != nil {
+			wait := processingtest.Cadence().FirePeriod
+			if _, err := h.journal.Receive(ctx, processing.MaxBatchesPerIteration, wait); err != nil {
 				return errCrash
 			}
 		}

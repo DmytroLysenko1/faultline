@@ -11,7 +11,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
-	"github.com/DmytroLysenko1/faultline/internal/application/processing"
 	"github.com/DmytroLysenko1/faultline/internal/application/processing/processingtest"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memgraph"
@@ -93,7 +92,7 @@ func TestDrainFullJournal(t *testing.T) {
 			}
 			journal := fullJournal(t, tt.Args(t))
 			started := time.Now()
-			if err := processing.NewPipeline(journal, builder, store).Run(t.Context()); err != nil {
+			if err := processingtest.NewPipeline(t, journal, builder, store, systemClock{}).Run(t.Context()); err != nil {
 				t.Fatalf("Run: %v", err)
 			}
 			elapsed := time.Since(started)

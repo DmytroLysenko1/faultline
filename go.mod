@@ -2,7 +2,7 @@ module github.com/DmytroLysenko1/faultline
 
 go 1.27.0
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 tool (
 	connectrpc.com/connect/cmd/protoc-gen-connect-go

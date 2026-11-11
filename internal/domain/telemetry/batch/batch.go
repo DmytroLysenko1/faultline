@@ -57,6 +57,10 @@ func (b Batch) Candidate() (time.Time, bool) {
 	return latest, true
 }
 
+func MaxFootprint(maxDecoded, maxSpans, minSpanWeight int64) int64 {
+	return maxDecoded + maxSpans*max(spanFixedBytes-minSpanWeight, 0)
+}
+
 func (b Batch) Footprint() int64 {
 	total := int64(len(b.Spans)) * spanFixedBytes
 	distinct := make(map[string]struct{})

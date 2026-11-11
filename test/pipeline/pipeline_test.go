@@ -3,6 +3,7 @@ package pipeline_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -12,7 +13,9 @@ import (
 
 	"github.com/DmytroLysenko1/faultline/internal/application/processing"
 	"github.com/DmytroLysenko1/faultline/internal/application/processing/processingtest"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology/red"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memgraph"
 )
 
@@ -81,6 +84,7 @@ type observedFeed struct {
 	iterations [][]processing.Delivery
 	handedOut  uint64
 	readers    *progress
+	clock      *processingtest.SteppingClock
 }
 
 func (f *observedFeed) Receive(ctx context.Context, _ int, _ time.Duration) ([]processing.Delivery, error) {
@@ -93,6 +97,7 @@ func (f *observedFeed) Receive(ctx context.Context, _ int, _ time.Duration) ([]p
 	next := f.iterations[0]
 	f.iterations = f.iterations[1:]
 	f.handedOut++
+	f.clock.Advance()
 	return next, nil
 }
 
@@ -107,6 +112,10 @@ func newAtomicityScenario(t *testing.T, readers *progress) atomicityScenario {
 	scenario := atomicityScenario{
 		feed: &observedFeed{
 			readers: readers,
+			clock: &processingtest.SteppingClock{
+				At:   telemetrytest.Epoch(),
+				Step: processingtest.Cadence().FirePeriod,
+			},
 		},
 		totals: map[uint64]bool{
 			0: true,
@@ -116,7 +125,8 @@ func newAtomicityScenario(t *testing.T, readers *progress) atomicityScenario {
 	for round := range atomicityIterations {
 		var iteration []processing.Delivery
 		for range minBatchesPerRound + round%batchesSpread {
-			iteration = append(iteration, processingtest.NewDelivery(processingtest.Pairs(t, trace, callsPerBatch)))
+			end := telemetrytest.Epoch().Add(time.Duration(round) * processingtest.Cadence().FirePeriod)
+			iteration = append(iteration, processingtest.NewDelivery(processingtest.TimedPairs(t, trace, callsPerBatch, end)))
 			trace += callsPerBatch
 			batches++
 		}
@@ -129,8 +139,40 @@ func newAtomicityScenario(t *testing.T, readers *progress) atomicityScenario {
 
 type snapshotChecker struct {
 	totals        map[uint64]bool
-	callsRevision map[uint64]uint64
+	callsRevision map[uint64]string
 	lastRevision  uint64
+}
+
+// contentOf is everything a revision stands for: graph counts and the live and final summaries.
+// The watermark and the stats are diagnostics and are left out (I2).
+func contentOf(snapshot *topology.Snapshot) string {
+	var content strings.Builder
+	for i := range snapshot.Nodes {
+		node := &snapshot.Nodes[i]
+		fmt.Fprintf(&content, "%s %d %+v %+v;", node.ID, node.Served, node.Live, node.Final)
+	}
+	for i := range snapshot.Edges {
+		edge := &snapshot.Edges[i]
+		fmt.Fprintf(&content, "%s→%s %d %+v %+v;", edge.Source, edge.Target, edge.Calls, edge.Live, edge.Final)
+	}
+	return content.String()
+}
+
+func summariesHoldTheirRules(snapshot *topology.Snapshot) bool {
+	summaries := make([]red.WindowStats, 0, 2*(len(snapshot.Nodes)+len(snapshot.Edges)))
+	for i := range snapshot.Nodes {
+		summaries = append(summaries, snapshot.Nodes[i].Live, snapshot.Nodes[i].Final)
+	}
+	for i := range snapshot.Edges {
+		summaries = append(summaries, snapshot.Edges[i].Live, snapshot.Edges[i].Final)
+	}
+	for i := range summaries {
+		stats := &summaries[i]
+		if stats.Failed > stats.Requests || stats.P50 > stats.P95 || stats.P95 > stats.P99 {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *snapshotChecker) check(t *testing.T, snapshot *topology.Snapshot) bool {
@@ -140,8 +182,13 @@ func (c *snapshotChecker) check(t *testing.T, snapshot *topology.Snapshot) bool 
 		t.Errorf("revision %d shows %d calls, not the total of any whole iteration", snapshot.Revision, calls)
 		return false
 	}
-	if seen, found := c.callsRevision[snapshot.Revision]; found && seen != calls {
-		t.Errorf("revision %d showed %d calls and now %d", snapshot.Revision, seen, calls)
+	content := contentOf(snapshot)
+	if seen, found := c.callsRevision[snapshot.Revision]; found && seen != content {
+		t.Errorf("revision %d showed other graph or RED data before:\n%s\nnow:\n%s", snapshot.Revision, seen, content)
+		return false
+	}
+	if !summariesHoldTheirRules(snapshot) {
+		t.Errorf("revision %d has a summary that breaks its rules:\n%s", snapshot.Revision, content)
 		return false
 	}
 	if snapshot.Revision < c.lastRevision {
@@ -152,7 +199,7 @@ func (c *snapshotChecker) check(t *testing.T, snapshot *topology.Snapshot) bool 
 		t.Errorf("revision %d: %d calls but matched − overflow = %d", snapshot.Revision, calls, paired)
 		return false
 	}
-	c.callsRevision[snapshot.Revision] = calls
+	c.callsRevision[snapshot.Revision] = content
 	c.lastRevision = snapshot.Revision
 	return true
 }
@@ -161,7 +208,7 @@ func read(t *testing.T, store *memgraph.Store, scenario atomicityScenario, reade
 	t.Helper()
 	checker := &snapshotChecker{
 		totals:        scenario.totals,
-		callsRevision: map[uint64]uint64{},
+		callsRevision: map[uint64]string{},
 	}
 	for {
 		select {
@@ -198,7 +245,7 @@ func TestSnapshotAtomicity(t *testing.T) {
 			read(t, store, scenario, readers, done)
 		})
 	}
-	runErr := processing.NewPipeline(scenario.feed, builder, store).Run(t.Context())
+	runErr := processingtest.NewPipeline(t, scenario.feed, builder, store, scenario.feed.clock).Run(t.Context())
 	close(done)
 	reading.Wait()
 	if runErr != nil {
@@ -213,5 +260,8 @@ func TestSnapshotAtomicity(t *testing.T) {
 	}
 	if calls := processingtest.TotalCalls(final); calls != scenario.finalCalls {
 		t.Errorf("final snapshot has %d calls, want %d", calls, scenario.finalCalls)
+	}
+	if len(final.Edges) == 0 || final.Edges[0].Final.Requests == 0 || final.Edges[0].Live.Requests == 0 {
+		t.Errorf("readers checked no RED: the final snapshot shows no live and final summary: %+v", final.Edges)
 	}
 }

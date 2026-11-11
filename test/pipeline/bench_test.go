@@ -31,7 +31,8 @@ func BenchmarkIteration50kEdges(b *testing.B) {
 		b.StopTimer()
 		feed := processingtest.NewIterationFeed(iterationAfterPrefill(b, batches))
 		b.StartTimer()
-		if err := processing.NewPipeline(feed, builder, store).Run(b.Context()); err != nil {
+		pipeline := processingtest.NewPipeline(b, feed, builder, store, processingtest.StoppedClock{})
+		if err := pipeline.Run(b.Context()); err != nil {
 			b.Fatalf("Run: %v", err)
 		}
 		batches += processing.MaxBatchesPerIteration

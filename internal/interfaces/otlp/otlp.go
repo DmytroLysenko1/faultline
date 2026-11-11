@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/decodelimit"
 )
 
@@ -26,6 +27,10 @@ const (
 	MaxErrorMessageBytes  = 1 << 10
 	MaxSpansPerRequest    = MaxDecodedBytes / decodelimit.MinSpanWeight
 )
+
+func MaxBatchFootprint() int64 {
+	return batch.MaxFootprint(MaxDecodedBytes, MaxSpansPerRequest, decodelimit.MinSpanWeight)
+}
 
 type clock interface {
 	Now() time.Time

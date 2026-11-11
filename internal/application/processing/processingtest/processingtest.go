@@ -9,6 +9,7 @@ import (
 
 	"github.com/DmytroLysenko1/faultline/internal/application/processing"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/eventtime"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/kind"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
@@ -32,16 +33,19 @@ const (
 	prefilledEdges   = prefillServices * prefillCallsEach
 	prefilledTraces  = prefilledEdges
 	servicePrefix    = "service-%03d"
+	callLatency      = 5 * time.Millisecond
 )
 
 type Delivery struct {
 	batch    batch.Batch
+	bytes    int64
 	released atomic.Int32
 }
 
 func NewDelivery(received batch.Batch) *Delivery {
 	return &Delivery{
 		batch: received,
+		bytes: received.Footprint(),
 	}
 }
 
@@ -50,7 +54,7 @@ func (d *Delivery) Batch() batch.Batch {
 }
 
 func (d *Delivery) Bytes() int64 {
-	return d.batch.Footprint()
+	return d.bytes
 }
 
 func (d *Delivery) Release() {
@@ -162,6 +166,23 @@ func pairsBetween(tb testing.TB, firstTrace uint64, count int, caller, callee st
 		spans = append(spans, pair(tb, firstTrace+uint64(offset), caller, callee)...)
 	}
 	return mustBatch(tb, spans)
+}
+
+func TimedPairs(tb testing.TB, firstTrace uint64, count int, end time.Time) batch.Batch {
+	tb.Helper()
+	interval := eventtime.FromUnixNanos(uint64(end.Add(-callLatency).UnixNano()), uint64(end.UnixNano()))
+	spans := make([]span.Span, 0, spansPerPair*count)
+	for offset := range count {
+		for _, half := range pair(tb, firstTrace+uint64(offset), Caller, Callee) {
+			half.Interval = interval
+			spans = append(spans, half)
+		}
+	}
+	created, err := batch.New(spans, end)
+	if err != nil {
+		tb.Fatalf("batch.New: %v", err)
+	}
+	return created
 }
 
 func callerHalves(tb testing.TB, firstTrace uint64, count int) batch.Batch {

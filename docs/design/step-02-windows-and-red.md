@@ -614,6 +614,11 @@ publish: Publish(Snapshot()) — ошибка → return (held не освобо
 - **D2 — простой — запись журнала** (пульс), а не решение Pipeline: `idle_advance_after` — параметр журнала.
 - **D3 — `held` ограничен байтами** (`journal_max_bytes − max_batch_footprint`) и временем (≤ 1 s): удерживаемая часть никогда не мешает принять следующий самый большой пакет (очередь журнала при отставании — обычное обратное давление шага 1). Нижняя граница журнала 48 MiB пересчитывается в срезе 3 с новым спаном (оценка ревью: худший запрос ≈ 33 MiB `Footprint`, граница держится).
 - **D4 — без `recover`, логов и горутин.** Каденс — через `maxWait`.
+- **Срез 7 (по коду и ревью):**
+  - `MaxHeldBytes = journal_max_bytes − otlp.MaxBatchFootprint()`, где `MaxBatchFootprint = batch.MaxFootprint(MaxDecodedBytes, MaxSpansPerRequest, MinSpanWeight) = 32 MiB + 148 470 × (256 − 226) B ≈ 36,2 MiB`. Строки идентичности входят в декодированный вес; запас держит и лимит запроса на проводе 4 MiB (нормализованные имена с U+FFFD могут быть длиннее своих байт). Проба самых тяжёлых запросов (`test/ingest`): 29,8 MiB. Удерживать можно 27,8 MiB при журнале 64 MiB и 11,8 MiB при 48 MiB.
+  - `Fire` срабатывает и тогда, когда часы ушли назад больше чем на период: иначе ранние панели и публикации стояли бы до возврата часов (ревью pstack). `NewPipeline` отклоняет `nil`-часы.
+  - Пульс публикации сам не вызывает; закрытые им окна видны со следующим `Fire` (тест).
+  - Дренаж не вызывает `Fire`: последний период ранних панелей в финальный снимок не попадает. Отмена во время публикации дренажа — ошибка (по псевдокоду), во время обычной публикации — нормальная остановка.
 
 ---
 
@@ -1279,7 +1284,8 @@ type Cadence struct {
 	MaxHeldBytes int64
 }
 func NewPipeline(feed spanFeed, builder *topology.Builder, publisher graphPublisher, clock clock, cadence Cadence) (*Pipeline, error)
-// spanFeed.Receive(ctx, limit int, maxWait time.Duration); ErrEmptyReceive удалён
+// spanFeed.Receive(ctx, limit int, maxWait time.Duration); ErrEmptyReceive удалён; ReceiveWait удалён (ожидание — до Fire)
+// NewPipeline: Cadence.Validate (FirePeriod > 0, MaxHeldBytes > 0) и clock != nil, иначе ErrInvalidCadence
 ```
 
 **`internal/interfaces/connectapi`** (срез 8)
@@ -1338,6 +1344,21 @@ func ResponseWeight(nodes, edges int) int64                          // конс
 | Дорогое закрытие окон и снимок | работа ∝ панелям; публикация по 4 причинам; бенчмарки |
 | Изменение порта журнала (`Append(spans)`) задевает тесты шага 1 | срез 4 — отдельный, тесты `memjournal` и `ingest` переводятся в нём |
 | Объём шага | линия отсечения |
+
+### Разбор ревью кода среза 7 (`processing`: каденс)
+
+Четыре ревьюера (pocock, osmani, pstack, concurrency со свежим контекстом). HIGH нет; один MEDIUM исправлен.
+
+| Находка | Решение |
+|---|---|
+| pocock MEDIUM: нет теста «пульс → закрытые окна видны со следующим `Fire`» | `TestAHeartbeatClosesWindowsWithoutItsOwnPublish` |
+| pocock LOW: экспорт `SpanFixedBytes` ради формулы в `otlp` | `batch.MaxFootprint`, константа снова скрыта; `otlp.MaxBatchFootprint()` — функция |
+| pstack LOW: часы назад останавливают `Fire` | `Fire` и при `nextFire − now > FirePeriod`; тест |
+| pstack LOW: `nil`-часы проходят конструктор | `ErrInvalidCadence` |
+| pstack LOW: фейковая доставка считала `Footprint` на каждый вызов | размер считается один раз, как в журнале |
+| osmani LOW: обоснование границы без лимита на проводе | комментарий у `MaxBatchFootprint` |
+| concurrency, osmani, pstack LOW: отмена в дренаже — ошибка, в итерации — остановка | Оставлено по псевдокоду; записано выше |
+| osmani LOW: стресс-тест не проверяет удержание между итерациями | Удержание — тесты `processing` на фейковых часах; стресс-тест ждёт ревизию каждой итерации |
 
 ### Разбор ревью кода среза 6d (`Builder`, `Snapshot`)
 

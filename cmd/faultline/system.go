@@ -137,11 +137,15 @@ func assemble(cfg *Config, logger *slog.Logger, seams wiring) (*system, error) {
 		return nil, err
 	}
 	server, counters := provideIngest(stored.journal, logger)
+	pipeline, err := providePipeline(seams.feedOf(stored), stored, cfg)
+	if err != nil {
+		return nil, err
+	}
 	return &system{
 		journal:   stored.journal,
 		ingest:    server,
 		api:       api,
-		pipeline:  providePipeline(seams.feedOf(stored), stored),
+		pipeline:  pipeline,
 		stats:     provideStats(stored, counters, logger),
 		tracing:   seams.tracing,
 		store:     stored.store,
@@ -201,6 +205,19 @@ func provideAPI(
 	return connectapi.NewServer(mux), nil
 }
 
-func providePipeline(feed spanFeed, stored storage) pipelineRunner {
-	return processing.NewPipeline(feed, stored.builder, stored.store)
+func providePipeline(feed spanFeed, stored storage, cfg *Config) (pipelineRunner, error) {
+	pipeline, err := processing.NewPipeline(feed, stored.builder, stored.store, systemClock{}, pipelineCadence(cfg))
+	if err != nil {
+		return nil, fmt.Errorf("build pipeline: %w", err)
+	}
+	return pipeline, nil
+}
+
+// pipelineCadence builds the Fire cadence from the same period traffic sizes its early panes by,
+// and keeps the held batches small enough for the journal to take the largest request.
+func pipelineCadence(cfg *Config) processing.Cadence {
+	return processing.Cadence{
+		FirePeriod:   cfg.Topology.EarlyFirePeriod,
+		MaxHeldBytes: cfg.Journal.MaxBytes - otlp.MaxBatchFootprint(),
+	}
 }

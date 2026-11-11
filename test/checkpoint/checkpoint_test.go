@@ -21,7 +21,6 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
-	"github.com/DmytroLysenko1/faultline/internal/application/processing"
 	"github.com/DmytroLysenko1/faultline/internal/application/processing/processingtest"
 	"github.com/DmytroLysenko1/faultline/internal/application/query"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation"
@@ -99,7 +98,7 @@ func (s *system) startPipeline(t *testing.T) *memgraph.Store {
 	if err != nil {
 		t.Fatalf("memgraph.New: %v", err)
 	}
-	pipeline := processing.NewPipeline(s.journal, builder, store)
+	pipeline := processingtest.NewPipeline(t, s.journal, builder, store, fixedClock{})
 	s.pipeline.Go(func() {
 		s.runErr = pipeline.Run(t.Context())
 	})

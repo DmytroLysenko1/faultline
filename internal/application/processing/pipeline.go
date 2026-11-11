@@ -13,7 +13,6 @@ import (
 const (
 	MaxBatchesPerIteration = 64
 	HeldSnapshots          = 1
-	ReceiveWait            = time.Second
 )
 
 type spanFeed interface {
@@ -28,68 +27,104 @@ type Pipeline struct {
 	feed      spanFeed
 	builder   *topology.Builder
 	publisher graphPublisher
+	clock     clock
+	cadence   Cadence
+	held      []Delivery
+	heldBytes int64
+	nextFire  time.Time
 	started   atomic.Bool
 }
 
-func NewPipeline(feed spanFeed, builder *topology.Builder, publisher graphPublisher) *Pipeline {
+func NewPipeline(feed spanFeed, builder *topology.Builder, publisher graphPublisher, clock clock,
+	cadence Cadence,
+) (*Pipeline, error) {
+	if err := cadence.Validate(); err != nil {
+		return nil, err
+	}
+	if clock == nil {
+		return nil, fmt.Errorf("%w: nil clock", ErrInvalidCadence)
+	}
 	return &Pipeline{
 		feed:      feed,
 		builder:   builder,
 		publisher: publisher,
-	}
+		clock:     clock,
+		cadence:   cadence,
+	}, nil
 }
 
 func (p *Pipeline) Run(ctx context.Context) error {
 	if !p.started.CompareAndSwap(false, true) {
 		return ErrAlreadyStarted
 	}
+	p.nextFire = p.clock.Now().Add(p.cadence.FirePeriod)
 	for {
 		if err := p.iterate(ctx); err != nil {
-			return stopReason(ctx, err)
+			return p.stop(ctx, err)
 		}
 	}
 }
 
 func (p *Pipeline) iterate(ctx context.Context) error {
-	deliveries, err := p.feed.Receive(ctx, MaxBatchesPerIteration, ReceiveWait)
+	deliveries, err := p.feed.Receive(ctx, MaxBatchesPerIteration, p.untilFire())
 	if err != nil {
 		return fmt.Errorf("receive batches: %w", err)
 	}
-	if len(deliveries) == 0 {
+	p.apply(deliveries)
+	if !p.due() {
 		return nil
 	}
-	p.apply(deliveries)
-	if err := p.publish(ctx, len(deliveries)); err != nil {
-		return err
-	}
-	release(deliveries)
-	return nil
+	return p.publish(ctx)
+}
+
+func (p *Pipeline) untilFire() time.Duration {
+	return min(max(p.nextFire.Sub(p.clock.Now()), 0), p.cadence.FirePeriod)
 }
 
 func (p *Pipeline) apply(deliveries []Delivery) {
 	for _, delivery := range deliveries {
 		p.builder.Apply(delivery.Batch())
+		p.held = append(p.held, delivery)
+		p.heldBytes += delivery.Bytes()
 	}
 }
 
-func (p *Pipeline) publish(ctx context.Context, batches int) error {
-	if err := p.publisher.Publish(ctx, p.builder.Snapshot()); err != nil {
-		return fmt.Errorf("publish iteration of %d batches: %w", batches, err)
+func (p *Pipeline) due() bool {
+	if now := p.clock.Now(); !now.Before(p.nextFire) || p.nextFire.Sub(now) > p.cadence.FirePeriod {
+		p.builder.Fire()
+		p.nextFire = now.Add(p.cadence.FirePeriod)
+		return true
 	}
+	return p.builder.StructureChanged() || p.heldBytes >= p.cadence.MaxHeldBytes
+}
+
+func (p *Pipeline) publish(ctx context.Context) error {
+	if err := p.publisher.Publish(ctx, p.builder.Snapshot()); err != nil {
+		return fmt.Errorf("publish after %d held batches: %w", len(p.held), err)
+	}
+	for _, delivery := range p.held {
+		delivery.Release()
+	}
+	clear(p.held)
+	p.held, p.heldBytes = p.held[:0], 0
 	return nil
 }
 
-func release(deliveries []Delivery) {
-	for _, delivery := range deliveries {
-		delivery.Release()
+func (p *Pipeline) stop(ctx context.Context, err error) error {
+	if errors.Is(err, ErrFeedClosed) {
+		return p.drain(ctx)
 	}
-}
-
-func stopReason(ctx context.Context, err error) error {
-	if errors.Is(err, ErrFeedClosed) || canceledByCaller(ctx, err) {
+	if canceledByCaller(ctx, err) {
 		return nil
 	}
 	return err
+}
+
+func (p *Pipeline) drain(ctx context.Context) error {
+	if err := p.publish(ctx); err != nil {
+		return fmt.Errorf("drain: %w", err)
+	}
+	return nil
 }
 
 func canceledByCaller(ctx context.Context, err error) bool {
