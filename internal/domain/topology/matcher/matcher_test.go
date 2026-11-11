@@ -634,6 +634,66 @@ func TestCallMatcher(t *testing.T) {
 				},
 			},
 		},
+		{
+			Name: "a pair from the middle frees a slot the next caller reuses without losing arrival order",
+			Args: func(t *testing.T) (matcher.Limits, []batchStep) {
+				limits := testLimits()
+				limits.MaxPending = 3
+				return limits, []batchStep{
+					{
+						Spans: []span.Span{
+							telemetrytest.Client(t, 1, 1, "a", nil),
+							telemetrytest.Client(t, 2, 1, "b", nil),
+							telemetrytest.Client(t, 3, 1, "c", nil),
+						},
+					},
+					{
+						At: time.Second,
+						Spans: []span.Span{
+							telemetrytest.Server(t, 2, 2, "cart", nil),
+							telemetrytest.Client(t, 4, 1, "d", nil),
+						},
+					},
+					{
+						At: 2 * time.Second,
+						Spans: []span.Span{
+							telemetrytest.Client(t, 5, 1, "e", nil),
+						},
+					},
+					{
+						At: time.Minute,
+					},
+				}
+			},
+			Want: matchOutcome{
+				Calls: []call.Call{
+					{
+						Caller: telemetrytest.Service("b"),
+						Callee: telemetrytest.Service("cart"),
+					},
+				},
+				ExpiredCallers: []call.Unanswered{
+					{
+						Service: telemetrytest.Service("c"),
+					},
+					{
+						Service: telemetrytest.Service("d"),
+					},
+					{
+						Service: telemetrytest.Service("e"),
+					},
+				},
+				Stats: matcher.Stats{
+					Observed:         6,
+					Matched:          1,
+					Evicted:          1,
+					EvictedCaller:    1,
+					Expired:          3,
+					ExpiredCaller:    3,
+					TombstoneEvicted: 2,
+				},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {

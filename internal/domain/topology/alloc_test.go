@@ -16,9 +16,6 @@ const (
 	steadyWarmBatches = 400
 	steadyRuns        = 200
 	steadyServices    = 4
-	// waitingHalfAllocations is the matcher's pending list of step 1: a list element and the boxed
-	// half for the first half of every pair. A pooled pending list is slice 8 work (probes).
-	waitingHalfAllocations = 2
 )
 
 var steadyNames = [steadyServices]string{"frontend", "cart", "checkout", "payment"}
@@ -61,9 +58,9 @@ func steadyBuilder(tb testing.TB) (*topology.Builder, []batch.Batch) {
 	return builder, batches[steadyWarmBatches:]
 }
 
-// TestApplyAndFireAllocateOnlyForWaitingHalves: the builder buffers, the graph and traffic add no
-// allocation per event once warm, closing windows included.
-func TestApplyAndFireAllocateOnlyForWaitingHalves(t *testing.T) {
+// TestApplyAndFireDoNotAllocateOnceWarm: the builder buffers, the matcher's pending slots, the graph
+// and traffic are reused, so a warm builder allocates nothing per event, closing windows included.
+func TestApplyAndFireDoNotAllocateOnceWarm(t *testing.T) {
 	builder, batches := steadyBuilder(t)
 	next := 0
 	allocations := testing.AllocsPerRun(steadyRuns, func() {
@@ -71,8 +68,8 @@ func TestApplyAndFireAllocateOnlyForWaitingHalves(t *testing.T) {
 		builder.Fire()
 		next++
 	})
-	if want := float64(waitingHalfAllocations * steadyPairs); allocations != want {
-		t.Errorf("Apply + Fire of %d pairs allocated %.1f times per batch, want %.0f", steadyPairs, allocations, want)
+	if allocations != 0 {
+		t.Errorf("Apply + Fire of %d pairs allocated %.1f times per batch, want 0", steadyPairs, allocations)
 	}
 }
 

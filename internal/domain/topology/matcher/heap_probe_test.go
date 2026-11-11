@@ -22,6 +22,7 @@ const (
 	sharedServiceName = "frontend"
 	nameDigits        = 8
 	defaultPending    = 100_000
+	pairedHalfBytes   = 256
 )
 
 func limitsOf(pending int) matcher.Limits {
@@ -116,4 +117,42 @@ func TestWorstCaseHeapCoversUniqueServiceStrings(t *testing.T) {
 	if model := uint64(limitsOf(worstStringLimit).WorstCaseHeapBytes()); grown > model {
 		t.Errorf("heap grew %d bytes with the longest service strings, model %d", grown, model)
 	}
+}
+
+func calleeHalf(t *testing.T, index int) span.Span {
+	t.Helper()
+	return telemetrytest.MustSpan(t, resource.Resource{
+		ServiceName: sharedServiceName,
+	}, &span.Fields{
+		TraceID:      telemetrytest.NumberedTrace(uint64(index)),
+		SpanID:       ids.SpanID{2},
+		ParentSpanID: ids.SpanID{1},
+		Kind:         kind.Server,
+	})
+}
+
+// TestWorstCaseHeapKeepsNoStringsOfPairedHalves: once a burst of halves has paired, the matcher keeps its
+// slots for the next burst, but not the services and operation names of the halves that left.
+func TestWorstCaseHeapKeepsNoStringsOfPairedHalves(t *testing.T) {
+	grown := telemetrytest.HeapGrowth(func() any {
+		pairing, err := matcher.New(limitsOf(worstStringLimit))
+		if err != nil {
+			t.Fatalf("matcher.New: %v", err)
+		}
+		for index := range worstStringLimit {
+			caller := namedCallerHalf(t, index)
+			pairing.Match(&caller, telemetrytest.Epoch())
+		}
+		for index := range worstStringLimit {
+			callee := calleeHalf(t, index)
+			if _, outcome := pairing.Match(&callee, telemetrytest.Epoch()); outcome != matcher.OutcomeMatched {
+				t.Fatalf("callee %d: outcome %v, want matched", index, outcome)
+			}
+		}
+		return pairing
+	})
+	if limit := uint64(worstStringLimit * pairedHalfBytes); grown > limit {
+		t.Errorf("%d paired halves left %d bytes, want at most %d for their empty slots", worstStringLimit, grown, limit)
+	}
+	t.Logf("paired halves left %.1f B each", float64(grown)/worstStringLimit)
 }

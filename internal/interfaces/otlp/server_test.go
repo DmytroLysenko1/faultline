@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -34,6 +35,7 @@ const (
 	longKeepalive    = time.Hour
 	connectDeadline  = 10 * time.Second
 	heldRequests     = otlp.MaxConcurrentStreams
+	shortRouteBytes  = 16
 	loopbackAddress  = "127.0.0.1:0"
 	fieldResource    = 1
 	fieldScopeSpans  = 2
@@ -354,7 +356,65 @@ func (discardJournal) Append(context.Context, []span.Span) error {
 	return nil
 }
 
-func TestHeldRequestsStayWithinTheMemoryBudget(t *testing.T) {
+type namingJournal struct {
+	mu    sync.Mutex
+	names map[string]struct{}
+	spans int
+}
+
+func (j *namingJournal) Append(_ context.Context, spans []span.Span) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for index := range spans {
+		j.names[spans[index].Operation.Name] = struct{}{}
+	}
+	j.spans += len(spans)
+	return nil
+}
+
+func (j *namingJournal) counts() (names, spans int) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return len(j.names), j.spans
+}
+
+// TestRoutedSpansKeepAnOperationNamePerSpan guards the heap probe below: if the normalizer folded
+// the probe's routes into one name, the probe would no longer hold one name per span.
+func TestRoutedSpansKeepAnOperationNamePerSpan(t *testing.T) {
+	tests := []struct {
+		Name string
+		Args int
+	}{
+		{
+			Name: "short routes",
+			Args: shortRouteBytes,
+		},
+		{
+			Name: "the longest routes",
+			Args: operation.MaxNameBytes,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.Name, func(t *testing.T) {
+			journal := &namingJournal{
+				names: make(map[string]struct{}),
+			}
+			accept := ingest.NewAcceptBatch(journal, operation.NewNormalizer(nil))
+			h := start(t, accept.Execute)
+			traces := otlptest.RoutedSpans(t, tt.Args)
+			if err := sendRaw(t.Context(), h.Conn, otlptest.Encode(t, traces)); err != nil {
+				t.Fatalf("Export: %v", err)
+			}
+			names, spans := journal.counts()
+			if diff := cmp.Diff([2]int{traces.SpanCount(), traces.SpanCount()}, [2]int{names, spans}); diff != "" {
+				t.Errorf("distinct operation names and journaled spans (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func heldHeapPerRequest(t *testing.T, wire []byte) int64 {
+	t.Helper()
 	arrived := make(chan struct{}, heldRequests)
 	release := make(chan struct{})
 	accept := ingest.NewAcceptBatch(discardJournal{}, operation.NewNormalizer(nil))
@@ -365,7 +425,6 @@ func TestHeldRequestsStayWithinTheMemoryBudget(t *testing.T) {
 			release: release,
 		})
 	})
-	wire := otlptest.Encode(t, otlptest.MinimalSpans(t))
 	before := otlptest.HeapInUse()
 	var senders sync.WaitGroup
 	var signalOnce sync.Once
@@ -384,8 +443,41 @@ func TestHeldRequestsStayWithinTheMemoryBudget(t *testing.T) {
 	perRequest := (otlptest.HeapInUse() - before) / heldRequests
 	close(release)
 	senders.Wait()
-	if budget := int64(otlp.ExportHeapRatio * otlp.MaxRecvMsgBytes); perRequest > budget {
-		t.Errorf("each held request takes %d bytes, budget %d (ExportHeapRatio × MaxRecvMsgBytes)", perRequest, budget)
+	return perRequest
+}
+
+// TestHeldRequestsStayWithinTheMemoryBudget: the most spans a request can carry is the worst
+// case; routes add operation names, but their wire bytes leave room for fewer spans.
+func TestHeldRequestsStayWithinTheMemoryBudget(t *testing.T) {
+	tests := []struct {
+		Name string
+		Args func(testing.TB) ptrace.Traces
+	}{
+		{
+			Name: "the most spans without attributes",
+			Args: otlptest.MinimalSpans,
+		},
+		{
+			Name: "short unique routes",
+			Args: func(tb testing.TB) ptrace.Traces {
+				return otlptest.RoutedSpans(tb, shortRouteBytes)
+			},
+		},
+		{
+			Name: "the longest unique routes",
+			Args: func(tb testing.TB) ptrace.Traces {
+				return otlptest.RoutedSpans(tb, operation.MaxNameBytes)
+			},
+		},
 	}
-	t.Logf("held heap per request before the last span is validated: %.1f MiB", float64(perRequest)/(1<<20))
+	budget := int64(otlp.ExportHeapRatio * otlp.MaxRecvMsgBytes)
+	for _, tt := range tests {
+		t.Run(tt.Name, func(t *testing.T) {
+			perRequest := heldHeapPerRequest(t, otlptest.Encode(t, tt.Args(t)))
+			if perRequest > budget {
+				t.Errorf("each held request takes %d bytes, budget %d (ExportHeapRatio × MaxRecvMsgBytes)", perRequest, budget)
+			}
+			t.Logf("held heap per request before the last span is validated: %.1f MiB", float64(perRequest)/(1<<20))
+		})
+	}
 }

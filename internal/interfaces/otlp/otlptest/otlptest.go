@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -25,6 +26,10 @@ const (
 	thirdByteShift  = 2 * byteShift
 	moduleRoot      = "go.mod"
 	demoDumpPath    = "test/demo/otel-demo/traces.otlp.json.gz"
+	routedSizeCheck = 64
+	routeLetters    = "ghijklmnopqrstuvwxyz"
+	routeWordBytes  = 6
+	routePad        = "r"
 )
 
 func HeapInUse() int64 {
@@ -62,11 +67,46 @@ func MinimalSpans(tb testing.TB) ptrace.Traces {
 	resourceSpans := traces.ResourceSpans().AppendEmpty()
 	resourceSpans.Resource().Attributes().PutStr("service.name", "checkout")
 	spans := resourceSpans.ScopeSpans().AppendEmpty().Spans()
-	sizer := ptrace.ProtoMarshaler{}
-	for index := 0; index%sizeCheckEvery != 0 || sizer.TracesSize(traces) < MaxRequestBytes-requestSlack; index++ {
+	fillRequest(traces, sizeCheckEvery, func(index int) {
 		AppendNumberedSpan(spans, index)
-	}
+	})
 	return traces
+}
+
+func fillRequest(traces ptrace.Traces, checkEvery int, appendSpan func(index int)) {
+	sizer := ptrace.ProtoMarshaler{}
+	for index := 0; index%checkEvery != 0 || sizer.TracesSize(traces) < MaxRequestBytes-requestSlack; index++ {
+		appendSpan(index)
+	}
+}
+
+// RoutedSpans fills a request with server spans whose routes are unique and routeBytes long, so
+// every span carries its own operation name into the batch. Routes are spelled in letters that are
+// neither digits nor hex, so the normalizer keeps them instead of folding them into {id}.
+func RoutedSpans(tb testing.TB, routeBytes int) ptrace.Traces {
+	tb.Helper()
+	traces := ptrace.NewTraces()
+	resourceSpans := traces.ResourceSpans().AppendEmpty()
+	resourceSpans.Resource().Attributes().PutStr("service.name", "checkout")
+	spans := resourceSpans.ScopeSpans().AppendEmpty().Spans()
+	fillRequest(traces, routedSizeCheck, func(index int) {
+		AppendNumberedSpan(spans, index)
+		routed := spans.At(spans.Len() - 1)
+		routed.SetKind(ptrace.SpanKindServer)
+		routed.Attributes().PutStr("http.request.method", "GET")
+		routed.Attributes().PutStr("http.route", uniqueRoute(index, routeBytes))
+	})
+	return traces
+}
+
+func uniqueRoute(index, routeBytes int) string {
+	word := make([]byte, routeWordBytes)
+	for position := range word {
+		word[len(word)-1-position] = routeLetters[index%len(routeLetters)]
+		index /= len(routeLetters)
+	}
+	route := "/" + string(word) + "/"
+	return route + strings.Repeat(routePad, max(0, routeBytes-len(route)))
 }
 
 func AppendNumberedSpan(spans ptrace.SpanSlice, index int) {

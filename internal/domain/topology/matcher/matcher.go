@@ -1,7 +1,6 @@
 package matcher
 
 import (
-	"container/list"
 	"errors"
 	"fmt"
 	"time"
@@ -50,8 +49,8 @@ type pendingHalf struct {
 
 type Matcher struct {
 	Limits       Limits
-	PendingByKey map[ids.CallKey]*list.Element
-	Pending      *list.List
+	PendingByKey map[ids.CallKey]int
+	Pending      pendingQueue
 	Tombstones   tombstone.Set
 	Stats        Stats
 	Clock        clock.Monotonic
@@ -67,8 +66,8 @@ func New(limits Limits) (*Matcher, error) {
 	}
 	return &Matcher{
 		Limits:       limits,
-		PendingByKey: make(map[ids.CallKey]*list.Element),
-		Pending:      list.New(),
+		PendingByKey: make(map[ids.CallKey]int),
+		Pending:      newPendingQueue(limits.MaxPending),
 		Tombstones:   tombstones,
 	}, nil
 }
@@ -88,12 +87,12 @@ func (m *Matcher) Match(observed *span.Span, now time.Time) (call.Call, Outcome)
 		Interval:  observed.Interval,
 		Operation: observed.Operation,
 	}
-	waiting := m.PendingByKey[key]
+	waiting, found := m.PendingByKey[key]
 	switch {
-	case m.isDuplicate(&arrived, waiting):
+	case m.isDuplicate(&arrived, waiting, found):
 		m.Stats.RecordDuplicate()
 		return call.Call{}, OutcomeDuplicate
-	case waiting == nil:
+	case !found:
 		m.wait(&arrived)
 		return call.Call{}, OutcomeWaiting
 	}
@@ -115,18 +114,14 @@ func (m *Matcher) Expire(now time.Time) []call.Unanswered {
 	}
 }
 
-func (m *Matcher) isDuplicate(arrived *pendingHalf, waiting *list.Element) bool {
+func (m *Matcher) isDuplicate(arrived *pendingHalf, waiting int, found bool) bool {
 	if m.Tombstones.Suppresses(arrived.Key, arrived.Side) {
 		return true
 	}
-	if waiting == nil {
-		return false
-	}
-	existing := halfOf(waiting)
-	return existing.sameSideAs(arrived)
+	return found && m.Pending.At(waiting).sameSideAs(arrived)
 }
 
-func (m *Matcher) complete(waiting *list.Element, arrived *pendingHalf, at time.Duration) call.Call {
+func (m *Matcher) complete(waiting int, arrived *pendingHalf, at time.Duration) call.Call {
 	other := m.remove(waiting)
 	m.Stats.RecordMatch()
 	m.addTombstone(arrived.Key, tombstone.BothSides, at)
@@ -134,8 +129,8 @@ func (m *Matcher) complete(waiting *list.Element, arrived *pendingHalf, at time.
 }
 
 func (m *Matcher) popExpired(at time.Duration) (pendingHalf, bool) {
-	front := m.Pending.Front()
-	if front == nil || halfOf(front).Deadline > at {
+	front, found := m.Pending.Front()
+	if !found || m.Pending.At(front).Deadline > at {
 		return pendingHalf{}, false
 	}
 	half := m.remove(front)
@@ -155,19 +150,18 @@ func (m *Matcher) wait(half *pendingHalf) {
 	if m.Pending.Len() >= m.Limits.MaxPending {
 		m.evictOldest()
 	}
-	m.PendingByKey[half.Key] = m.Pending.PushBack(*half)
+	m.PendingByKey[half.Key] = m.Pending.PushBack(half)
 	m.Stats.RecordWait()
 }
 
 func (m *Matcher) evictOldest() {
-	oldest := m.Pending.Front()
+	oldest, _ := m.Pending.Front()
 	half := m.remove(oldest)
 	m.Stats.RecordEviction(half.Side)
 }
 
-func (m *Matcher) remove(element *list.Element) pendingHalf {
-	half := halfOf(element)
-	m.Pending.Remove(element)
+func (m *Matcher) remove(slot int) pendingHalf {
+	half := m.Pending.Remove(slot)
 	delete(m.PendingByKey, half.Key)
 	return half
 }
@@ -207,8 +201,4 @@ func (h *pendingHalf) party() call.Party {
 		Interval:  h.Interval,
 		Operation: h.Operation,
 	}
-}
-
-func halfOf(element *list.Element) pendingHalf {
-	return element.Value.(pendingHalf)
 }
