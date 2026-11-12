@@ -1,0 +1,395 @@
+PASS
+ok  	github.com/DmytroLysenko1/faultline/cmd/faultctl	0.472s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/cmd/faultline	0.537s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/hack/democheck	0.440s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/application/ingest	0.356s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/application/processing	0.363s
+?   	github.com/DmytroLysenko1/faultline/internal/application/processing/processingtest	[no test files]
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/application/query	0.395s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/application/selfalert	0.354s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/cli	0.416s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch	0.351s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/domain/telemetry/eventtime	0.341s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/domain/telemetry/ids	0.367s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/domain/telemetry/kind	0.394s
+goos: darwin
+goarch: arm64
+pkg: github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation
+cpu: Apple M1 Pro
+BenchmarkNormalize/rpc-10      	18057693	        62.22 ns/op	      48 B/op	       1 allocs/op
+BenchmarkNormalize/rpc-10      	19515024	        61.06 ns/op	      48 B/op	       1 allocs/op
+BenchmarkNormalize/rpc-10      	19970737	        60.67 ns/op	      48 B/op	       1 allocs/op
+BenchmarkNormalize/rpc-10      	18789094	        62.43 ns/op	      48 B/op	       1 allocs/op
+BenchmarkNormalize/rpc-10      	19931568	        60.94 ns/op	      48 B/op	       1 allocs/op
+BenchmarkNormalize/rpc-10      	19802755	        60.59 ns/op	      48 B/op	       1 allocs/op
+BenchmarkNormalize/rpc-10      	19740074	        61.09 ns/op	      48 B/op	       1 allocs/op
+BenchmarkNormalize/rpc-10      	19631700	        62.66 ns/op	      48 B/op	       1 allocs/op
+BenchmarkNormalize/rpc-10      	19422163	        66.87 ns/op	      48 B/op	       1 allocs/op
+BenchmarkNormalize/rpc-10      	18438655	        63.47 ns/op	      48 B/op	       1 allocs/op
+BenchmarkNormalize/url.full-10 	 3714865	       322.2 ns/op	      24 B/op	       1 allocs/op
+BenchmarkNormalize/url.full-10 	 3714483	       323.7 ns/op	      24 B/op	       1 allocs/op
+BenchmarkNormalize/url.full-10 	 3725452	       322.1 ns/op	      24 B/op	       1 allocs/op
+BenchmarkNormalize/url.full-10 	 3719097	       322.7 ns/op	      24 B/op	       1 allocs/op
+BenchmarkNormalize/url.full-10 	 3741380	       321.2 ns/op	      24 B/op	       1 allocs/op
+BenchmarkNormalize/url.full-10 	 3727496	       322.4 ns/op	      24 B/op	       1 allocs/op
+BenchmarkNormalize/url.full-10 	 3703918	       322.6 ns/op	      24 B/op	       1 allocs/op
+BenchmarkNormalize/url.full-10 	 3734500	       322.7 ns/op	      24 B/op	       1 allocs/op
+BenchmarkNormalize/url.full-10 	 3726926	       323.5 ns/op	      24 B/op	       1 allocs/op
+BenchmarkNormalize/url.full-10 	 3571807	       331.9 ns/op	      24 B/op	       1 allocs/op
+BenchmarkNormalize/long_path-10         	  390199	      3077 ns/op	     256 B/op	       1 allocs/op
+BenchmarkNormalize/long_path-10         	  393157	      3067 ns/op	     256 B/op	       1 allocs/op
+BenchmarkNormalize/long_path-10         	  390744	      3078 ns/op	     256 B/op	       1 allocs/op
+BenchmarkNormalize/long_path-10         	  389162	      3070 ns/op	     256 B/op	       1 allocs/op
+BenchmarkNormalize/long_path-10         	  393152	      3294 ns/op	     256 B/op	       1 allocs/op
+BenchmarkNormalize/long_path-10         	  388544	      3080 ns/op	     256 B/op	       1 allocs/op
+BenchmarkNormalize/long_path-10         	  390100	      3167 ns/op	     256 B/op	       1 allocs/op
+BenchmarkNormalize/long_path-10         	  347792	      3457 ns/op	     256 B/op	       1 allocs/op
+BenchmarkNormalize/long_path-10         	  362856	      3227 ns/op	     256 B/op	       1 allocs/op
+BenchmarkNormalize/long_path-10         	  342313	      3490 ns/op	     256 B/op	       1 allocs/op
+BenchmarkNormalize/route-10             	 3973074	       302.1 ns/op	      24 B/op	       1 allocs/op
+BenchmarkNormalize/route-10             	 3808520	       321.4 ns/op	      24 B/op	       1 allocs/op
+BenchmarkNormalize/route-10             	 3957759	       316.7 ns/op	      24 B/op	       1 allocs/op
+BenchmarkNormalize/route-10             	 3948585	       303.3 ns/op	      24 B/op	       1 allocs/op
+BenchmarkNormalize/route-10             	 3982683	       307.0 ns/op	      24 B/op	       1 allocs/op
+BenchmarkNormalize/route-10             	 3962817	       334.4 ns/op	      24 B/op	       1 allocs/op
+BenchmarkNormalize/route-10             	 3984933	       301.0 ns/op	      24 B/op	       1 allocs/op
+BenchmarkNormalize/route-10             	 3999828	       300.4 ns/op	      24 B/op	       1 allocs/op
+BenchmarkNormalize/route-10             	 3970911	       301.8 ns/op	      24 B/op	       1 allocs/op
+BenchmarkNormalize/route-10             	 3447559	       320.7 ns/op	      24 B/op	       1 allocs/op
+BenchmarkNormalize/path-10              	 3413610	       384.5 ns/op	      32 B/op	       1 allocs/op
+BenchmarkNormalize/path-10              	 3364574	       358.3 ns/op	      32 B/op	       1 allocs/op
+BenchmarkNormalize/path-10              	 3925359	       302.6 ns/op	      32 B/op	       1 allocs/op
+BenchmarkNormalize/path-10              	 4006778	       301.9 ns/op	      32 B/op	       1 allocs/op
+BenchmarkNormalize/path-10              	 3963871	       301.3 ns/op	      32 B/op	       1 allocs/op
+BenchmarkNormalize/path-10              	 4001838	       301.8 ns/op	      32 B/op	       1 allocs/op
+BenchmarkNormalize/path-10              	 4016892	       297.4 ns/op	      32 B/op	       1 allocs/op
+BenchmarkNormalize/path-10              	 4021659	       298.7 ns/op	      32 B/op	       1 allocs/op
+BenchmarkNormalize/path-10              	 4090130	       295.2 ns/op	      32 B/op	       1 allocs/op
+BenchmarkNormalize/path-10              	 3802243	       304.0 ns/op	      32 B/op	       1 allocs/op
+BenchmarkRouteRulesWorst-10             	  510782	      2392 ns/op	      80 B/op	       1 allocs/op
+BenchmarkRouteRulesWorst-10             	  498369	      2354 ns/op	      80 B/op	       1 allocs/op
+BenchmarkRouteRulesWorst-10             	  499666	      2383 ns/op	      80 B/op	       1 allocs/op
+BenchmarkRouteRulesWorst-10             	  517690	      2442 ns/op	      80 B/op	       1 allocs/op
+BenchmarkRouteRulesWorst-10             	  500385	      2375 ns/op	      80 B/op	       1 allocs/op
+BenchmarkRouteRulesWorst-10             	  516895	      2364 ns/op	      80 B/op	       1 allocs/op
+BenchmarkRouteRulesWorst-10             	  506431	      2355 ns/op	      80 B/op	       1 allocs/op
+BenchmarkRouteRulesWorst-10             	  502250	      2422 ns/op	      80 B/op	       1 allocs/op
+BenchmarkRouteRulesWorst-10             	  508953	      2374 ns/op	      80 B/op	       1 allocs/op
+BenchmarkRouteRulesWorst-10             	  505448	      2345 ns/op	      80 B/op	       1 allocs/op
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation	72.837s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource	0.406s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/domain/telemetry/response	0.396s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span	0.405s
+?   	github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest	[no test files]
+goos: darwin
+goarch: arm64
+pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology
+cpu: Apple M1 Pro
+BenchmarkBuilderApplyPerSpan-10    	   30853	     39046 ns/op	       305.0 ns/span	       0 B/op	       0 allocs/op
+BenchmarkBuilderApplyPerSpan-10    	   30897	     38830 ns/op	       303.4 ns/span	       0 B/op	       0 allocs/op
+BenchmarkBuilderApplyPerSpan-10    	   30847	     38974 ns/op	       304.5 ns/span	       0 B/op	       0 allocs/op
+BenchmarkBuilderApplyPerSpan-10    	   30129	     39583 ns/op	       309.2 ns/span	       0 B/op	       0 allocs/op
+BenchmarkBuilderApplyPerSpan-10    	   30351	     39035 ns/op	       305.0 ns/span	       0 B/op	       0 allocs/op
+BenchmarkBuilderApplyPerSpan-10    	   30482	     39557 ns/op	       309.0 ns/span	       0 B/op	       0 allocs/op
+BenchmarkBuilderApplyPerSpan-10    	   30927	     38753 ns/op	       302.8 ns/span	       0 B/op	       0 allocs/op
+BenchmarkBuilderApplyPerSpan-10    	   31004	     39853 ns/op	       311.3 ns/span	       0 B/op	       0 allocs/op
+BenchmarkBuilderApplyPerSpan-10    	   30970	     38745 ns/op	       302.7 ns/span	       0 B/op	       0 allocs/op
+BenchmarkBuilderApplyPerSpan-10    	   30892	     38962 ns/op	       304.4 ns/span	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/domain/topology	118.182s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/domain/topology/call	0.412s
+goos: darwin
+goarch: arm64
+pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/cardinality
+cpu: Apple M1 Pro
+BenchmarkLookupKnown-10      	59300865	        19.43 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookupKnown-10      	62736486	        19.25 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookupKnown-10      	61902999	        19.24 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookupKnown-10      	62993640	        19.50 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookupKnown-10      	62772037	        19.50 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookupKnown-10      	61178449	        19.72 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookupKnown-10      	61741365	        19.55 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookupKnown-10      	61053943	        19.47 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookupKnown-10      	63215146	        19.74 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookupKnown-10      	58790145	        19.71 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookupUnknown-10    	59001038	        20.08 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookupUnknown-10    	59873143	        20.28 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookupUnknown-10    	59810224	        20.09 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookupUnknown-10    	61283768	        20.41 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookupUnknown-10    	59184364	        20.15 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookupUnknown-10    	60799513	        20.05 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookupUnknown-10    	60545539	        19.82 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookupUnknown-10    	61344859	        20.15 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookupUnknown-10    	58631444	        20.06 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLookupUnknown-10    	59955782	        20.00 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/domain/topology/cardinality	24.469s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/domain/topology/clock	0.390s
+goos: darwin
+goarch: arm64
+pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/graph
+cpu: Apple M1 Pro
+BenchmarkHeapPerGraphEdge-10    	      32	  31394871 ns/op	       286.4 B/edge(+nodes+view)	     50000 edges	24171962 B/op	   70454 allocs/op
+BenchmarkHeapPerGraphEdge-10    	      37	  33100785 ns/op	       286.4 B/edge(+nodes+view)	     50000 edges	24171456 B/op	   70454 allocs/op
+BenchmarkHeapPerGraphEdge-10    	      34	  31835244 ns/op	       286.4 B/edge(+nodes+view)	     50000 edges	24171472 B/op	   70454 allocs/op
+BenchmarkHeapPerGraphEdge-10    	      38	  31548186 ns/op	       286.4 B/edge(+nodes+view)	     50000 edges	24171451 B/op	   70454 allocs/op
+BenchmarkHeapPerGraphEdge-10    	      37	  30776231 ns/op	       286.4 B/edge(+nodes+view)	     50000 edges	24171458 B/op	   70454 allocs/op
+BenchmarkHeapPerGraphEdge-10    	      39	  31098089 ns/op	       286.4 B/edge(+nodes+view)	     50000 edges	24171460 B/op	   70454 allocs/op
+BenchmarkHeapPerGraphEdge-10    	      33	  31375952 ns/op	       286.4 B/edge(+nodes+view)	     50000 edges	24171460 B/op	   70454 allocs/op
+BenchmarkHeapPerGraphEdge-10    	      36	  30612775 ns/op	       286.4 B/edge(+nodes+view)	     50000 edges	24171458 B/op	   70454 allocs/op
+BenchmarkHeapPerGraphEdge-10    	      37	  31412579 ns/op	       286.4 B/edge(+nodes+view)	     50000 edges	24171458 B/op	   70454 allocs/op
+BenchmarkHeapPerGraphEdge-10    	      37	  31154771 ns/op	       286.4 B/edge(+nodes+view)	     50000 edges	24171458 B/op	   70454 allocs/op
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/domain/topology/graph	11.726s
+?   	github.com/DmytroLysenko1/faultline/internal/domain/topology/handle	[no test files]
+goos: darwin
+goarch: arm64
+pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/matcher
+cpu: Apple M1 Pro
+BenchmarkHeapPerPendingHalf-10    	      88	  13406942 ns/op	       180.5 B/half	23297145 B/op	     535 allocs/op
+BenchmarkHeapPerPendingHalf-10    	      87	  13007268 ns/op	       180.5 B/half	23296894 B/op	     535 allocs/op
+BenchmarkHeapPerPendingHalf-10    	      91	  12422660 ns/op	       180.5 B/half	23296899 B/op	     535 allocs/op
+BenchmarkHeapPerPendingHalf-10    	      96	  12675060 ns/op	       180.5 B/half	23296896 B/op	     535 allocs/op
+BenchmarkHeapPerPendingHalf-10    	      96	  12815289 ns/op	       180.5 B/half	23296895 B/op	     535 allocs/op
+BenchmarkHeapPerPendingHalf-10    	      98	  12770622 ns/op	       180.5 B/half	23296897 B/op	     535 allocs/op
+BenchmarkHeapPerPendingHalf-10    	      92	  12845457 ns/op	       180.5 B/half	23296891 B/op	     535 allocs/op
+BenchmarkHeapPerPendingHalf-10    	      92	  12703394 ns/op	       180.5 B/half	23296895 B/op	     535 allocs/op
+BenchmarkHeapPerPendingHalf-10    	      93	  13647228 ns/op	       180.5 B/half	23296901 B/op	     535 allocs/op
+BenchmarkHeapPerPendingHalf-10    	      85	  13102823 ns/op	       180.5 B/half	23296889 B/op	     535 allocs/op
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/domain/topology/matcher	12.661s
+goos: darwin
+goarch: arm64
+pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/red
+cpu: Apple M1 Pro
+BenchmarkSummarize-10    	29953994	        39.89 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSummarize-10    	30770512	        39.55 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSummarize-10    	29510493	        40.15 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSummarize-10    	29502000	        39.89 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSummarize-10    	30536682	        39.57 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSummarize-10    	30110026	        39.73 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSummarize-10    	30517267	        40.55 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSummarize-10    	30293085	        40.17 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSummarize-10    	29499008	        39.41 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSummarize-10    	29952356	        39.53 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/domain/topology/red	12.377s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/domain/topology/role	0.399s
+goos: darwin
+goarch: arm64
+pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/tombstone
+cpu: Apple M1 Pro
+BenchmarkHeapPerTombstone-10    	       8	 141580359 ns/op	        87.93 B/tombstone	177306981 B/op	    8228 allocs/op
+BenchmarkHeapPerTombstone-10    	       7	 149802381 ns/op	        87.90 B/tombstone	177347210 B/op	    8229 allocs/op
+BenchmarkHeapPerTombstone-10    	       7	 151357595 ns/op	        87.93 B/tombstone	177348032 B/op	    8230 allocs/op
+BenchmarkHeapPerTombstone-10    	       7	 147309149 ns/op	        87.90 B/tombstone	177323795 B/op	    8227 allocs/op
+BenchmarkHeapPerTombstone-10    	       7	 157591298 ns/op	        87.93 B/tombstone	177292616 B/op	    8225 allocs/op
+BenchmarkHeapPerTombstone-10    	       7	 153650333 ns/op	        87.90 B/tombstone	177370604 B/op	    8230 allocs/op
+BenchmarkHeapPerTombstone-10    	       7	 154281000 ns/op	        87.85 B/tombstone	177292680 B/op	    8225 allocs/op
+BenchmarkHeapPerTombstone-10    	       8	 148408990 ns/op	        87.82 B/tombstone	177306248 B/op	    8226 allocs/op
+BenchmarkHeapPerTombstone-10    	       7	 144766226 ns/op	        87.84 B/tombstone	177300414 B/op	    8225 allocs/op
+BenchmarkHeapPerTombstone-10    	       7	 151490673 ns/op	        87.93 B/tombstone	177339425 B/op	    8228 allocs/op
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/domain/topology/tombstone	11.191s
+?   	github.com/DmytroLysenko1/faultline/internal/domain/topology/topologytest	[no test files]
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/domain/topology/traffic	0.415s
+?   	github.com/DmytroLysenko1/faultline/internal/gen/proto/faultline/v1	[no test files]
+?   	github.com/DmytroLysenko1/faultline/internal/gen/proto/faultline/v1/faultlinev1connect	[no test files]
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/infrastructure/memgraph	0.448s
+goos: darwin
+goarch: arm64
+pkg: github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal
+cpu: Apple M1 Pro
+BenchmarkAppendReceiveRelease512-10    	   76618	     14136 ns/op	     200 B/op	       5 allocs/op
+BenchmarkAppendReceiveRelease512-10    	   86694	     13933 ns/op	     200 B/op	       5 allocs/op
+BenchmarkAppendReceiveRelease512-10    	   86419	     14183 ns/op	     200 B/op	       5 allocs/op
+BenchmarkAppendReceiveRelease512-10    	   85178	     13979 ns/op	     200 B/op	       5 allocs/op
+BenchmarkAppendReceiveRelease512-10    	   85656	     14004 ns/op	     200 B/op	       5 allocs/op
+BenchmarkAppendReceiveRelease512-10    	   86076	     13830 ns/op	     200 B/op	       5 allocs/op
+BenchmarkAppendReceiveRelease512-10    	   87410	     13789 ns/op	     200 B/op	       5 allocs/op
+BenchmarkAppendReceiveRelease512-10    	   88180	     13812 ns/op	     200 B/op	       5 allocs/op
+BenchmarkAppendReceiveRelease512-10    	   87889	     13924 ns/op	     200 B/op	       5 allocs/op
+BenchmarkAppendReceiveRelease512-10    	   84508	     13959 ns/op	     200 B/op	       5 allocs/op
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal	12.334s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/infrastructure/routerules	0.419s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/infrastructure/selftrace	0.706s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi	0.565s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/graphmap	0.436s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/graphservice	0.550s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/limit	0.481s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/recovery	0.450s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/timeout	0.400s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/tracing	0.499s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/interfaces/otlp	0.539s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/decodelimit	0.521s
+?   	github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/otlptest	[no test files]
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/recovery	0.484s
+goos: darwin
+goarch: arm64
+pkg: github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/spanmap
+cpu: Apple M1 Pro
+BenchmarkMapping512-10        	   34184	     34222 ns/op	    1171 B/op	     257 allocs/op
+BenchmarkMapping512-10        	   35182	     33793 ns/op	    1171 B/op	     257 allocs/op
+BenchmarkMapping512-10        	   35335	     33959 ns/op	    1171 B/op	     257 allocs/op
+BenchmarkMapping512-10        	   35629	     34036 ns/op	    1171 B/op	     257 allocs/op
+BenchmarkMapping512-10        	   35528	     33807 ns/op	    1171 B/op	     257 allocs/op
+BenchmarkMapping512-10        	   35556	     33585 ns/op	    1171 B/op	     257 allocs/op
+BenchmarkMapping512-10        	   35553	     33959 ns/op	    1171 B/op	     257 allocs/op
+BenchmarkMapping512-10        	   35233	     33759 ns/op	    1171 B/op	     257 allocs/op
+BenchmarkMapping512-10        	   35277	     33750 ns/op	    1171 B/op	     257 allocs/op
+BenchmarkMapping512-10        	   35559	     33667 ns/op	    1171 B/op	     257 allocs/op
+BenchmarkAcceptBatch512-10    	    7027	    170232 ns/op	   59184 B/op	     271 allocs/op
+BenchmarkAcceptBatch512-10    	    7142	    180256 ns/op	   59184 B/op	     271 allocs/op
+BenchmarkAcceptBatch512-10    	    7190	    173438 ns/op	   59184 B/op	     271 allocs/op
+BenchmarkAcceptBatch512-10    	    7003	    170146 ns/op	   59184 B/op	     271 allocs/op
+BenchmarkAcceptBatch512-10    	    7123	    169928 ns/op	   59184 B/op	     271 allocs/op
+BenchmarkAcceptBatch512-10    	    7006	    171314 ns/op	   59184 B/op	     271 allocs/op
+BenchmarkAcceptBatch512-10    	    7208	    169897 ns/op	   59184 B/op	     271 allocs/op
+BenchmarkAcceptBatch512-10    	    7005	    172865 ns/op	   59184 B/op	     271 allocs/op
+BenchmarkAcceptBatch512-10    	    6888	    173717 ns/op	   59184 B/op	     271 allocs/op
+BenchmarkAcceptBatch512-10    	    7034	    173539 ns/op	   59184 B/op	     271 allocs/op
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/spanmap	24.568s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/throttle	0.443s
+goos: darwin
+goarch: arm64
+pkg: github.com/DmytroLysenko1/faultline/pkg/sketch
+cpu: Apple M1 Pro
+BenchmarkSketchAddExistingBin-10    	17070530	        68.70 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchAddExistingBin-10    	17731696	        67.96 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchAddExistingBin-10    	17779126	        67.52 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchAddExistingBin-10    	17552894	        68.12 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchAddExistingBin-10    	17482411	        67.89 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchAddExistingBin-10    	17713778	        68.07 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchAddExistingBin-10    	17694699	        68.08 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchAddExistingBin-10    	17724822	        68.47 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchAddExistingBin-10    	17288169	        68.12 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchAddExistingBin-10    	17767555	        67.93 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchCellLifecycle-10     	 3292693	       370.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchCellLifecycle-10     	 3223264	       370.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchCellLifecycle-10     	 3162876	       378.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchCellLifecycle-10     	 3192157	       382.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchCellLifecycle-10     	 3269508	       367.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchCellLifecycle-10     	 3283692	       366.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchCellLifecycle-10     	 3286282	       363.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchCellLifecycle-10     	 3247754	       366.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchCellLifecycle-10     	 3287428	       362.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchCellLifecycle-10     	 3375428	       361.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchPercentiles-10       	 6119880	       197.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchPercentiles-10       	 6045924	       199.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchPercentiles-10       	 5999732	       200.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchPercentiles-10       	 6025604	       199.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchPercentiles-10       	 5942302	       202.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchPercentiles-10       	 5997823	       200.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchPercentiles-10       	 5999965	       198.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchPercentiles-10       	 6028554	       196.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchPercentiles-10       	 6021976	       197.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchPercentiles-10       	 6083776	       196.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchAddTypicalCell-10    	88085787	        14.00 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchAddTypicalCell-10    	83419266	        14.63 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchAddTypicalCell-10    	84522166	        15.21 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchAddTypicalCell-10    	88501285	        14.50 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchAddTypicalCell-10    	84803902	        14.83 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchAddTypicalCell-10    	85268907	        14.49 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchAddTypicalCell-10    	85567090	        14.18 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchAddTypicalCell-10    	86644682	        14.07 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchAddTypicalCell-10    	85493425	        14.22 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSketchAddTypicalCell-10    	81787977	        14.43 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/DmytroLysenko1/faultline/pkg/sketch	48.874s
+goos: darwin
+goarch: arm64
+pkg: github.com/DmytroLysenko1/faultline/pkg/stream
+cpu: Apple M1 Pro
+BenchmarkLocateRecordRandomSeries-10    	28993443	        37.58 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocateRecordRandomSeries-10    	37457566	        36.19 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocateRecordRandomSeries-10    	31508397	        35.81 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocateRecordRandomSeries-10    	32116045	        35.59 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocateRecordRandomSeries-10    	33326158	        35.21 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocateRecordRandomSeries-10    	34841940	        34.93 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocateRecordRandomSeries-10    	33504928	        36.45 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocateRecordRandomSeries-10    	32817558	        38.23 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocateRecordRandomSeries-10    	30613123	        40.38 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocateRecordRandomSeries-10    	31322085	        37.12 ns/op	       0 B/op	       0 allocs/op
+BenchmarkWindowClose160k-10             	     100	  10210958 ns/op	       0 B/op	       0 allocs/op
+BenchmarkWindowClose160k-10             	     100	  10108870 ns/op	       0 B/op	       0 allocs/op
+BenchmarkWindowClose160k-10             	     100	  10129344 ns/op	       0 B/op	       0 allocs/op
+BenchmarkWindowClose160k-10             	      99	  10386253 ns/op	       0 B/op	       0 allocs/op
+BenchmarkWindowClose160k-10             	      98	  10824876 ns/op	       0 B/op	       0 allocs/op
+BenchmarkWindowClose160k-10             	     100	  10513340 ns/op	       0 B/op	       0 allocs/op
+BenchmarkWindowClose160k-10             	     100	  10595899 ns/op	       0 B/op	       0 allocs/op
+BenchmarkWindowClose160k-10             	     100	  10400195 ns/op	       0 B/op	       0 allocs/op
+BenchmarkWindowClose160k-10             	      99	  11768546 ns/op	       0 B/op	       0 allocs/op
+BenchmarkWindowClose160k-10             	     100	  10704136 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFireEarly60k-10                	    2366	    503041 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFireEarly60k-10                	    2258	    532209 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFireEarly60k-10                	    2172	    558624 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFireEarly60k-10                	    2282	    543835 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFireEarly60k-10                	    2224	    540166 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFireEarly60k-10                	    2287	    555469 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFireEarly60k-10                	    2486	    568384 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFireEarly60k-10                	    1898	    730162 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFireEarly60k-10                	    1718	    683738 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFireEarly60k-10                	    2433	    548231 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/DmytroLysenko1/faultline/pkg/stream	103.334s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/test/checkpoint	0.617s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/test/demo	0.541s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/test/demo/reference	0.515s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/test/ingest	0.546s
+goos: darwin
+goarch: arm64
+pkg: github.com/DmytroLysenko1/faultline/test/pipeline
+cpu: Apple M1 Pro
+BenchmarkIteration50kEdges-10    	      79	  15005427 ns/op	      4265 batches/s	15059753 B/op	      58 allocs/op
+BenchmarkIteration50kEdges-10    	      70	  15095805 ns/op	      4240 batches/s	15059683 B/op	      58 allocs/op
+BenchmarkIteration50kEdges-10    	      72	  15341501 ns/op	      4172 batches/s	15059680 B/op	      58 allocs/op
+BenchmarkIteration50kEdges-10    	      75	  15677072 ns/op	      4082 batches/s	15059680 B/op	      58 allocs/op
+BenchmarkIteration50kEdges-10    	      72	  15435128 ns/op	      4146 batches/s	15059670 B/op	      58 allocs/op
+BenchmarkIteration50kEdges-10    	      79	  15592497 ns/op	      4105 batches/s	15059680 B/op	      58 allocs/op
+BenchmarkIteration50kEdges-10    	      76	  15277908 ns/op	      4189 batches/s	15059669 B/op	      58 allocs/op
+BenchmarkIteration50kEdges-10    	      84	  15238226 ns/op	      4200 batches/s	15059678 B/op	      58 allocs/op
+BenchmarkIteration50kEdges-10    	      78	  14837020 ns/op	      4314 batches/s	15059674 B/op	      58 allocs/op
+BenchmarkIteration50kEdges-10    	      73	  15299860 ns/op	      4183 batches/s	15059677 B/op	      58 allocs/op
+PASS
+ok  	github.com/DmytroLysenko1/faultline/test/pipeline	13.315s
+PASS
+ok  	github.com/DmytroLysenko1/faultline/test/replay	0.583s

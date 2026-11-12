@@ -784,9 +784,9 @@ publish: Publish(Snapshot()) — ошибка → return (held не освобо
 | `BenchmarkAcceptBatch` (512 спанов) | не хуже шага 1 + нормализация; аллокации — ≤ шага 1 + 1 на спан |
 | `BenchmarkBuilderApplyPerSpan` | ≤ 1 µs на спан (срез 6d: 383 ns; срез 8d: 355 ns), 0 аллокаций на спан — срез 8d: пул ожидающих половинок матчера вместо `container/list` (было 2 на пару), тест закрепляет 0 |
 | `BenchmarkWindowClose160k` | ≤ 60 ms |
-| `BenchmarkFire60k` | ≤ 20 ms |
+| `BenchmarkFireEarly60k` | ≤ 20 ms |
 | `BenchmarkIteration50kEdges` (со сводками) | ≤ 25 ms на итерацию с публикацией |
-| `BenchmarkSpanmap` до/после | −1 аллокация на спан с атрибутами |
+| `BenchmarkMapping512` до/после | −1 аллокация на спан с атрибутами |
 | `TestDrainFullJournal` (с окнами) | ≤ 2,5 s |
 
 `make bench`: `-count=10`, `benchstat` против базы; регрессия > 10 % — предупреждение в ночной job. Бюджеты 0 аллокаций — `testing.AllocsPerRun` в `make verify` (блокирует PR). Срез с горячим путём прикладывает top-10 `make profile` по CPU и `alloc_space`.
@@ -1326,26 +1326,43 @@ func ResponseWeight(nodes, edges int) int64                          // конс
 ## Критерии приёмки (Definition of Done шага)
 
 **Гейты качества**
-- [ ] `make verify` зелёный; `cover-check` ≥ 80 % для `pkg/stream`, `pkg/sketch`, `telemetry/operation`, `topology/cardinality`, `topology/traffic`; ≥ 70 % остальное.
-- [ ] depguard и forbidigo шага действуют (временный импорт `pkg/stream` в `application` и `graph` в `cardinality` ломает `make lint`).
-- [ ] `buf breaking` против `v0.1.1` зелёный.
-- [ ] 0 аллокаций закреплены `AllocsPerRun`; бенчмарки в таблице, база в `test/bench/baseline.txt`.
+- [x] `make verify` зелёный; `cover-check` ≥ 80 % для `pkg/stream`, `pkg/sketch`, `telemetry/operation`, `topology/cardinality`, `topology/traffic`; ≥ 70 % остальное.
+- [x] depguard и forbidigo шага действуют (временный импорт `pkg/stream` в `application` и `graph` в `cardinality` ломает `make lint`).
+- [x] `buf breaking` против `v0.1.1` зелёный.
+- [x] 0 аллокаций закреплены `AllocsPerRun`; бенчмарки в таблице, база в `test/bench/baseline.txt`.
 
 **Ядро**
-- [ ] FR-TOP-002 (σ ∈ {0,5; 1; 2}); 420 000 ячеек без слияния; фрагментация арены.
-- [ ] I6, I7, I8 (повтор в новом процессе, пульсы) property ≥ 10⁴; I9; догоняющие данные; приёмки FR-STR-001/002.
-- [ ] FR-STR-006 + fuzz + параллельный нормализатор; FR-STR-007 по субъекту; утечка реестра — 0.
-- [ ] I10, I11, I12; `Served`; `SeriesKey`; `live` / `final`; replay = golden.
+- [x] FR-TOP-002 (σ ∈ {0,5; 1; 2}); 420 000 ячеек без слияния; фрагментация арены.
+- [x] I6, I7, I8 (повтор в новом процессе, пульсы) property ≥ 10⁴; I9; догоняющие данные; приёмки FR-STR-001/002.
+- [x] FR-STR-006 + fuzz + параллельный нормализатор; FR-STR-007 по субъекту; утечка реестра — 0.
+- [x] I10, I11, I12; `Served`; `SeriesKey`; `live` / `final`; replay = golden.
 
 **Конвейер и API**
-- [ ] Часы журнала монотонны; пульсы; каденс; `held` по байтам; `Release` после успешного `Publish`; дренаж ≤ 2,5 s; I2 со сводками под `test-stress`; goleak.
-- [ ] `GetGraph` с RED: gRPC = Connect-JSON; допуск по закреплённому снимку; ответ на лимитах ≤ 192 MiB.
-- [ ] Бюджет памяти по пробам ≤ 0,85 × `GOMEMLIMIT`; условие апрува D-MEM (производительность) выполнено.
+- [x] Часы журнала монотонны; пульсы; каденс; `held` по байтам; `Release` после успешного `Publish`; дренаж ≤ 2,5 s; I2 со сводками под `test-stress`; goleak.
+- [x] `GetGraph` с RED: gRPC = Connect-JSON; допуск по закреплённому снимку; ответ на лимитах ≤ 192 MiB.
+- [x] Бюджет памяти по пробам ≤ 0,85 × `GOMEMLIMIT`; условие апрува D-MEM (производительность) выполнено.
 
 **Демо и документы**
 - [x] `make demo-2`; `hack/democheck` сводит I6/I10/I11.
 - [x] Глоссарий, уточнения требований, матрица трассировки.
 - [ ] Тег `v0.1.2` на `dev`.
+
+**Закрытие шага (12.11) — доказательства по пунктам**
+
+| Пункт | Чем подтверждено |
+|---|---|
+| покрытие | `hack/cover-check.sh`: строгий порог 80 % теперь и у `pkg/sketch`, `telemetry/operation`, `topology/cardinality`, `topology/traffic` (замер: 96,4 / 97,7 / 94,7 / 93,2 %; `pkg/stream` 95,7 %) |
+| `buf breaking` | `make proto-breaking` против `v0.1.1` — без нарушений (CI: отдельный шаг `ci.yml`) |
+| бенчмарки | `make bench` (`benchstat` — `tool` в `go.mod`, в бинарник не попадает: `go version -m` без `x/perf`), база `test/bench/baseline.txt` (M1 Pro, `-count=10`), `make bench-baseline` — замена базы после просмотра diff; `make profile` — top-10 CPU и `alloc_space` итерации на 50 000 рёбер; `make fuzz` — каждый `Fuzz*` по `FUZZTIME`; 0 аллокаций — `AllocsPerRun` в 13 файлах тестов |
+| FR-TOP-002, скетч | `TestPercentilesOfLognormalLatencyStayWithinTwoPercent` (σ 0,5 / 1 / 2), `TestNormalLoadFitsTheBudgetWithoutCollapsing` (420 000 ячеек), `TestReleasedNarrowSketchesMergeBackIntoFullWidthBlocks` и соседние (фрагментация) |
+| I6–I9, приёмки FR-STR-001/002 | property `pkg/stream` (10 000 сценариев), `TestReplayFinalsMatchTheGolden` (I8), `TestEventFromAFastClockIsReassignedToTheBatchAnchor` и сценарии 1970 года в `pkg/stream` (I9), `TestUntimedEventAfterABacklogBatchIsPlacedAtTheLatestCandidate` (догоняющие) |
+| FR-STR-006/007 | property нормализатора (10 000 путей → одна операция), три `Fuzz*` нормализатора и правил, property реестра (10 000 сценариев, утечка 0), `TestAServedSpanOfARefusedNodeCountsOnlyAsNodeOverflow` |
+| I10–I12, `Served`, `SeriesKey`, `live`/`final` | `TestOneStatsLineBalancesI6I10AndI11`, `TestEveryRetiredWindowEqualsTheBatchRecomputation`, `TestNodesCountTheRequestsTheyServed`, `TestSeriesKeysKeepSubjectsUnnamedOperationsAndProtocolsApart`, `TestReplayFinalsHoldTheSummaryInvariants` |
+| API | `TestProtocolsReturnTheSameGraph` (gRPC = Connect-JSON), `TestDefaultWorstCaseIsPinned`, `TestLargestAllowedGraphPassesTheClientLimit` (192 MiB) |
+| depguard, forbidigo | временные файлы в scratch: импорт `pkg/stream` в `application/processing` → `layer-application`, импорт `graph` в `cardinality` → `topology-lower-layers`, вызов `batch.Heartbeat` в `processing` → forbidigo; все три ломают `make lint` |
+| конвейер | `make test-stress` 12.11: пакеты конвейера ×200 под `-race`, остановка ×200, `pkg/stream` ×2 (один прогон под `-race` — 176 s, поэтому отдельная строка с `-count=2` и `-timeout=20m`; всего ≈ 8 min при лимите ночного CI 30 min); `TestDrainFullJournal` в `make test-probes`; goleak — `VerifyTestMain` в 10 пакетах |
+| память | пробы `make test-probes` (`TestBudgetAtTheMemoryLimit`), D-MEM — срез 8d |
+| демо | `make demo-2` в kind 12.11: 15/15 required, 12/12 получателей, 11/11 проверок |
 
 ## Зависимости
 

@@ -11,7 +11,8 @@ module="$(go list -m)"
 : "${COVER_MIN:=70}"
 : "${COVER_STRICT_MIN:=80}"
 # Parsers, detectors, window engine, RCA (NFR-MAINT-001) plus the step-1 pairing core.
-: "${STRICT_PACKAGES:=internal/domain/topology pkg/stream internal/domain/anomaly internal/domain/logtemplate internal/domain/incident internal/infrastructure/ebpf}"
+# Step 2 adds the sketch, the normalizer, the cardinality registry and the traffic views.
+: "${STRICT_PACKAGES:=internal/domain/topology pkg/stream pkg/sketch internal/domain/telemetry/operation internal/domain/topology/cardinality internal/domain/topology/traffic internal/domain/anomaly internal/domain/logtemplate internal/domain/incident internal/infrastructure/ebpf}"
 
 if [[ ! -s "$profile" ]]; then
 	echo "cover-check: $profile not found or empty, run 'make test-race' first" >&2

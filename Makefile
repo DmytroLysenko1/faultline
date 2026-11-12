@@ -106,13 +106,47 @@ test-probes: ## Heap and time probes without -race: decode limit, memory budget 
 STRESS_PACKAGES := ./internal/application/ingest/... ./internal/application/processing/... \
 	./internal/infrastructure/memjournal/... ./internal/infrastructure/memgraph/... ./test/pipeline/...
 STRESS_COUNT := 200
+STREAM_STRESS_COUNT := 2
+STREAM_STRESS_TIMEOUT := 20m
 SHUTDOWN_TESTS := TestShutdownOrder|TestDrainIncomplete|TestSignalAfterPipelineExit|TestEveryComponent|TestOTLPStuckAfterStop|\
 	TestSlowComponentsAtTheEndOfShutdown|TestStatsReporter|TestStopOnATick
+
+BENCH_DIR := tmp/bench
+BENCH_BASELINE := test/bench/baseline.txt
+BENCH_COUNT := 10
+PROFILE_DIR := tmp/profile
+PROFILE_BENCH := BenchmarkIteration50kEdges
+PROFILE_PACKAGE := ./test/pipeline/
+
+.PHONY: bench
+bench: ## Benchmarks against test/bench/baseline.txt with benchstat (BENCH_COUNT=10); new run in tmp/bench/new.txt
+	@mkdir -p $(BENCH_DIR)
+	go test -run='^$$' -bench=. -benchmem -count=$(BENCH_COUNT) ./... > $(BENCH_DIR)/new.txt
+	go tool benchstat $(BENCH_BASELINE) $(BENCH_DIR)/new.txt
+
+.PHONY: bench-baseline
+bench-baseline: bench ## Promote tmp/bench/new.txt to the baseline (only after reviewing the benchstat diff)
+	@mkdir -p $(dir $(BENCH_BASELINE))
+	cp $(BENCH_DIR)/new.txt $(BENCH_BASELINE)
+
+.PHONY: profile
+profile: ## CPU and allocation profile of one pipeline iteration: tmp/profile/{cpu,mem}.pprof, top 10 of each
+	@mkdir -p $(PROFILE_DIR)
+	go test -run='^$$' -bench='^$(PROFILE_BENCH)$$' -benchmem \
+		-cpuprofile=$(PROFILE_DIR)/cpu.pprof -memprofile=$(PROFILE_DIR)/mem.pprof \
+		-o $(PROFILE_DIR)/pipeline.test $(PROFILE_PACKAGE)
+	go tool pprof -top -nodecount=10 $(PROFILE_DIR)/pipeline.test $(PROFILE_DIR)/cpu.pprof
+	go tool pprof -top -nodecount=10 -sample_index=alloc_space $(PROFILE_DIR)/pipeline.test $(PROFILE_DIR)/mem.pprof
+
+.PHONY: fuzz
+fuzz: ## Run every Fuzz* target for FUZZTIME each (default 60s); seed corpora already run in make test
+	./hack/fuzz.sh
 
 .PHONY: test-stress
 test-stress: ## Repeat concurrency-sensitive tests under the race detector (nightly CI, before a tag)
 	go test -race -count=$(STRESS_COUNT) $(STRESS_PACKAGES)
 	go test -race -count=$(STRESS_COUNT) -run '$(SHUTDOWN_TESTS)' ./cmd/faultline/
+	go test -race -count=$(STREAM_STRESS_COUNT) -timeout=$(STREAM_STRESS_TIMEOUT) ./pkg/stream/...
 
 .PHONY: cover-check
 cover-check: test-race ## Enforce per-package coverage thresholds (NFR-MAINT-001)
