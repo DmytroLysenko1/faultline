@@ -49,6 +49,7 @@ type call struct {
 	target int
 	calls  uint64
 	failed uint64
+	label  string
 }
 
 type renderCase struct {
@@ -68,13 +69,18 @@ const (
 // a final one without them (no percentiles), an edge final after one late pane.
 func withRED(built *faultlinev1.Graph) *faultlinev1.Graph {
 	window := built.GetGeneratedAt().AsTime().Truncate(redWindow)
-	stats := func(kind faultlinev1.PaneKind, start time.Time, revision uint32, samples uint64) *faultlinev1.WindowStats {
+	stats := func(
+		kind faultlinev1.PaneKind,
+		start time.Time,
+		revision uint32,
+		failed, samples uint64,
+	) *faultlinev1.WindowStats {
 		summary := &faultlinev1.WindowStats{
 			Start:          timestamppb.New(start),
 			Kind:           kind,
 			Revision:       revision,
 			Requests:       12,
-			FailedRequests: 2,
+			FailedRequests: failed,
 			LatencySamples: samples,
 			Observed:       durationpb.New(redWindow),
 		}
@@ -87,9 +93,18 @@ func withRED(built *faultlinev1.Graph) *faultlinev1.Graph {
 	built.WindowSize = durationpb.New(redWindow)
 	built.Watermark = timestamppb.New(window.Add(-redWindow))
 	built.Nodes[0].ServedRequests = 5
-	built.Nodes[0].Live = stats(faultlinev1.PaneKind_PANE_KIND_EARLY, window, 0, 12)
-	built.Nodes[0].Final = stats(faultlinev1.PaneKind_PANE_KIND_ON_TIME, window.Add(-redWindow), 1, 0)
-	built.Edges[0].Final = stats(faultlinev1.PaneKind_PANE_KIND_LATE, window.Add(-redWindow), 2, 12)
+	built.Nodes[0].Live = stats(faultlinev1.PaneKind_PANE_KIND_EARLY, window, 0, 2, 12)
+	built.Nodes[0].Final = stats(faultlinev1.PaneKind_PANE_KIND_ON_TIME, window.Add(-redWindow), 1, 2, 0)
+	built.Edges[0].Final = stats(faultlinev1.PaneKind_PANE_KIND_LATE, window.Add(-redWindow), 2, 2, 12)
+	built.Edges[1].Live = stats(faultlinev1.PaneKind_PANE_KIND_EARLY, window, 0, 0, 12)
+	return built
+}
+
+func (tt *renderCase) graph() *faultlinev1.Graph {
+	built := graphOf(tt.Nodes, tt.Calls)
+	if tt.WithRED {
+		return withRED(built)
+	}
 	return built
 }
 
@@ -149,7 +164,7 @@ func evilCase() renderCase {
 	return renderCase{
 		Name:   "evil",
 		Nodes:  nodes,
-		Calls:  []call{{source: 2, target: 3, calls: 1}},
+		Calls:  []call{{source: 2, target: 3, calls: 1, label: "calls 1, failed 0"}},
 		Labels: labels,
 	}
 }
@@ -170,7 +185,7 @@ func displayed(name string) string {
 func renderCases() []renderCase {
 	demo := []namedNode{
 		{service: service{Namespace: demoNamespace, Name: "cart"}, unanswered: 3, failed: 1},
-		{service: service{Namespace: demoNamespace, Name: "checkout"}},
+		{service: service{Namespace: demoNamespace, Name: "checkout"}, unanswered: 1},
 		{service: service{Namespace: demoNamespace, Name: "frontend"}},
 	}
 	return []renderCase{
@@ -182,12 +197,12 @@ func renderCases() []renderCase {
 			Name:  "demo",
 			Nodes: demo,
 			Calls: []call{
-				{source: 2, target: 1, calls: 12, failed: 2},
-				{source: 1, target: 0, calls: 5},
+				{source: 2, target: 1, calls: 12, failed: 2, label: "calls 12, failed 2\n1.2/s err 16.7% p95 3ms"},
+				{source: 1, target: 0, calls: 5, label: "calls 5, failed 0\n~1.2/s err 0.0% p95 3ms"},
 			},
 			Labels: map[string]string{
-				nodeID(demo[0].service): "demo/cart\nunanswered 3 (failed 1)",
-				nodeID(demo[1].service): "demo/checkout",
+				nodeID(demo[0].service): "demo/cart\nserved 1.2/s err 16.7%\nunanswered 3 (failed 1)",
+				nodeID(demo[1].service): "demo/checkout\nunanswered 1 (failed 0)",
 				nodeID(demo[2].service): "demo/frontend",
 			},
 			WithRED: true,
@@ -267,7 +282,7 @@ func (g dotGraph) NewEdge(from, to graph.Node) graph.Edge {
 
 type parsedDOT struct {
 	Labels map[string]string
-	Edges  [][2]string
+	Edges  [][3]string
 	Extra  []string
 }
 
@@ -285,7 +300,7 @@ func parseDOT(t *testing.T, source []byte) parsedDOT {
 	}
 	for edges := parsed.Edges(); edges.Next(); {
 		edge := edges.Edge().(*dotEdge)
-		got.Edges = append(got.Edges, [2]string{edge.From().(*dotNode).id, edge.To().(*dotNode).id})
+		got.Edges = append(got.Edges, [3]string{edge.From().(*dotNode).id, edge.To().(*dotNode).id, edge.attrs[labelKey]})
 		got.Extra = append(got.Extra, extraAttributes("edge", edge.attrs)...)
 	}
 	return got
@@ -307,13 +322,17 @@ func expectedDOT(tt *renderCase) parsedDOT {
 		want.Labels[id] = strings.ReplaceAll(label, "&", "&amp;")
 	}
 	for _, edge := range tt.Calls {
-		want.Edges = append(want.Edges, [2]string{nodeID(tt.Nodes[edge.source].service), nodeID(tt.Nodes[edge.target].service)})
+		want.Edges = append(want.Edges, [3]string{
+			nodeID(tt.Nodes[edge.source].service),
+			nodeID(tt.Nodes[edge.target].service),
+			strings.ReplaceAll(edge.label, "&", "&amp;"),
+		})
 	}
 	return want
 }
 
 func sortedEdges() cmp.Option {
-	return cmpopts.SortSlices(func(a, b [2]string) bool {
+	return cmpopts.SortSlices(func(a, b [3]string) bool {
 		return a[0]+a[1] < b[0]+b[1]
 	})
 }
@@ -321,7 +340,7 @@ func sortedEdges() cmp.Option {
 func TestDOTIsGoldenAndParsesBackToTheSameGraph(t *testing.T) {
 	for _, tt := range renderCases() {
 		t.Run(tt.Name, func(t *testing.T) {
-			got := rendered(t, cli.DOT, graphOf(tt.Nodes, tt.Calls))
+			got := rendered(t, cli.DOT, tt.graph())
 			compareGolden(t, tt.Name+".dot", got)
 			if diff := cmp.Diff(expectedDOT(&tt), parseDOT(t, got), sortedEdges()); diff != "" {
 				t.Errorf("DOT parsed by gonum (-want +got):\n%s", diff)
@@ -333,10 +352,7 @@ func TestDOTIsGoldenAndParsesBackToTheSameGraph(t *testing.T) {
 func TestJSONIsGoldenStableAndParsesBackToTheSameGraph(t *testing.T) {
 	for _, tt := range renderCases() {
 		t.Run(tt.Name, func(t *testing.T) {
-			built := graphOf(tt.Nodes, tt.Calls)
-			if tt.WithRED {
-				built = withRED(built)
-			}
+			built := tt.graph()
 			got := rendered(t, cli.JSON, built)
 			compareGolden(t, tt.Name+".json", got)
 			if again := rendered(t, cli.JSON, built); !bytes.Equal(got, again) {

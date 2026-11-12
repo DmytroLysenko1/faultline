@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/xml"
 	"errors"
-	"fmt"
 	"io"
 	"os/exec"
 	"slices"
@@ -21,7 +20,6 @@ const (
 	svgFormat      = "-Tsvg"
 	svgText        = "text"
 	labelLineBreak = "\n"
-	edgeLabelText  = "calls %d, failed %d"
 )
 
 func drawnTexts(t *testing.T, source []byte) []string {
@@ -63,7 +61,7 @@ func expectedTexts(tt *renderCase) []string {
 		texts = append(texts, strings.Split(label, labelLineBreak)...)
 	}
 	for _, edge := range tt.Calls {
-		texts = append(texts, fmt.Sprintf(edgeLabelText, edge.calls, edge.failed))
+		texts = append(texts, strings.Split(edge.label, labelLineBreak)...)
 	}
 	slices.Sort(texts)
 	return texts
@@ -75,7 +73,7 @@ func TestGraphvizDrawsEveryLabelAsPlainText(t *testing.T) {
 	}
 	for _, tt := range renderCases() {
 		t.Run(tt.Name, func(t *testing.T) {
-			got := drawnTexts(t, rendered(t, cli.DOT, graphOf(tt.Nodes, tt.Calls)))
+			got := drawnTexts(t, rendered(t, cli.DOT, tt.graph()))
 			slices.Sort(got)
 			if diff := cmp.Diff(expectedTexts(&tt), got); diff != "" {
 				t.Errorf("text drawn by graphviz (-want +got):\n%s", diff)

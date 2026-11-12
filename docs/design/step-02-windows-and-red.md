@@ -736,6 +736,7 @@ publish: Publish(Snapshot()) — ошибка → return (held не освобо
 
 - `graph export -o dot`: метка ребра — `calls N, failed M` + строка из `final` (иначе `live` с пометкой `~`): `12.3/s err 1.2% p95 45ms`; узла — `served X/s …`; числа считает `internal/cli` из proto.
 - `graph export -o json`: protojson с новыми полями (golden).
+- **Срез 9 (как сделано):** строки метки узла — имя, `served …`, `unanswered …`; ребра — `calls N, failed M`, затем строка RED. Строка RED: `[~]R/s err E%[ p95 D]`, где `R = requests / observed` и `E = 100 × min(failed, requests) / requests` с одним знаком после запятой (`E = 0` без запросов); доля, которую `%.1f` округлил бы до 0 или 100, пишется `<0.1%` / `>99.9%`, чтобы единичный отказ или единичный успех не пропадали. `p95` — только при `latency_samples > 0` и `p95 > 0`, округлён до трёх значащих цифр (`45.7ms`, `1.23s`, `512µs`); от минуты — в форме `Duration.String` (`1m1.2s`), это принято. Сводка без корректного (`CheckValid`) `observed > 0` непригодна: берётся `live`, иначе строки нет. Ответ сервера недоверенный: битые значения не ломают DOT (все строки идут через экранирование меток), а дают только неправдоподобные числа — например, крошечный `observed` даёт огромный rate; сервер остаётся источником истины для счётчиков. Низкий трафик в больших окнах показывается как `0.0/s` — счётчик `calls` рядом остаётся точным. Ревью pocock, osmani, pstack: HIGH нет; MEDIUM (доля у границ, отрицательный и пустой p95, `failed > requests`) закрыты. JSON с `live`/`final` готов с 8a; golden `demo` дополнен ребром только с `live`.
 
 ## Демо `make demo-2`
 
@@ -909,7 +910,7 @@ publish: Publish(Snapshot()) — ошибка → return (held не освобо
 | ✔ | **Контрольная точка 1:** дамп OTel Demo → финальные панели = golden | |
 | 7 | `processing`: `Cadence`, `clock`, пульсы | каденс, I2 со сводками под `test-stress`, дренаж ≤ 2,5 s |
 | 8 | 8a — `graph.proto` + маппинг, допуск по весу ответа, `SendMaxBytes` 192 MiB, `FAULTLINE_API_RESPONSE_BUDGET`, арена 8 Mi; 8b — частичное освобождение резерва и сжатие в обёртке; 8c — env окон и лимитов, файл правил; 8d — пробы памяти и производительности, пул половинок матчера; 8e — `pipeline.stats` и self-alert | `buf breaking`, gRPC = JSON, размеры, golden вкладов, фронты |
-| 9 | `faultctl`: RED в DOT и JSON | golden |
+| 9 ✔ 12.11 | `faultctl`: RED в DOT и JSON | golden, разбор gonum, текст graphviz, таблица формата, мутации 15/15 |
 | 10 | `make demo-2`, `hack/democheck`, README, глоссарий, уточнения requirements, матрица | демо в kind |
 | ✔ | **Контрольная точка 2 (29.11)** | |
 

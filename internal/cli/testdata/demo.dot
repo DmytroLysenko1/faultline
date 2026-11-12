@@ -1,7 +1,7 @@
 digraph faultline {
-	"svc:demo/cart" [label="demo/cart\nunanswered 3 (failed 1)"];
-	"svc:demo/checkout" [label="demo/checkout"];
+	"svc:demo/cart" [label="demo/cart\nserved 1.2/s err 16.7%\nunanswered 3 (failed 1)"];
+	"svc:demo/checkout" [label="demo/checkout\nunanswered 1 (failed 0)"];
 	"svc:demo/frontend" [label="demo/frontend"];
-	"svc:demo/frontend" -> "svc:demo/checkout" [label="calls 12, failed 2"];
-	"svc:demo/checkout" -> "svc:demo/cart" [label="calls 5, failed 0"];
+	"svc:demo/frontend" -> "svc:demo/checkout" [label="calls 12, failed 2\n1.2/s err 16.7% p95 3ms"];
+	"svc:demo/checkout" -> "svc:demo/cart" [label="calls 5, failed 0\n~1.2/s err 0.0% p95 3ms"];
 }
