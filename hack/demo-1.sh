@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Step 1 demo: OTel Demo in kind sends traces to faultline, and the graph faultline builds must
 # match the reference edges (design step 1, «Демо и путь деплоя», slice 7, D5).
+# With DEMO_STEP=2 (hack/demo-2.sh) democheck also waits for final RED windows on the required
+# edges and checks the step 2 accounting in pipeline.stats (design step 2, «Демо make demo-2»).
 #
-# Env: DEMO_PORT (local port of the API port-forward, default 18080).
+# Env: DEMO_PORT (local port of the API port-forward, default 18080); DEMO_STEP (1 or 2, default 1).
 # Exit: 0 — the graph passed hack/democheck; 1 — it did not, or a step failed.
 set -euo pipefail
 
@@ -12,7 +14,14 @@ cd "$repo_root"
 source hack/versions.env
 # shellcheck source=hack/lib.sh
 source hack/lib.sh
-script=demo-1
+step="${DEMO_STEP:-1}"
+script="demo-${step}"
+check_flags=()
+case "$step" in
+1) ;;
+2) check_flags=(-red) ;;
+*) fail "DEMO_STEP must be 1 or 2, got $step" ;;
+esac
 
 port="${DEMO_PORT:-18080}"
 server="http://127.0.0.1:${port}"
@@ -95,9 +104,10 @@ poll_required() {
 		ensure_forward
 		if export_graph; then
 			code=0
-			"$democheck" -graph "$graph" -required-only >"$work/required.txt" 2>&1 || code=$?
+			"$democheck" -graph "$graph" -required-only ${check_flags[@]+"${check_flags[@]}"} >"$work/required.txt" 2>&1 ||
+				code=$?
 			case "$code" in
-			0) log "every required edge is in the graph (round $round)" && return 0 ;;
+			0) log "every required edge is in the graph${check_flags[*]:+ with final RED} (round $round)" && return 0 ;;
 			1) ;;
 			*) cat "$work/required.txt" >&2 && fail "democheck rejected its input" ;;
 			esac
@@ -106,7 +116,7 @@ poll_required() {
 	done
 	check_restarts
 	cat "$work/required.txt" >&2 || true
-	fail "required edges did not appear in $((poll_rounds * poll_every)) s"
+	fail "required edges${check_flags[*]:+ or their final RED} did not appear in $((poll_rounds * poll_every)) s"
 }
 
 faultline_log() {
@@ -136,7 +146,7 @@ final_check() {
 	ensure_forward
 	export_graph || fail "faultctl could not export the final graph"
 	faultline_log >"$work/faultline.log" || fail "cannot read the faultline log"
-	if ! "$democheck" -graph "$graph" <"$work/faultline.log"; then
+	if ! "$democheck" -graph "$graph" ${check_flags[@]+"${check_flags[@]}"} <"$work/faultline.log"; then
 		faultline_log | tail -50 >&2
 		fail "the demo graph did not pass the check"
 	fi

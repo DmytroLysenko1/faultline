@@ -20,7 +20,7 @@
 
 ## Глоссарий шага
 
-Вносится в [`glossary.md`](../glossary.md) в срезе 10. Одно понятие — одно имя в тексте, коде и proto.
+Перенесён в [`glossary.md`](../glossary.md) в срезе 10. Одно понятие — одно имя в тексте, коде и proto.
 
 | Термин | Код | Proto | Определение | Не путать с |
 |---|---|---|---|---|
@@ -745,6 +745,8 @@ publish: Publish(Snapshot()) — ошибка → return (held не освобо
 3. `hack/democheck`: I6, I10, I11 по последнему `pipeline.stats`; `late_dropped / offered < 1 %`; `cardinality.services_over_limit = 0`; `cardinality.operations > 0`.
 4. `deploy/dev/README.md` — раздел «Шаг 2».
 
+**Срез 10 (как сделано):** `make demo-2` — это `hack/demo-1.sh` с `DEMO_STEP=2` (`hack/demo-2.sh` — обёртка), шаги и окружение общие. `democheck -red` добавляет к проверке шага 1: у каждого required-ребра `final` с `requests > 0` и `latency_samples > 0`, у каждого получателя required-ребра `final` с `requests > 0` (в опросе `-required-only -red` — до 5 min вместе с рёбрами); по последней строке `pipeline.stats` — 11 проверок: I6 по трём движкам, I10, I11 (offered, late_dropped, `series ≤ capacity`), `subjects.offered > 0`, `late_dropped / offered < 1 %`, `services_over_limit = 0`, `operations > 0`. Отсутствующая группа или счётчик (`series`, `capacity`) — провал, а не пропуск или ноль: образ шага 1 не проходит `demo-2`; суммы считаются с проверкой переполнения uint64 (`bits.Add64`, `bits.Mul64`). `make demo-1` закрепляет `DEMO_STEP=1`. Первый прогон демо нашёл два дефекта: `Dockerfile` не копировал `pkg/` (образ шага 2 не собирался; тест `test/demo/image_test.go` сверяет каталоги `go list -deps ./cmd/faultline` с `COPY` и dockerignore) и ребро `agent → frontend` LLM-агента, которого нет в дампе среза 0 (необязательное ребро с причиной). Ревью pocock, osmani, pstack: HIGH и MEDIUM нет; LOW — переполнение, пустая база, пропавший счётчик, неточная метка I10, закрепление шага, документы — исправлены; оставлены: сборка вердикта присваиванием поля (`built.red`) и переменный знаменатель при отсутствующей группе. Без `-red` вердикт шага 1 не меняется (`demo-1` и его тесты). `make demo-check DEMO_CHECK_FLAGS=-red` — повтор проверки. Глоссарий шага перенесён в `glossary.md` (+ «живая/финальная сводка», «self-alert»); уточнения FR-STR-001/002/006/007 и FR-ING-006 — в `requirements.md`, статусы — в разделе 9.3.
+
 ---
 
 ## Допущения
@@ -807,7 +809,7 @@ publish: Publish(Snapshot()) — ошибка → return (held не освобо
 
 ## Открытые вопросы
 
-1. Уточнения требований (срез 10): FR-STR-002 — гибридный watermark (кандидат `min(ReceivedAt, max t)`, пульс), порог «в будущем» = `min(5 min, горизонт)`; FR-STR-001 — ранние результаты при изменении окна; FR-STR-006 — правила base64-сегмента и `@`; FR-STR-007 — приёмка по субъекту; FR-ING-006 — для фактов операции сырые значения не хранятся.
+1. Закрыто в срезе 10 — уточнения требований внесены в `requirements.md`: FR-STR-002 — гибридный watermark (кандидат `min(ReceivedAt, max t)`, пульс), порог «в будущем» = `min(5 min, горизонт)`; FR-STR-001 — ранние результаты при изменении окна; FR-STR-006 — правила base64-сегмента и `@`; FR-STR-007 — приёмка по субъекту; FR-ING-006 — для фактов операции сырые значения не хранятся.
 2. Закрыто 08.11: D-MEM (`GOMEMLIMIT` 1600 MiB, условие проверяется в срезе 8); `benchstat` (`tool`, вне бинарников).
 
 ## Разбор ревью
@@ -911,7 +913,7 @@ publish: Publish(Snapshot()) — ошибка → return (held не освобо
 | 7 | `processing`: `Cadence`, `clock`, пульсы | каденс, I2 со сводками под `test-stress`, дренаж ≤ 2,5 s |
 | 8 | 8a — `graph.proto` + маппинг, допуск по весу ответа, `SendMaxBytes` 192 MiB, `FAULTLINE_API_RESPONSE_BUDGET`, арена 8 Mi; 8b — частичное освобождение резерва и сжатие в обёртке; 8c — env окон и лимитов, файл правил; 8d — пробы памяти и производительности, пул половинок матчера; 8e — `pipeline.stats` и self-alert | `buf breaking`, gRPC = JSON, размеры, golden вкладов, фронты |
 | 9 ✔ 12.11 | `faultctl`: RED в DOT и JSON | golden, разбор gonum, текст graphviz, таблица формата, мутации 15/15 |
-| 10 | `make demo-2`, `hack/democheck`, README, глоссарий, уточнения requirements, матрица | демо в kind |
+| 10 ✔ 12.11 | `make demo-2`, `hack/democheck`, README, глоссарий, уточнения requirements, матрица | демо в kind: 15/15 required, 12/12 получателей, 11/11 проверок `pipeline.stats`; мутации 36/36 |
 | ✔ | **Контрольная точка 2 (29.11)** | |
 
 **Линия отсечения:** правила сервиса → только встроенные; FR-STR-007 → счётчик без `__overflow__` (план).
@@ -1341,8 +1343,8 @@ func ResponseWeight(nodes, edges int) int64                          // конс
 - [ ] Бюджет памяти по пробам ≤ 0,85 × `GOMEMLIMIT`; условие апрува D-MEM (производительность) выполнено.
 
 **Демо и документы**
-- [ ] `make demo-2`; `hack/democheck` сводит I6/I10/I11.
-- [ ] Глоссарий, уточнения требований, матрица трассировки.
+- [x] `make demo-2`; `hack/democheck` сводит I6/I10/I11.
+- [x] Глоссарий, уточнения требований, матрица трассировки.
 - [ ] Тег `v0.1.2` на `dev`.
 
 ## Зависимости

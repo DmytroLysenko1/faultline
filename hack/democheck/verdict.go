@@ -18,6 +18,7 @@ type verdict struct {
 	noNamespace bool
 	i1          *balance
 	i3          *balance
+	red         *redVerdict
 }
 
 type balance struct {
@@ -79,7 +80,7 @@ func distinctNodes(edges []reference.Edge) int {
 }
 
 func (v *verdict) Passed() bool {
-	return v.result.Passed() && v.i1.holds() && v.i3.holds()
+	return v.result.Passed() && v.i1.holds() && v.i3.holds() && v.red.passed()
 }
 
 func (v *verdict) String() string {
@@ -89,12 +90,15 @@ func (v *verdict) String() string {
 	v.writeNamespace(&out)
 	writeBalance(&out, "I1 observed != 2*matched+duplicate+unpairable+evicted+expired+pending", v.i1)
 	writeBalance(&out, "I3 sum of edge calls+graph_overflow != matched", v.i3)
+	v.red.writeProblems(&out)
 	if v.onlyMissing {
 		fmt.Fprintf(&out, "%d/%d required\n", v.required-len(v.result.Missing), v.required)
+		v.red.writeSummary(&out)
 		return out.String()
 	}
 	fmt.Fprintf(&out, "%d/%d required, %d optional, %d edges, I1 %s, I3 %s\n",
 		v.required-len(v.result.Missing), v.required, v.optional, v.edges, state(v.i1), state(v.i3))
+	v.red.writeSummary(&out)
 	return out.String()
 }
 

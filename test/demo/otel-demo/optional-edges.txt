@@ -5,4 +5,5 @@ svc:otel-demo/ad svc:otel-demo/flagd # flag values are cached by the provider: E
 svc:otel-demo/fraud-detection svc:otel-demo/flagd # flag values are cached by the provider: EventStream at start or reconnect plus rare Resolve* (1, 1)
 svc:otel-demo/payment svc:otel-demo/flagd # flag values are cached by the provider: EventStream at start or reconnect plus rare Resolve* (0, 2)
 svc:otel-demo/recommendation svc:otel-demo/flagd # flag values are cached by the provider: EventStream at start or reconnect plus rare Resolve* (1, 1)
+svc:otel-demo/agent svc:otel-demo/frontend # the load generator asks the LLM agent (task ask_agent) and the agent reads the shop through frontend; not in the slice 0 capture, which has no LLM component spans; 11 pairs in the first 90 s of the step 2 demo, 12.11
 svc:otel-demo/frontend svc:otel-demo/currency # GetSupportedCurrencies is cached by frontend (6, 7): ~3 expected in a 5-minute poll, absent with ~5% probability

@@ -26,6 +26,7 @@ type options struct {
 	required     string
 	optional     string
 	requiredOnly bool
+	red          bool
 }
 
 func main() {
@@ -58,6 +59,7 @@ func parseOptions(args []string) (options, error) {
 	flags.StringVar(&parsed.required, "required", defaultRequired, "required edges")
 	flags.StringVar(&parsed.optional, "optional", defaultOptional, "optional edges")
 	flags.BoolVar(&parsed.requiredOnly, "required-only", false, "check only that every required edge is present")
+	flags.BoolVar(&parsed.red, "red", false, "also check final RED windows and the step 2 accounting in pipeline.stats")
 	if err := flags.Parse(args); err != nil {
 		return options{}, err
 	}
@@ -77,14 +79,19 @@ func check(parsed *options, stdin io.Reader) (verdict, error) {
 		return verdict{}, err
 	}
 	result := expected.Check(shown.edges)
+	finals := redFinals(parsed.red, &expected, &shown)
 	if parsed.requiredOnly {
-		return requiredOnly(&expected, &shown, result), nil
+		built := requiredOnly(&expected, &shown, result)
+		built.red = finals
+		return built, nil
 	}
 	stats, err := lastStats(stdin)
 	if err != nil {
 		return verdict{}, err
 	}
-	return newVerdict(&expected, &shown, result, &stats), nil
+	built := newVerdict(&expected, &shown, result, &stats)
+	built.red = finals.withStats(&stats)
+	return built, nil
 }
 
 func report(stderr io.Writer, err error, code int) int {

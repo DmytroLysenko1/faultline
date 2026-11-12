@@ -175,11 +175,15 @@ kind-load: ## Load faultline:dev into the demo kind cluster
 
 .PHONY: demo-1
 demo-1: ## Step 1 demo: OTel Demo in kind -> faultline -> graph checked against the reference (DEMO_PORT=18080)
-	./hack/demo-1.sh
+	DEMO_STEP=1 ./hack/demo-1.sh
+
+.PHONY: demo-2
+demo-2: ## Step 2 demo: demo-1 plus final RED on required edges and I6/I10/I11 from pipeline.stats (DEMO_PORT=18080)
+	./hack/demo-2.sh
 
 .PHONY: demo-check
-demo-check: ## Re-check tmp/demo/graph.json against the reference and the faultline log
-	go run ./hack/democheck -graph tmp/demo/graph.json < tmp/demo/faultline.log
+demo-check: ## Re-check tmp/demo/graph.json against the reference and the faultline log (DEMO_CHECK_FLAGS=-red for step 2)
+	go run ./hack/democheck -graph tmp/demo/graph.json $(DEMO_CHECK_FLAGS) < tmp/demo/faultline.log
 
 .PHONY: demo-capture
 demo-capture: ## Step 1 slice 0: record OTel Demo traces in kind (CAPTURE_DURATION=600)

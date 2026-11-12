@@ -49,7 +49,7 @@ tmp/bin/faultctl graph export -o json --server http://127.0.0.1:18080 | jq '.edg
 With `grpcurl` (reflection is on), large graphs need a bigger message limit than the default 4 MiB:
 
 ```sh
-grpcurl -plaintext -max-msg-sz 83886080 127.0.0.1:18080 faultline.v1.GraphService/GetGraph
+grpcurl -plaintext -max-msg-sz 201326592 127.0.0.1:18080 faultline.v1.GraphService/GetGraph
 ```
 
 ## When the check fails
@@ -64,6 +64,56 @@ grpcurl -plaintext -max-msg-sz 83886080 127.0.0.1:18080 faultline.v1.GraphServic
 | `no node is in svc:otel-demo/` | the demo runs in another namespace | install OTel Demo into `otel-demo`: the namespace is part of every node id |
 | `I1 … broken` / `I3 … broken` | a span or a call was lost or counted twice | a faultline bug; keep `tmp/demo/faultline.log` |
 | `faultline restarted N times` | the pod restarted during the demo, the in-memory graph was lost | `kubectl … -n faultline describe pod`, often memory |
+
+## Step 2 demo: windows and RED
+
+```sh
+make demo-2
+```
+
+The same steps as `make demo-1`, logged as `demo-2: …`, with two stricter checks (`democheck -red`):
+
+1. The poll in step 5 waits, still for up to 5 minutes, until every required edge also has a **final** window with `requests > 0` and `latency_samples > 0`, and every service that receives a required edge has a final window of its own. With the default 10 s windows and 30 s watermark delay the first finals appear about 40 s after traffic starts.
+2. The full check also reads the last `pipeline.stats` line and checks, from that one line:
+   - I6 — for each engine (`subjects`, `operations`, `overflow`): `offered = on_time + late_accepted + late_dropped + no_watermark`;
+   - I10 — `graph.calls_total + graph.served_total = windows.subjects.offered`;
+   - I11 — `operations.offered + overflow.offered = subjects.offered`, `operations.late_dropped = subjects.late_dropped`, `operations.series ≤ operations.capacity`;
+   - `windows.subjects.offered > 0`, `subjects.late_dropped / offered < 1 %`, `cardinality.services_over_limit = 0`, `cardinality.operations > 0`;
+   - a missing counter fails instead of reading as zero, and sums that would overflow fail too.
+
+   A group missing from the line fails the check instead of skipping it: a step 1 image cannot pass `demo-2`.
+
+A passing run ends with:
+
+```
+15/15 required, 2 optional, 17 edges, I1 ok, I3 skipped
+RED: finals on 15/15 required edges, 12/12 receivers, 11/11 stats checks
+demo-2: demo passed; graph in tmp/demo/graph.json
+```
+
+Look at the RED numbers:
+
+```sh
+tmp/bin/faultctl graph export -o json --server http://127.0.0.1:18080 \
+  | jq '.edges[] | {source_index, target_index, requests: .final.requests, failed: .final.failed_requests, p95: .final.p95}'
+tmp/bin/faultctl graph export -o dot --server http://127.0.0.1:18080 | dot -Tsvg > graph.svg
+```
+
+In DOT an edge reads `calls N, failed M` and under it `R/s err E% p95 D` of its last final window; a line starting with `~` comes from the still-open window. A node reads `served …` the same way. `grpcurl` needs the `-max-msg-sz 201326592` shown above for a graph at the limits (192 MiB send limit).
+
+`make demo-check DEMO_CHECK_FLAGS=-red` re-runs the step 2 check on the saved graph and log.
+
+| Output | What it means | What to look at |
+|---|---|---|
+| `required edge without a final window with latency: A -> B` | the edge exists but no window of it has closed with latency yet | wait longer; the watermark in `pipeline.stats` (`windows.watermark_lag_seconds`) moves? |
+| `receiver without a final window: B` | B received calls but none of its server spans landed in a closed window | `windows.subjects.no_watermark`, `late_dropped` |
+| `I6 … != …`, `I10 … != …`, `I11 … != …` | an event was lost or counted twice between the engines | a faultline bug; keep `tmp/demo/faultline.log` |
+| `subjects.late_dropped/offered >= 1%` | too many events arrived after their window retired | collector batching or clock skew; `windows.subjects.clock_skew_reassigned`, the `windows.late_drop_ratio_high` warning |
+| `cardinality.services_over_limit != 0` | a service has more than 500 operations, new ones go to `__overflow__` | the `windows.cardinality_limit_reached` warning names the services; add a route rule (`FAULTLINE_ROUTE_RULES_FILE`) |
+| `windows.subjects.offered == 0` | the last `pipeline.stats` line counted no events at all | the collector reaches faultline? `ingest.accepted_spans` |
+| `cardinality.operations == 0` | no operation is held: no traffic in the open windows when the line was written, or the spans carry no `http.route`, `url.path` or `rpc.method` | `windows.operations.offered`; the span attributes |
+| `… missing in pipeline.stats` | the log comes from a faultline without step 2 | rebuild the image: `make image kind-load` |
+| required edges of the checkout path (`frontend -> checkout`, `checkout -> email`) missing after Docker Desktop restarted | the demo pods came back from the VM restart and checkout stopped finishing orders (the `email` log shows no new orders) | `kubectl --context kind-faultline-demo -n otel-demo rollout restart deployment` and run the demo again |
 
 ## Clean up
 

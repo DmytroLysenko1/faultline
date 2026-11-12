@@ -36,6 +36,7 @@ type fixture struct {
 	edges    []reference.Edge
 	stats    string
 	optional string
+	required string
 	graph    string
 	extra    []string
 }
@@ -117,7 +118,7 @@ func runFixture(t *testing.T, given *fixture) (outcome, string) {
 	graph := cmpOr(given.graph, renderGraph(t, graphOfEdges(given.edges, callsEach)))
 	args := append([]string{
 		"-graph", writeFile(t, dir, "graph.json", graph),
-		"-required", writeFile(t, dir, "required.txt", required),
+		"-required", writeFile(t, dir, "required.txt", cmpOr(given.required, required)),
 		"-optional", writeFile(t, dir, "optional.txt", cmpOr(given.optional, optional)),
 	}, given.extra...)
 	var stdout, stderr bytes.Buffer

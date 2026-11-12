@@ -28,9 +28,11 @@ var (
 )
 
 type shownGraph struct {
-	revision uint64
-	edges    []reference.Edge
-	calls    uint64
+	revision     uint64
+	edges        []reference.Edge
+	calls        uint64
+	timedFinals  map[reference.Edge]bool
+	servedFinals map[string]bool
 }
 
 type pairing struct {
@@ -44,14 +46,18 @@ type pairing struct {
 }
 
 type graphStats struct {
-	GraphOverflow uint64 `json:"graph_overflow"`
+	GraphOverflow uint64  `json:"graph_overflow"`
+	CallsTotal    *uint64 `json:"calls_total"`
+	ServedTotal   *uint64 `json:"served_total"`
 }
 
 type statsRecord struct {
-	Message  string     `json:"msg"`
-	Revision uint64     `json:"revision"`
-	Pairing  pairing    `json:"pairing"`
-	Graph    graphStats `json:"graph"`
+	Message     string       `json:"msg"`
+	Revision    uint64       `json:"revision"`
+	Pairing     pairing      `json:"pairing"`
+	Graph       graphStats   `json:"graph"`
+	Windows     *windows     `json:"windows"`
+	Cardinality *cardinality `json:"cardinality"`
 }
 
 func readGraph(path string) (shownGraph, error) {
@@ -80,18 +86,31 @@ func readFile(path string) ([]byte, error) {
 
 func graphOf(graph *faultlinev1.Graph) (shownGraph, error) {
 	nodes := graph.GetNodes()
-	shown := shownGraph{revision: graph.GetRevision()}
+	shown := shownGraph{
+		revision:     graph.GetRevision(),
+		timedFinals:  map[reference.Edge]bool{},
+		servedFinals: map[string]bool{},
+	}
+	for _, node := range nodes {
+		shown.servedFinals[node.GetId()] = node.GetFinal().GetRequests() > 0
+	}
 	for index, edge := range graph.GetEdges() {
 		if int(edge.GetSourceIndex()) >= len(nodes) || int(edge.GetTargetIndex()) >= len(nodes) {
 			return shownGraph{}, fmt.Errorf("edge %d: %w", index, errDanglingEdge)
 		}
-		shown.edges = append(shown.edges, reference.Edge{
+		named := reference.Edge{
 			Source: nodes[edge.GetSourceIndex()].GetId(),
 			Target: nodes[edge.GetTargetIndex()].GetId(),
-		})
+		}
+		shown.edges = append(shown.edges, named)
 		shown.calls += edge.GetCalls()
+		shown.timedFinals[named] = timed(edge.GetFinal())
 	}
 	return shown, nil
+}
+
+func timed(final *faultlinev1.WindowStats) bool {
+	return final.GetRequests() > 0 && final.GetLatencySamples() > 0
 }
 
 func lastStats(log io.Reader) (statsRecord, error) {
