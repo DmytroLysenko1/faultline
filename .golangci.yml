@@ -165,6 +165,7 @@ linters:
             - "**/internal/interfaces/otlp/**"
             - "**/internal/infrastructure/memjournal/**"
             - "**/internal/infrastructure/memgraph/**"
+            - "**/internal/infrastructure/natsjs/**"
           deny:
             - pkg: go.opentelemetry.io/otel
               desc: the ingest and processing path is never traced
@@ -172,6 +173,19 @@ linters:
               desc: the ingest and processing path is never traced
             - pkg: connectrpc.com/otelconnect
               desc: the ingest and processing path is never traced
+        natsjs-record-pure:
+          files:
+            - "**/internal/infrastructure/natsjs/record/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/nats-io
+              desc: the record format has no transport — nats.go stays in natsjs and natsjs/journal
+            - pkg: github.com/DmytroLysenko1/faultline/internal/application
+              desc: the record format depends only on domain telemetry types
+            - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology
+              desc: the record format depends only on domain telemetry types
+            - pkg: github.com/DmytroLysenko1/faultline/internal/infrastructure
+              desc: the record format is the leaf of natsjs; adapters import it, never the reverse
         layer-infrastructure:
           files:
             - "**/internal/infrastructure/**"
