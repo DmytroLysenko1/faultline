@@ -45,7 +45,7 @@
 | Пульс | `batch.Heartbeat` | Пишет держатель аренды партиции условной записью (CAS по последней позиции) и только догнав стрим | сигнал простоя NATS |
 | Чекпоинт | объект Object Store `faultline_checkpoints/p<n>/<эпоха>-<позиция>` | Байт-в-байт образ состояния `topology.Builder` партиции + позиция последней применённой записи + `ReceivedAt` + личность стрима + эпоха аренды + версии форматов; пишется раз в 10 s (FR-STR-003) | снимок графа (`Snapshot`) |
 | Указатель чекпоинта | ключ KV `faultline_checkpoints_ptr` / `p<n>` | Имя последнего **полностью загруженного** чекпоинта партиции; меняется CAS по ревизии с проверкой эпохи — атомарная граница «чекпоинт существует» | объект чекпоинта |
-| Фиксация чекпоинта | `checkpointStore.Commit` → удержание журнала | После CAS указателя: журнал партиции может удалить записи с позицией ≤ позиции чекпоинта (ADR-4) | `Release` |
+| Фиксация чекпоинта | `checkpoint.Store` → порт `retention.Commit` фида → удержание журнала | После CAS указателя: журнал партиции может удалить записи с позицией ≤ позиции чекпоинта (ADR-4) | `Release` |
 | Аренда партиции | ключ KV `faultline_leases` / `processor.p<n>` | Право единственного процессора читать партицию, писать её пульсы, чекпоинты и фиксировать удержание; `kv.Create` при старте, CAS-продление 5 s, TTL 15 s | консьюмер NATS |
 | Эпоха | ревизия ключа аренды при `kv.Create` | Монотонный номер держателя аренды (fencing-токен): входит в имя чекпоинта, в CAS указателя и (шаг 4) в версию строк финалов — устаревший держатель не может перезаписать результат нового (D-26) | ревизия окна |
 | Ингестер / процессор | роли `faultline ingester` / `processor` | приём → публикация / держатель аренд партиций: чтение → `Pipeline` → снимок → чекпоинт → `GetGraph` | — |
@@ -77,7 +77,7 @@ NATS JetStream: P стримов FAULTLINE_SPANS_P<n> (Limits или Interest �
                 [3b] KV faultline_ingest_tokens
 
 РОЛЬ processor (на каждую свою партицию; в шаге 3 — одна) ──────────────────────────────────────────────
-аренда processor.p<n> (kv.Create → эпоха) ──► checkpointStore.Latest(p<n>) ──► topology.RestoreBuilder (или пустой)
+аренда processor.p<n> (kv.Create → эпоха) ──► checkpoint.Store.Latest(p<n>) → processing.Restore ──► topology.RestoreBuilder (или пустой)
 natsjs/feed.Feed: чтение с позиции чекпоинта + 1 ── насос: заголовок → кредит → Decode → ReceivedAt → доставка
      обслуживание: аренда, личность стрима, пульс (CAS, только догнав стрим)
 processing.Pipeline ◄── [spanFeed].Receive ── Apply → Fire → Snapshot → Publish → Release (только кредит)
@@ -96,16 +96,16 @@ topology.Builder ──► memgraph ──► connectapi GetGraph
 |---|---|---|
 | `internal/domain/topology` | **+** `Builder.WriteCheckpoint(w)`, `RestoreBuilder(limits, r)`, `ErrCheckpointIncompatible`, `CheckpointVersion` (D-26: новая возможность FR-STR-003, не замена журнала) | как в шаге 2 |
 | `internal/domain/topology/*`, `pkg/stream`, `pkg/sketch` | **+** детерминированная сериализация состояния каждого агрегата (`matcher`, `tombstone`, `graph`, `traffic`, `cardinality`, `stream.Windows`, `sketch.Arena`) — внутренние `encodeTo`/`decodeFrom`, экспортируемые только для `topology` | как в шаге 2 |
-| `internal/application/processing` | **+** порт `checkpointStore`, `Delivery.Position()` (D-26, обещано шагом 1: «порт расширится методом позиции»), `spanFeed.Commit`, каденс чекпоинта в `Cadence` | `topology` |
+| `internal/application/processing` | **+** порты `checkpointSink` (Pipeline) и `checkpointSource` (`Restore`), `CheckpointWriter`, `Delivery.Position()` (D-26, обещано шагом 1: «порт расширится методом позиции»), каденс чекпоинта в `Cadence`, `Restore` | `topology` |
 | `internal/application/ingest` | без изменений | как в шаге 2 |
 | `internal/domain/credential`, `internal/application/ingestauth` (3b) | токены и аутентификация | stdlib / `credential` |
 | `internal/infrastructure/idlerule` | правило простоя, общее для `memjournal` и `natsjs/feed` | `batch` |
 | `internal/infrastructure/natsjs/record` | формат записи v1 (заголовок 32 B), `Encode` (заём буфера), `ReadHeader`, `Decode`, `MsgID`, `PartitionOf` | `domain/telemetry/*`; без `nats.go` |
 | `internal/infrastructure/natsjs` | `Dial` (три соединения), `Topology` (P, R, лимиты), `EnsureTopology` / `VerifyTopology`, `classify` | `nats.go`, `jetstream` |
 | `internal/infrastructure/natsjs/journal` | `Journal` (порт `spanJournal`): разбиение по партициям, `PublishAsync`, бюджет ожидания | `natsjs`, `record`, `ingest` |
-| `internal/infrastructure/natsjs/feed` | `Feed` (порт `spanFeed`): чтение партиции, насос, кредит, `ReceivedAt`, пульс, личность стрима, DLQ; `Commit` → удержание | `natsjs`, `record`, `idlerule`, `processing`, `x/sync/semaphore` |
+| `internal/infrastructure/natsjs/feed` | `Feed` (порт `spanFeed` и порт `retention` хранилища): чтение партиции, насос, кредит, `ReceivedAt`, пульс, личность стрима, DLQ; `Commit` → удержание | `natsjs`, `record`, `idlerule`, `processing`, `x/sync/semaphore` |
 | `internal/infrastructure/natsjs/lease` | аренда партиции и эпоха | `natsjs` |
-| `internal/infrastructure/natsjs/checkpoint` | `Store` (порт `checkpointStore`): spool на диск, загрузка в Object Store, CAS указателя с эпохой, `Latest` | `natsjs`, `processing` |
+| `internal/infrastructure/natsjs/checkpoint` | `Store` (порты `checkpointSink`, `checkpointSource`; свой порт `retention{Commit}`): spool на диск, загрузка в Object Store, CAS указателя с эпохой, `Latest`, проверка личности стрима и диапазона позиции | `natsjs`, `processing` |
 | `internal/infrastructure/natsjs/tokens` (3b) | справочник и администрирование токенов | `natsjs`, `credential` |
 | `internal/interfaces/otlp`, `otlp/otlphttp` (3b) | тап, слоты, OTLP/HTTP | как в шаге 1 + `ingestauth` через порт |
 | `internal/infrastructure/journaltest` | `RunFeedContract`, `RunCheckpointContract` — общие контрактные тесты адаптеров | `processing` |
@@ -304,7 +304,7 @@ OK на `Export` отдаётся **только** после того, как `
 | Пересоздание стрима | проверка личности перед `Purge` | durable исчезает вместе со стримом → ошибка насоса; личность стрима сверяется с чекпоинтом при восстановлении |
 | Что мерить в спайке | — | порядок доставки после `ResetConsumerToSequence` и смены лидера; задержка `AckAll`; аллокации; поведение при `DiscardNew` и отстающей группе; что делает `Interest`, если durable удалён руками |
 
-Решение КТ-0: (б), если спайк не покажет измеримого проигрыша (аллокации > 1,5× (а), переупорядочивание, потеря записи при удалённом durable без ошибки); иначе (а) с записанной причиной. Внешний контракт `Feed` и `checkpointStore` одинаков — тесты (`journaltest`) пишутся до решения.
+Решение КТ-0: (б), если спайк не покажет измеримого проигрыша (аллокации > 1,5× (а), переупорядочивание, потеря записи при удалённом durable без ошибки); иначе (а) с записанной причиной. Внешний контракт `Feed` и `checkpoint.Store` одинаков — тесты (`journaltest`) пишутся до решения.
 
 ### Чекпоинт (FR-STR-003, D-25, D-26)
 
@@ -314,18 +314,18 @@ OK на `Export` отдаётся **только** после того, как `
 
 **Формат.** Детерминированный бинарный поток (тот же стиль, что запись журнала: версия, длины, CRC32C по секциям), секция на агрегат; в домене — `WriteCheckpoint(io.Writer)` / `RestoreBuilder(limits, io.Reader)`; несовместимые лимиты (меньше узлов, рёбер, серий, арены, `max_pending`) — `ErrCheckpointIncompatible`. **Уточнено реализацией 3c, апрув пользователя 13.11:** (1) ёмкости при восстановлении могут **расти** (апгрейд Helm с большими лимитами не требует `CHECKPOINT_RECOVERY=discard`): новые номера серий `stream.Windows` уходят на дно свободного стека, новая половина арены скетчей присоединяется к спискам buddy через слияние; уменьшение любой ёмкости и любое изменение геометрии окон (`Size`, `Delay`, `AllowedLateness`, `SlackWindows`) — `ErrCheckpointIncompatible`; `PairingTTL` и `TombstoneTTL` могут только расти (уменьшение дало бы новым половинкам и tombstones дедлайны раньше уже стоящих в очереди, а истечение смотрит только на голову очереди — ревью pstack), `EarlyFirePeriod` может меняться; `CheckpointMeta.LimitsHash` — информационный (лог, метрика смены лимитов), решение о совместимости принимает только `RestoreBuilder`; (2) чанки ≤ 64 KiB с CRC32C по (тег, длина, данные) — запись потоковая, без копии образа в памяти; порча, обрезка и хвост — `ErrCheckpointCorrupt`; восстановленные моменты времени — в UTC (момент сохраняется, зона и монотонные показания — нет). Декодер проверяет согласованность между секциями (книга субъектов `traffic` ↔ хэндлы графа, окна ↔ горизонт водяного знака, блоки скетчей ↔ свободные блоки арены без перекрытий, бины ↔ таблица отображения, ссылки реестра ↔ открытые серии операций): CRC-валидный, но несогласованный образ — `ErrCheckpointCorrupt`, а не паника после восстановления. **Замер 3c** (M1 Pro): арена 2^24 записей (128 MiB состояния) пишется в файл через `bufio` 1 MiB за 133 ms (≈ 1 ГБ/с состояния, на диск 30 MB — бины кодируются шагом от предыдущего), экстраполяция на 450 MiB ≈ 0,45 s при бюджете паузы 1 s (`BenchmarkWriteCheckpointWorstCase`); демо-состояние: запись 38 µs (9 KB), восстановление 0,34 ms.
 
-**Каденс и пауза конвейера.** Раз в `checkpoint_interval` (10 s, FR-STR-003) **после** успешного `Publish` итерации (состояние согласовано с опубликованным снимком) `Pipeline` вызывает `checkpointStore.Begin(ctx, meta)` → `io.Writer` на spool-файл (`FAULTLINE_CHECKPOINT_DIR`, `emptyDir` пода — корневая ФС только для чтения) → `Builder.WriteCheckpoint` → `Close` → итерации продолжаются. Пауза = время сериализации живого состояния на локальный диск: живое состояние на демо — единицы MiB, худший случай по бюджету — ≈ 450 MiB при ≈ 1 GiB/s записи ≈ 0,5 s (**проба среза 3c**, `BenchmarkWriteCheckpointWorstCase`; бюджет паузы — ≤ 1 s при худшем состоянии, иначе инкрементальный чекпоинт — D-* по результату). Пауза не держит ни памяти (spool — диск), ни подтверждений клиентов (ингестер независим); процессор после паузы догоняет (коэффициент догона ≥ 2× при целевой ёмкости — проверяется сквозным замером).
+**Каденс и пауза конвейера.** Раз в `checkpoint_interval` (10 s, FR-STR-003) **после** успешного `Publish` итерации (состояние согласовано с опубликованным снимком) `Pipeline` вызывает `checkpointSink.Begin(ctx, meta)` → `CheckpointWriter` на spool-файл (`FAULTLINE_CHECKPOINT_DIR`, `emptyDir` пода — корневая ФС только для чтения) → `Builder.WriteCheckpoint` → `Close` → итерации продолжаются. Пауза = время сериализации живого состояния на локальный диск: живое состояние на демо — единицы MiB, худший случай по бюджету — ≈ 450 MiB при ≈ 1 GiB/s записи ≈ 0,5 s (**проба среза 3c**, `BenchmarkWriteCheckpointWorstCase`; бюджет паузы — ≤ 1 s при худшем состоянии, иначе инкрементальный чекпоинт — D-* по результату). Пауза не держит ни памяти (spool — диск), ни подтверждений клиентов (ингестер независим); процессор после паузы догоняет (коэффициент догона ≥ 2× при целевой ёмкости — проверяется сквозным замером).
 
 **Загрузка и фиксация** (фоновая горутина `checkpoint.Store`, владелец spool):
 1. spool-файл → Object Store `faultline_checkpoints`, объект `p<n>/<эпоха>-<позиция>` (чанки 128 KiB, `ObjectStore.Put(ctx, meta, reader)`; R = R стрима);
 2. CAS указателя: `kv.Update("p<n>", имя, ревизия)` с проверкой, что эпоха в указателе ≤ своей (устаревший держатель аренды проигрывает CAS и не может «откатить» чекпоинт нового);
-3. только после CAS — `spanFeed.Commit(позиция)` → удержание журнала (ADR-4: `Purge` ниже позиции + 1 или `AckAll(позиция)`);
+3. только после CAS — `retention.Commit(позиция)` фида → удержание журнала (ADR-4: `Purge` ниже позиции + 1 или `AckAll(позиция)`);
 4. старые объекты чекпоинта удаляются после успешного CAS (хранится последний и предыдущий);
 5. если предыдущая загрузка ещё идёт — новый чекпоинт пропускается (`checkpoint.skipped`), а не копится; возраст последнего зафиксированного — `checkpoint.age_seconds`, self-alert `checkpoint.stale` при > 60 s (NFR-SELF-003 «чекпоинт старше 60 s»).
 
 Порядок «загружен → указатель → удержание» — единственный: обратный удалил бы из журнала записи, не покрытые надёжным чекпоинтом.
 
-**Восстановление при старте процессора:** аренда → эпоха → `checkpointStore.Latest(p<n>)` → проверка: личность стрима совпадает, версии совместимы, лимиты совместимы, позиция ∈ [первая позиция стрима − 1, последняя] → `RestoreBuilder` → `Feed.Open(с позиции + 1, ReceivedAt)` → `Pipeline`. Указателя нет (первый старт) — пустое состояние, чтение с первой позиции стрима. Любая проверка не прошла — **fail-closed**: выход с кодом 1 и Error `checkpoint.restore_failed` с причиной; оператор осознанно запускает с `FAULTLINE_CHECKPOINT_RECOVERY=discard` — тогда пустое состояние с первой оставшейся позиции и Error `checkpoint.discarded` (явная, учтённая потеря состояния, а не молчаливая).
+**Восстановление при старте процессора:** аренда → эпоха → `checkpoint.Store.Latest(p<n>)` → проверка: личность стрима совпадает, версии совместимы, лимиты совместимы, позиция ∈ [первая позиция стрима − 1, последняя] → `RestoreBuilder` → `Feed.Open(с позиции + 1, ReceivedAt)` → `Pipeline`. Указателя нет (первый старт) — пустое состояние, чтение с первой позиции стрима. Любая проверка не прошла — **fail-closed**: выход с кодом 1 и Error `checkpoint.restore_failed` с причиной; оператор осознанно запускает с `FAULTLINE_CHECKPOINT_RECOVERY=discard` — тогда пустое состояние с первой оставшейся позиции и Error `checkpoint.discarded` (явная, учтённая потеря состояния, а не молчаливая).
 
 **Эпоха как fencing-токен (D-26, ревью pocock).** Эпоха (ревизия ключа аренды при `kv.Create`) входит в имя чекпоинта, проверяется CAS указателя и (шаг 4) входит в версию строк финалов: `ReplacingMergeTree(version = (эпоха, ревизия окна))` — финал устаревшего держателя после паузы GC не перезапишет финал нового. Аренда без эпохи (ред. 2) давала «последний победил».
 
@@ -637,9 +637,9 @@ waitCtx := WithTimeout(ctx, min(publish_timeout (2 s), remaining − publish_res
 Инварианты шагов 1–2 действуют. I4 уточняется: при P > 1 «всё или ничего» заменяется «идемпотентным повтором целого»; при P = 1 (шаг 3) — прежнее.
 
 - **I13 — нет OK без durability.** Каждый OK по запросу с валидными спанами ⇒ PubAck (или `Duplicate` — только на закоммиченную запись) **каждой** записи запроса. Запрос без валидных спанов — OK с `partial_success` без записи. Ни один путь (под-дедлайн, отмена, разрыв, буфер переподключения — выключен, скрытый повтор, 10158, частично подтверждённый запрос, `GracefulStop`) не даёт OK раньше. Тесты: `TestNoPathAnswersOKWithoutAPubAck`, `TestTwoOfThreeReplicasDownGivesRetryableErrorNotOK`, `TestEveryAcknowledgedKeyIsInAStreamOrACheckpoint`.
-- **I14 — финалы — функция журнала, в том числе через рестарт.** (а) Два прочтения партиции с одной позиции в новых процессах дают байт-в-байт одинаковые финалы; (б) **восстановление из чекпоинта на позиции k + повтор с k + 1 даёт те же финалы, что непрерывный прогон** (kill-тест `TestKilledProcessorProducesTheSameFinalsAsAnUninterruptedRun`: `SIGKILL` в случайный момент 100 раз, включая момент записи spool и загрузки). Golden шага 2 — тест ядра на синтетических часах.
+- **I14 — финалы — функция журнала, в том числе через рестарт.** (а) Два прочтения партиции с одной позиции в новых процессах дают байт-в-байт одинаковые финалы; (б) **восстановление из чекпоинта на позиции k + повтор с k + 1 даёт те же финалы, что непрерывный прогон** (kill-тест `TestKilledProcessorProducesTheSameFinalsAsAnUninterruptedRun`: `SIGKILL` в случайный момент 100 раз, включая момент записи spool и загрузки). **Сделано в 3c/3c-app:** домен — `topology.TestKilledProcessorProducesTheSameFinalsAsAnUninterruptedRun` (300 сценариев); через `Pipeline` и `Restore` — `test/restart.TestARestartedPipelinePublishesTheSameFinalsAsAnUninterruptedOne` (100 сценариев: убит на случайном `Receive` или посреди записи spool, ранние панели в половине; финалы привязаны к числу выданных записей, а не к позиции из meta); момент загрузки и CAS — в срезе natsjs/checkpoint на настоящем Object Store. Golden шага 2 — тест ядра на синтетических часах.
 - **I15 — нет потери подтверждённого из-за удержания.** Запись удаляется из стрима только после фиксации чекпоинта (CAS указателя) с позицией ≥ её позиции; `MaxAge = 0`, `DiscardNew`; смена личности стрима — стоп без удержания. Тесты: `TestAFullStreamRejectsNewRecordsAndKeepsEveryAcknowledgedOne`, `TestRetentionNeverPassesTheCommittedCheckpoint` (property), `TestAStaleLeaseHolderCannotMoveTheCheckpointPointer`, `TestARecreatedStreamStopsTheFeedWithoutRetention`.
-- **I16 — изоляция типов и честный счёт правок ядра.** Типы NATS — только `natsjs/**`, `cmd/`, тесты NATS (depguard). **Правки ядра из-за замены журнала = 0 строк** (`hack/core-diff-check.sh`). Правки ядра как новые возможности перечислены поимённо: D-26 (чекпоинт домена, `Delivery.Position`, `spanFeed.Commit`, порт `checkpointStore`, каденс), D-10 (3b: `credential`, `ingestauth`), D-12 (строки `selfalert`), D-30 (дефолты `tombstoneTTL`, `max_pending` — `cmd`). Метрика-заместитель, а не цель (ревью pstack): шаги 4, 5, 18 тоже правят порты.
+- **I16 — изоляция типов и честный счёт правок ядра.** Типы NATS — только `natsjs/**`, `cmd/`, тесты NATS (depguard). **Правки ядра из-за замены журнала = 0 строк** (`hack/core-diff-check.sh`). Правки ядра как новые возможности перечислены поимённо: D-26 (чекпоинт домена, `Delivery.Position`, порты `checkpointSink`/`checkpointSource`, `Restore`, каденс), D-10 (3b: `credential`, `ingestauth`), D-12 (строки `selfalert`), D-30 (дефолты `tombstoneTTL`, `max_pending` — `cmd`). Метрика-заместитель, а не цель (ревью pstack): шаги 4, 5, 18 тоже правят порты.
 - **I17 — учёт приёма.** `RPC/запросов, прошедших тап = подтверждено + дубли + пустые + отказано(стрим полон / бюджет ожидания) + отказано(недоступно, по причинам) + отказано(слишком велик) + прервано(ctx) + отказано(декодирование)`; [3b] `проверено тапом = пропущено + отказано(слоты, доля токена, скорость, аутентификация по причинам)`.
 - **I18 — учёт чтения и чекпоинтов.** `прочитано = доставлено пакетов + пульсов + завершено через DLQ + удерживается до стопа`; `доставлено = освобождено + удерживается Pipeline`; `зафиксированная позиция чекпоинта ≤ последняя применённая ≤ последняя прочитанная`; пропущенное пробелом — отдельно.
 
@@ -669,17 +669,24 @@ waitCtx := WithTimeout(ctx, min(publish_timeout (2 s), remaining − publish_res
 | Порт (пакет) | Метод | Форма и контракт |
 |---|---|---|
 | `spanJournal` (ingest, `ingest.go:25`) | `Append(ctx, spans)` | без изменений; `natsjs/journal`: запись на партицию, OK только когда подтверждены все |
-| `spanFeed` (processing, `pipeline.go:18`) | `Receive(ctx, limit, maxWait)` | без изменений; `natsjs/feed` (насос) и `memjournal`; один контрактный тест `journaltest.RunFeedContract` |
-| `spanFeed` | **+ `Commit(ctx, position Position) error`** | удержание журнала до позиции включительно (ADR-4); `memjournal` — no-op; вызывает только `checkpoint.Store` после CAS — Pipeline его не зовёт |
+| `spanFeed` (processing, `pipeline.go:18`) | `Receive(ctx, limit, maxWait)` | без изменений; `natsjs/feed` (насос) и `memjournal`; один контрактный тест `journaltest.RunFeedContract` (срез natsjs/feed) |
+| `retention` (natsjs/checkpoint, **новый**, на стороне хранилища) | `Commit(ctx, through Position) error` | удержание журнала до позиции включительно (ADR-4); реализует `natsjs/feed`; монотонен (старый `Commit` после нового — no-op), безопасен параллельно с `Receive`/`Release`, свой ctx хранилища. **Уточнено 3c-app (ревью трёх ревьюеров):** не в порту Pipeline — I15 «Pipeline не двигает удержание» держит система типов, а не тест; `memjournal` его не реализует (удерживать нечего) |
 | `Delivery` (`processing.go:14`) | `Batch()`, `Bytes()`, `Release()` **+ `Position() Position`** | `Release` — только кредит (смысл шага 1); `Position` — `{Partition uint16; Sequence uint64}`, у `memjournal` — порядковый номер в очереди. Обещано шагом 1: «порт расширится методом позиции» |
-| `checkpointStore` (processing, **новый**) | `Begin(ctx, meta CheckpointMeta) (io.WriteCloser, error)`; `Latest(ctx, partition) (CheckpointMeta, io.ReadCloser, error)` | `Begin` — spool на диск; `Close` передаёт владение `Store`, который загружает, фиксирует CAS и вызывает `Commit`; `ErrCheckpointBusy` — предыдущая загрузка идёт (пропуск); `Latest` — по указателю, `ErrNoCheckpoint` при первом старте |
+| `checkpointSink` (processing, **новый**, Pipeline) | `Begin(ctx, meta *CheckpointMeta) (CheckpointWriter, error)` | `CheckpointWriter{io.Writer; Close() error; Abort() error}` пишет только в локальный spool (Pipeline стоит, пока пишет; загрузки, CAS и `Commit` — в `Store` после `Close`); `Close` и `Abort` завершают writer при любом исходе; meta хранилище не удерживает; `ErrCheckpointBusy` — предыдущая загрузка идёт (пропуск) |
+| `checkpointSource` (processing, **новый**, `Restore`) | `Latest(ctx, partition) (CheckpointMeta, io.ReadCloser, error)` | по указателю; `ErrNoCheckpoint` при первом старте; reader при ошибке не возвращается (`Restore` всё равно закроет, если вернули; данные без reader — `ErrCheckpointCorrupt`) |
 | `Builder` (topology, домен) | **+ `WriteCheckpoint(w io.Writer) error`**, **`RestoreBuilder(limits, r io.Reader) (*Builder, error)`** | детерминированный байт-в-байт образ; `ErrCheckpointIncompatible`; не I/O-порт — пишет в переданный `io.Writer` |
 | `graphPublisher`, `graphReader`, `clock` | как в шаге 2 | без изменений |
 | [3b] `authenticator`, `tokenDirectory`, `clock` | как в ред. 2 (приложение А) | без изменений |
 
-`CheckpointMeta{Partition, Position, ReceivedAt, StreamCreated, Epoch, CheckpointVersion, RecordVersion, LimitsHash, RulesHash}` — значение с публичными полями (правило проекта).
+`CheckpointMeta{Position, ReceivedAt, StreamCreated, Epoch, CheckpointVersion, RecordVersion, LimitsHash, RulesHash}` — значение с публичными полями (правило проекта); партиция — `Position.Partition` (отдельное поле дублировало его, 3c-app). Pipeline заполняет `Position` и `ReceivedAt`, остальное — `Store`.
 
-**Проверка архитектуры.** `hack/core-diff-check.sh <v0.1.2>`: правки существующих файлов `internal/domain`, `internal/application`, `pkg/` — только в списке D-26 (сериализация агрегатов, `Delivery.Position`, `spanFeed.Commit`, `checkpointStore`, каденс), D-12, [3b] D-10; иначе — провал DoD.
+**Каденс чекпоинта (3c-app).** Чекпоинт — после успешного `Publish` итерации, когда с прошлого есть применённые записи и прошёл `CheckpointInterval` (минимум, не обещание; 0 — выключено, > 0 без хранилища — ошибка `NewPipeline`). Сбой периодического чекпоинта учитывается (`CheckpointStats.Failed`, `LastFailure`) и не останавливает обработку; `ErrCheckpointBusy` — `Skipped`. Чекпоинт, прерванный отменой ctx вызывающим, не считается сбоем и останавливает `Run`. При дренаже (cmd закрывает журнал при мягкой остановке) пишется финальный чекпоинт; финальный, потерянный насовсем (не busy, не отмена), возвращается ошибкой из `Run`. `CheckpointStats` считают отданное в spool, а не зафиксированное — фиксацию отчитывает `Store`.
+
+**`Restore(ctx, source, partition, limits, startedAt, options...) (Restored{Builder, Through, ReceivedAt, Found}, error)`** — fail-closed: любая ошибка возвращается, пустой старт — только `ErrNoCheckpoint` (`Through = {partition, 0}`, фид открывается с первой оставшейся записи); чужая партиция — `ErrForeignCheckpoint`; совместимость лимитов и версий решает `RestoreBuilder`. Личность стрима и «позиция ∈ [первая − 1, последняя]» проверяет `Store`/фид (срез natsjs/checkpoint) — `processing` стрима не видит.
+
+**Требование к шагу 4 (ревью pstack 3c-app).** Финалы уходят в `FinalSink` синхронно из `Apply`; буферизованный sink ClickHouse обязан сделать финалы до позиции k долговечными **до** `Close` чекпоинта k (барьер flush в порядке «Publish → Release → flush финалов → Begin»), иначе удержание удалит записи, финалы которых ещё в буфере, и `SIGKILL` потеряет их без возможности пересчёта.
+
+**Проверка архитектуры.** `hack/core-diff-check.sh <v0.1.2>`: правки существующих файлов `internal/domain`, `internal/application`, `pkg/` — только в списке D-26 (сериализация агрегатов, `Delivery.Position`, `checkpointSink`/`checkpointSource`, `Restore`, каденс), D-12, [3b] D-10; иначе — провал DoD.
 
 ## 4. Бюджет дедлайнов
 
@@ -939,7 +946,7 @@ FSM ингестера — как в ред. 2 (приложение А) с за
 | D-22' | Эволюция формата — правило N−1 на уровне релиза, без реестра в KV | рекомендовано |
 | D-23 | **отменён** (хвост повтора) | — |
 | D-25 | Шаг 3 = журнал + чекпоинт («надёжный путь»), шаг 3b = токены, слоты, OTLP/HTTP, mTLS; FR-STR-003 переходит из шага 5 в шаг 3; шаг 5 = FR-TOP-005 + FR-API-003; перенос в `development-plan.md` — последний срез шага 3b | **принято пользователем 12.11** |
-| D-26 | Правки ядра как новая возможность FR-STR-003: детерминированная сериализация агрегатов домена, `Builder.WriteCheckpoint` / `RestoreBuilder`, `Delivery.Position`, `spanFeed.Commit`, порт `checkpointStore`, каденс чекпоинта; эпоха и позиция — в версии финалов шага 4 | **принято пользователем 13.11** (срез 3c в 4 подсреза: 3c-1 кодек + clock + tombstone + matcher, 3c-2 graph + cardinality, 3c-3 sketch + stream, 3c-4 traffic + Builder) |
+| D-26 | Правки ядра как новая возможность FR-STR-003: детерминированная сериализация агрегатов домена, `Builder.WriteCheckpoint` / `RestoreBuilder`, `Delivery.Position`, порты `checkpointSink`/`checkpointSource`, `Restore`, каденс чекпоинта (3c-app: `Commit` — порт `retention` хранилища, не Pipeline); эпоха и позиция — в версии финалов шага 4 | **принято пользователем 13.11** (срез 3c в 4 подсреза: 3c-1 кодек + clock + tombstone + matcher, 3c-2 graph + cardinality, 3c-3 sketch + stream, 3c-4 traffic + Builder) |
 | D-27 | Целевая нагрузка — до 1 млн спанов/с на тенанта через Collector-gateway; развязка слотов декодирования и бюджета ожидания подтверждений (`PublishAsync`) — **гипотеза H7, по E0.4** | цель **принята пользователем 12.11**; механизм по E0 (КТ-0, 13.11): H7 не решена — **синхронная публикация**, записи запроса по партициям — параллельно; асинхронная — повтор в срезе 2 |
 | D-28 | Шаг 11 — назначение P партиций процессорам, слияние частичных агрегатов (id финала с партицией), watermark по партициям и источнику | рекомендовано |
 | D-29 | Логи и метрики — свои семейства стримов с теми же механизмами, не общий стрим со спанами | рекомендовано |
@@ -1001,7 +1008,6 @@ type Delivery interface {
 
 type spanFeed interface {
 	Receive(ctx context.Context, limit int, maxWait time.Duration) ([]Delivery, error)
-	Commit(ctx context.Context, through Position) error
 }
 
 var (
@@ -1010,7 +1016,6 @@ var (
 )
 
 type CheckpointMeta struct {
-	Partition         uint16
 	Position          Position
 	ReceivedAt        time.Time
 	StreamCreated     time.Time
@@ -1021,10 +1026,30 @@ type CheckpointMeta struct {
 	RulesHash         uint32
 }
 
-type checkpointStore interface {
-	Begin(ctx context.Context, meta CheckpointMeta) (io.WriteCloser, error)
+type CheckpointWriter interface {
+	io.Writer
+	Close() error
+	Abort() error
+}
+
+type checkpointSink interface {
+	Begin(ctx context.Context, meta *CheckpointMeta) (CheckpointWriter, error)
+}
+
+type checkpointSource interface {
 	Latest(ctx context.Context, partition uint16) (CheckpointMeta, io.ReadCloser, error)
 }
+
+type CheckpointStats struct {
+	Spooled        uint64
+	Skipped        uint64
+	Failed         uint64
+	SpooledThrough Position
+	LastFailure    error
+}
+
+func Restore(ctx context.Context, source checkpointSource, partition uint16, limits *topology.Limits,
+	startedAt time.Time, options ...topology.Option) (Restored, error)
 
 type Cadence struct {
 	FirePeriod         time.Duration
@@ -1032,7 +1057,7 @@ type Cadence struct {
 	CheckpointInterval time.Duration
 }
 
-func NewPipeline(feed spanFeed, builder *topology.Builder, publisher graphPublisher, checkpoints checkpointStore,
+func NewPipeline(feed spanFeed, builder *topology.Builder, publisher graphPublisher, checkpoints checkpointSink,
 	clock clock, cadence Cadence) (*Pipeline, error)
 
 // internal/domain/topology (D-26)
@@ -1054,7 +1079,7 @@ type Options struct {
 	Logger     *slog.Logger
 }
 
-func NewStore(ctx context.Context, conn *natsjs.Conn, lease *lease.Lease, feed *feed.Feed, options Options) (*Store, error) // порт checkpointStore
+func NewStore(ctx context.Context, conn *natsjs.Conn, lease *lease.Lease, feed *feed.Feed, options Options) (*Store, error) // порты checkpointSink, checkpointSource; feed — его порт retention
 func (s *Store) Close(ctx context.Context) error
 func (s *Store) Stats() Stats // Committed, Skipped, Failed, AgeSeconds, LastBytes, LastUploadSeconds, Epoch
 ```
