@@ -124,10 +124,9 @@ func TestSelfTracingAddsItsQueueOnlyWhenEnabled(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
-			cfg := configWith(func(cfg *Config) {
+			if got := total(contributions(new(configWith(func(cfg *Config) {
 				cfg.SelfTracingEndpoint = tt.Args
-			})
-			if got := total(contributions(&cfg)) - defaultWorstCaseBytes; got != tt.Want {
+			})))) - defaultWorstCaseBytes; got != tt.Want {
 				t.Errorf("self-tracing contribution = %d, want %d", got, tt.Want)
 			}
 		})

@@ -187,6 +187,26 @@ linters:
               desc: the record format depends only on domain telemetry types
             - pkg: github.com/DmytroLysenko1/faultline/internal/infrastructure
               desc: the record format is the leaf of natsjs; adapters import it, never the reverse
+        # I16: NATS types stay behind natsjs; the core and the other adapters never see them.
+        nats-stays-in-natsjs:
+          files:
+            - "**/internal/**"
+            - "**/pkg/**"
+            - "!**/internal/infrastructure/natsjs/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/nats-io
+              desc: NATS types stay in natsjs, cmd and tests (I16)
+        nats-server-is-a-test-harness:
+          files:
+            - "$all"
+            - "!**/internal/infrastructure/natsjs/natsjstest/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/nats-io/nats-server
+              desc: the embedded NATS server runs only inside tests (natsjstest)
+            - pkg: github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/natsjstest
+              desc: the test harness would pull the embedded NATS server into the binary
         layer-infrastructure:
           files:
             - "**/internal/infrastructure/**"
