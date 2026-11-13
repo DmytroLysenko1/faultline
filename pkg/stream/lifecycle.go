@@ -10,18 +10,22 @@ func (w *Windows[K, C]) Begin(mark Mark, anchor time.Time) {
 		w.batch.open = true
 		return
 	}
-	nanos := w.monotonicMark(mark)
-	size := int64(w.cfg.Size)
-	w.batch = batchState{
-		open:      true,
-		known:     true,
-		markNanos: nanos,
-	}
-	w.batch.dropBelow = nanos - int64(w.cfg.AllowedLateness)
-	w.batch.openFrom = floorDiv(nanos, size)
-	w.batch.firstLive = floorDiv(w.batch.dropBelow, size)
+	w.batch = w.batchAt(w.monotonicMark(mark))
+	w.batch.open = true
 	w.batch.anchorID = w.clampToHorizon(w.cfg.windowID(anchor))
 	w.closeWindows()
+}
+
+func (w *Windows[K, C]) batchAt(nanos int64) batchState {
+	size := int64(w.cfg.Size)
+	dropBelow := nanos - int64(w.cfg.AllowedLateness)
+	return batchState{
+		known:     true,
+		markNanos: nanos,
+		dropBelow: dropBelow,
+		openFrom:  floorDiv(nanos, size),
+		firstLive: floorDiv(dropBelow, size),
+	}
 }
 
 func (w *Windows[K, C]) monotonicMark(mark Mark) int64 {
