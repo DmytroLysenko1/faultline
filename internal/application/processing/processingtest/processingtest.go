@@ -39,14 +39,24 @@ const (
 type Delivery struct {
 	batch    batch.Batch
 	bytes    int64
+	position processing.Position
 	released atomic.Int32
 }
 
 func NewDelivery(received batch.Batch) *Delivery {
+	return NewDeliveryAt(received, processing.Position{})
+}
+
+func NewDeliveryAt(received batch.Batch, position processing.Position) *Delivery {
 	return &Delivery{
-		batch: received,
-		bytes: received.Footprint(),
+		batch:    received,
+		bytes:    received.Footprint(),
+		position: position,
 	}
+}
+
+func (d *Delivery) Position() processing.Position {
+	return d.position
 }
 
 func (d *Delivery) Batch() batch.Batch {
@@ -87,13 +97,18 @@ func (f *IterationFeed) Receive(ctx context.Context, _ int, _ time.Duration) ([]
 	return next, nil
 }
 
-func NewBuilder(tb testing.TB) *topology.Builder {
-	tb.Helper()
+func Limits() topology.Limits {
 	limits := topologytest.Limits()
 	limits.PairingTTL, limits.MaxPending = pairingTTL, maxPending
 	limits.TombstoneTTL, limits.MaxTombstones = tombstoneTTL, maxTombstones
 	limits.MaxNodes, limits.MaxEdges = maxNodes, maxEdges
-	builder, err := topology.NewBuilder(&limits, telemetrytest.Epoch())
+	return limits
+}
+
+func NewBuilder(tb testing.TB, options ...topology.Option) *topology.Builder {
+	tb.Helper()
+	limits := Limits()
+	builder, err := topology.NewBuilder(&limits, telemetrytest.Epoch(), options...)
 	if err != nil {
 		tb.Fatalf("NewBuilder: %v", err)
 	}
@@ -170,10 +185,16 @@ func pairsBetween(tb testing.TB, firstTrace uint64, count int, caller, callee st
 
 func TimedPairs(tb testing.TB, firstTrace uint64, count int, end time.Time) batch.Batch {
 	tb.Helper()
+	return TimedCalls(tb, firstTrace, count, Caller, Callee, end)
+}
+
+// TimedCalls are count calls from caller to callee that end at end and arrive at end.
+func TimedCalls(tb testing.TB, firstTrace uint64, count int, caller, callee string, end time.Time) batch.Batch {
+	tb.Helper()
 	interval := eventtime.FromUnixNanos(uint64(end.Add(-callLatency).UnixNano()), uint64(end.UnixNano()))
 	spans := make([]span.Span, 0, spansPerPair*count)
 	for offset := range count {
-		for _, half := range pair(tb, firstTrace+uint64(offset), Caller, Callee) {
+		for _, half := range pair(tb, firstTrace+uint64(offset), caller, callee) {
 			half.Interval = interval
 			spans = append(spans, half)
 		}

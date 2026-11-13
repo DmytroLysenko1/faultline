@@ -11,8 +11,21 @@ var (
 	ErrAlreadyStarted = errors.New("pipeline already started")
 )
 
+type Position struct {
+	Partition uint16
+	Sequence  uint64
+}
+
+func (p Position) Next() Position {
+	return Position{
+		Partition: p.Partition,
+		Sequence:  p.Sequence + 1,
+	}
+}
+
 type Delivery interface {
 	Batch() batch.Batch
 	Bytes() int64
+	Position() Position
 	Release()
 }

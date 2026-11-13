@@ -42,6 +42,7 @@ type Journal struct {
 	queue     chan entry
 	closed    bool
 	held      Stats
+	appended  uint64
 }
 
 func New(limits Limits, source Clock) (*Journal, error) {
@@ -151,6 +152,8 @@ func (j *Journal) roomForHeartbeatLocked() bool {
 }
 
 func (j *Journal) pushLocked(next *entry) {
+	j.appended++
+	next.sequence = j.appended
 	j.queue <- *next
 	j.idle.Record(next.batch)
 	j.held = j.held.with(next)

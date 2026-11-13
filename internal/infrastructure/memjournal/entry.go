@@ -35,8 +35,9 @@ func (s Stats) without(removed *entry) Stats {
 }
 
 type entry struct {
-	batch batch.Batch
-	size  int64
+	batch    batch.Batch
+	size     int64
+	sequence uint64
 }
 
 func heartbeatAt(receivedAt time.Time) entry {

@@ -115,6 +115,12 @@ func (d *delivery) Bytes() int64 {
 	return d.entry.size
 }
 
+func (d *delivery) Position() processing.Position {
+	return processing.Position{
+		Sequence: d.entry.sequence,
+	}
+}
+
 func (d *delivery) Release() {
 	d.release()
 }
