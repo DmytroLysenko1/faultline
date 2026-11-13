@@ -73,12 +73,11 @@ func checkCompatible(limits *Limits, r *checkpoint.Reader) error {
 		return fmt.Errorf("%w: version %d, want %d", ErrCheckpointIncompatible, r.Version(), CheckpointVersion)
 	}
 	r.Begin(sectionLimits)
-	saved := readLimits(r)
 	r.End()
 	if err := r.Err(); err != nil {
 		return err
 	}
-	return limits.accepts(&saved)
+	return limits.accepts(new(readLimits(r)))
 }
 
 func (b *Builder) restore(r *checkpoint.Reader) error {
