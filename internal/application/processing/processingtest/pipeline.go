@@ -55,7 +55,7 @@ func Cadence() processing.Cadence {
 
 func NewPipeline(tb testing.TB, feed Feed, builder *topology.Builder, publisher Publisher, clock Clock) *processing.Pipeline {
 	tb.Helper()
-	pipeline, err := processing.NewPipeline(feed, builder, publisher, clock, Cadence())
+	pipeline, err := processing.NewPipeline(feed, builder, publisher, nil, clock, Cadence())
 	if err != nil {
 		tb.Fatalf("NewPipeline: %v", err)
 	}

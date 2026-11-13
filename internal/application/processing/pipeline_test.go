@@ -229,7 +229,7 @@ func run(ctx context.Context, t *testing.T, args *runArgs) (*scriptedFeed, error
 	if args.store.takes > 0 {
 		args.store.clock = clock
 	}
-	pipeline, err := processing.NewPipeline(feed, processingtest.NewBuilder(t), args.store, clock,
+	pipeline, err := processing.NewPipeline(feed, processingtest.NewBuilder(t), args.store, nil, clock,
 		cadence(cmp.Or(args.maxHeld, roomyHeld)))
 	if err != nil {
 		t.Fatalf("NewPipeline: %v", err)
@@ -256,13 +256,13 @@ func TestNewPipelineRejectsAnInvalidCadence(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
 			_, err := processing.NewPipeline(&scriptedFeed{}, processingtest.NewBuilder(t), &recordingStore{},
-				&fakeClock{}, tt.Args)
+				nil, &fakeClock{}, tt.Args)
 			if !errors.Is(err, tt.WantErr) {
 				t.Fatalf("NewPipeline = %v, want %v", err, tt.WantErr)
 			}
 		})
 	}
-	if _, err := processing.NewPipeline(&scriptedFeed{}, processingtest.NewBuilder(t), &recordingStore{}, nil,
+	if _, err := processing.NewPipeline(&scriptedFeed{}, processingtest.NewBuilder(t), &recordingStore{}, nil, nil,
 		cadence(1)); !errors.Is(err, processing.ErrInvalidCadence) {
 		t.Errorf("NewPipeline with a nil clock = %v, want ErrInvalidCadence", err)
 	}
@@ -668,7 +668,7 @@ func TestTimingsLeaveOutTheWaitAndKeepTheDrainPublish(t *testing.T) {
 	store.afterPublish = func(*topology.Snapshot) {
 		store.takes = drainPublish
 	}
-	pipeline, err := processing.NewPipeline(feed, processingtest.NewBuilder(t), store, clock, cadence(roomyHeld))
+	pipeline, err := processing.NewPipeline(feed, processingtest.NewBuilder(t), store, nil, clock, cadence(roomyHeld))
 	if err != nil {
 		t.Fatalf("NewPipeline: %v", err)
 	}
@@ -739,7 +739,7 @@ func TestEveryIterationTimesOnlyTheWorkItDid(t *testing.T) {
 			iterationOf(batches.callerHalf(t)),
 		},
 	}
-	pipeline, err := processing.NewPipeline(feed, processingtest.NewBuilder(t), &recordingStore{}, clock,
+	pipeline, err := processing.NewPipeline(feed, processingtest.NewBuilder(t), &recordingStore{}, nil, clock,
 		processing.Cadence{FirePeriod: time.Hour, MaxHeldBytes: roomyHeld})
 	if err != nil {
 		t.Fatalf("NewPipeline: %v", err)

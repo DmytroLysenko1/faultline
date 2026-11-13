@@ -6,18 +6,20 @@ import (
 )
 
 type Timings struct {
-	Iteration time.Duration
-	Apply     time.Duration
-	Fire      time.Duration
-	Publish   time.Duration
+	Iteration  time.Duration
+	Apply      time.Duration
+	Fire       time.Duration
+	Publish    time.Duration
+	Checkpoint time.Duration
 }
 
 func (t Timings) widest(other Timings) Timings {
 	return Timings{
-		Iteration: max(t.Iteration, other.Iteration),
-		Apply:     max(t.Apply, other.Apply),
-		Fire:      max(t.Fire, other.Fire),
-		Publish:   max(t.Publish, other.Publish),
+		Iteration:  max(t.Iteration, other.Iteration),
+		Apply:      max(t.Apply, other.Apply),
+		Fire:       max(t.Fire, other.Fire),
+		Publish:    max(t.Publish, other.Publish),
+		Checkpoint: max(t.Checkpoint, other.Checkpoint),
 	}
 }
 

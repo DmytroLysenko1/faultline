@@ -24,21 +24,22 @@ type graphPublisher interface {
 }
 
 type Pipeline struct {
-	feed      spanFeed
-	builder   *topology.Builder
-	publisher graphPublisher
-	clock     clock
-	cadence   Cadence
-	held      []Delivery
-	heldBytes int64
-	nextFire  time.Time
-	started   atomic.Bool
-	measured  Timings
-	timings   timings
+	feed        spanFeed
+	builder     *topology.Builder
+	publisher   graphPublisher
+	clock       clock
+	cadence     Cadence
+	held        []Delivery
+	heldBytes   int64
+	nextFire    time.Time
+	checkpoints checkpointer
+	started     atomic.Bool
+	measured    Timings
+	timings     timings
 }
 
-func NewPipeline(feed spanFeed, builder *topology.Builder, publisher graphPublisher, clock clock,
-	cadence Cadence,
+func NewPipeline(feed spanFeed, builder *topology.Builder, publisher graphPublisher, checkpoints checkpointSink,
+	clock clock, cadence Cadence,
 ) (*Pipeline, error) {
 	if err := cadence.Validate(); err != nil {
 		return nil, err
@@ -46,12 +47,20 @@ func NewPipeline(feed spanFeed, builder *topology.Builder, publisher graphPublis
 	if clock == nil {
 		return nil, fmt.Errorf("%w: nil clock", ErrInvalidCadence)
 	}
+	if cadence.CheckpointInterval > 0 && checkpoints == nil {
+		return nil, fmt.Errorf("%w: checkpoint interval %s without a checkpoint store", ErrInvalidCadence,
+			cadence.CheckpointInterval)
+	}
 	return &Pipeline{
 		feed:      feed,
 		builder:   builder,
 		publisher: publisher,
 		clock:     clock,
 		cadence:   cadence,
+		checkpoints: checkpointer{
+			sink:     checkpoints,
+			interval: cadence.CheckpointInterval,
+		},
 	}, nil
 }
 
@@ -59,7 +68,9 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	if !p.started.CompareAndSwap(false, true) {
 		return ErrAlreadyStarted
 	}
-	p.nextFire = p.clock.Now().Add(p.cadence.FirePeriod)
+	now := p.clock.Now()
+	p.nextFire = now.Add(p.cadence.FirePeriod)
+	p.checkpoints.start(now)
 	for {
 		if err := p.iterate(ctx); err != nil {
 			return p.stop(ctx, err)
@@ -69,6 +80,10 @@ func (p *Pipeline) Run(ctx context.Context) error {
 
 func (p *Pipeline) TakeTimings() Timings {
 	return p.timings.take()
+}
+
+func (p *Pipeline) CheckpointStats() CheckpointStats {
+	return p.checkpoints.counters.read()
 }
 
 func (p *Pipeline) iterate(ctx context.Context) error {
@@ -82,7 +97,20 @@ func (p *Pipeline) iterate(ctx context.Context) error {
 	if !p.due() {
 		return nil
 	}
-	return p.publish(ctx)
+	if err := p.publish(ctx); err != nil {
+		return err
+	}
+	return p.checkpointIfDue(ctx)
+}
+
+func (p *Pipeline) checkpointIfDue(ctx context.Context) error {
+	if !p.checkpoints.due(p.clock.Now()) {
+		return nil
+	}
+	if err := p.checkpoint(ctx); canceledByCaller(ctx, err) {
+		return err
+	}
+	return nil
 }
 
 func (p *Pipeline) recordIteration(started time.Time) {
@@ -106,11 +134,12 @@ func (p *Pipeline) apply(deliveries []Delivery) {
 		p.measured.Apply = max(p.measured.Apply, p.since(started))
 		p.held = append(p.held, delivery)
 		p.heldBytes += delivery.Bytes()
+		p.checkpoints.applied(delivery)
 	}
 }
 
 func (p *Pipeline) due() bool {
-	if now := p.clock.Now(); !now.Before(p.nextFire) || p.nextFire.Sub(now) > p.cadence.FirePeriod {
+	if now := p.clock.Now(); reached(now, p.nextFire, p.cadence.FirePeriod) {
 		p.builder.Fire()
 		p.measured.Fire = p.since(now)
 		p.nextFire = now.Add(p.cadence.FirePeriod)
@@ -134,6 +163,13 @@ func (p *Pipeline) publish(ctx context.Context) error {
 	return nil
 }
 
+func (p *Pipeline) checkpoint(ctx context.Context) error {
+	started := p.clock.Now()
+	err := p.checkpoints.write(ctx, p.builder, started)
+	p.measured.Checkpoint = p.since(started)
+	return err
+}
+
 func (p *Pipeline) stop(ctx context.Context, err error) error {
 	if errors.Is(err, ErrFeedClosed) {
 		return p.drain(ctx)
@@ -146,10 +182,24 @@ func (p *Pipeline) stop(ctx context.Context, err error) error {
 
 func (p *Pipeline) drain(ctx context.Context) error {
 	defer p.recordIteration(p.clock.Now())
-	if err := p.publish(ctx); err != nil {
+	err := p.publish(ctx)
+	if canceledByCaller(ctx, err) {
+		return nil
+	}
+	if err != nil {
 		return fmt.Errorf("drain: %w", err)
 	}
+	if !p.checkpoints.pendingAtStop() {
+		return nil
+	}
+	if err := p.checkpoint(ctx); lostAtStop(ctx, err) {
+		return fmt.Errorf("drain: final checkpoint: %w", err)
+	}
 	return nil
+}
+
+func lostAtStop(ctx context.Context, err error) bool {
+	return err != nil && !errors.Is(err, ErrCheckpointBusy) && !canceledByCaller(ctx, err)
 }
 
 func canceledByCaller(ctx context.Context, err error) bool {

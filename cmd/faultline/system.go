@@ -202,7 +202,7 @@ func provideAPI(
 }
 
 func providePipeline(feed spanFeed, stored storage, cfg *Config) (*processing.Pipeline, error) {
-	pipeline, err := processing.NewPipeline(feed, stored.builder, stored.store, systemClock{}, pipelineCadence(cfg))
+	pipeline, err := processing.NewPipeline(feed, stored.builder, stored.store, nil, systemClock{}, pipelineCadence(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("build pipeline: %w", err)
 	}
