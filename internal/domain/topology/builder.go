@@ -28,6 +28,7 @@ type Limits struct {
 }
 
 type Builder struct {
+	limits    Limits
 	Matcher   *matcher.Matcher
 	Graph     *graph.Graph
 	Traffic   *traffic.Traffic
@@ -47,6 +48,7 @@ func NewBuilder(limits *Limits, startedAt time.Time, options ...Option) (*Builde
 		return nil, fmt.Errorf("%w: %w", ErrInvalidLimits, err)
 	}
 	built := &Builder{
+		limits:  *limits,
 		Matcher: pairing,
 		Graph:   services,
 		published: published{

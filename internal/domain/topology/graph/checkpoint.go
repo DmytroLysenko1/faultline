@@ -96,8 +96,9 @@ func (g *Graph) readEdges(r *checkpoint.Reader, byHandle []*Node) {
 }
 
 func (g *Graph) readEdge(r *checkpoint.Reader, byHandle []*Node) {
-	caller, callee := nodeAt(r, byHandle), nodeAt(r, byHandle)
-	if r.Err() != nil {
+	caller, callerFound := nodeAt(r, byHandle)
+	callee, calleeFound := nodeAt(r, byHandle)
+	if !callerFound || !calleeFound {
 		return
 	}
 	key := edgeKey{
@@ -118,12 +119,12 @@ func (g *Graph) readEdge(r *checkpoint.Reader, byHandle []*Node) {
 	g.nextEdge++
 }
 
-func nodeAt(r *checkpoint.Reader, byHandle []*Node) *Node {
+func nodeAt(r *checkpoint.Reader, byHandle []*Node) (*Node, bool) {
 	index := r.Index(len(byHandle))
 	if r.Err() != nil {
-		return nil
+		return nil, false
 	}
-	return byHandle[index]
+	return byHandle[index], true
 }
 
 func (g *Graph) restoreView() {
