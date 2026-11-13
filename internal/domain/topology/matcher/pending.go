@@ -33,6 +33,11 @@ func (q *pendingQueue) Front() (int, bool) {
 	return q.head, q.head != noSlot
 }
 
+func (q *pendingQueue) Next(slot int) (int, bool) {
+	next := q.slots[slot].next
+	return next, next != noSlot
+}
+
 func (q *pendingQueue) At(slot int) *pendingHalf {
 	return &q.slots[slot].half
 }
