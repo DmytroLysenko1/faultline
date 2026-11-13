@@ -16,6 +16,7 @@ require (
 	connectrpc.com/connect v1.21.1
 	connectrpc.com/grpcreflect v1.3.1
 	github.com/google/go-cmp v0.7.0
+	github.com/nats-io/nats-server/v2 v2.15.3
 	github.com/nats-io/nats.go v1.55.0
 	github.com/samber/lo v1.53.0
 	go.opentelemetry.io/collector/pdata v1.70.0
@@ -35,19 +36,23 @@ require (
 
 require (
 	github.com/aclements/go-moremath v0.0.0-20210112150236-f10218a38794 // indirect
+	github.com/antithesishq/antithesis-sdk-go v0.9.0-default-no-op // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cilium/ebpf v0.22.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/klauspost/compress v1.20.0 // indirect
+	github.com/klauspost/compress v1.20.4 // indirect
+	github.com/minio/highwayhash v1.0.4 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
-	github.com/nats-io/nkeys v0.4.16 // indirect
+	github.com/nats-io/jwt/v2 v2.8.3 // indirect
+	github.com/nats-io/nkeys v0.4.17 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/collector/featuregate v1.70.0 // indirect
@@ -59,9 +64,10 @@ require (
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/perf v0.0.0-20261009192801-be2c69fb417e // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/telemetry v0.0.0-20261010193011-f71dc92da45e // indirect
 	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/time v0.16.0 // indirect
 	golang.org/x/tools v0.52.0 // indirect
 	golang.org/x/vuln v1.9.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260928230214-8a89bd6388cc // indirect

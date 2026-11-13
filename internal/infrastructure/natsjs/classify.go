@@ -57,6 +57,10 @@ func (r Reason) String() string {
 	return reasonNames[r]
 }
 
+func (r Reason) retryable() bool {
+	return r == ReasonNoResponders || r == ReasonDisconnected || r == ReasonTimeout
+}
+
 func (r Reason) sentinel() error {
 	if r == ReasonStreamFull {
 		return ingest.ErrOverloaded

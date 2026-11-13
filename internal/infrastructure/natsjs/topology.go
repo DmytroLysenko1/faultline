@@ -3,6 +3,7 @@ package natsjs
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
@@ -23,6 +24,9 @@ const (
 
 	streamFormat  = "FAULTLINE_SPANS_P%d"
 	subjectFormat = "faultline.spans.p%d"
+
+	metaVersion    = "faultline.config_version"
+	metaPartitions = "faultline.partitions"
 )
 
 type Compression uint8
@@ -90,4 +94,24 @@ func (t Topology) Stream(partition uint16) string {
 
 func (t Topology) Subject(partition uint16) string {
 	return fmt.Sprintf(subjectFormat, partition)
+}
+
+func (t Topology) config(partition uint16) jetstream.StreamConfig {
+	return jetstream.StreamConfig{
+		Name:        t.Stream(partition),
+		Subjects:    []string{t.Subject(partition)},
+		Retention:   jetstream.LimitsPolicy,
+		Discard:     jetstream.DiscardNew,
+		Storage:     jetstream.FileStorage,
+		Replicas:    t.Replicas,
+		MaxAge:      0,
+		MaxMsgSize:  MaxMessageBytes,
+		MaxBytes:    t.MaxBytesPerPartition,
+		Duplicates:  t.DuplicateWindow,
+		Compression: compressions[t.Compression],
+		Metadata: map[string]string{
+			metaVersion:    strconv.Itoa(t.ConfigVersion),
+			metaPartitions: strconv.Itoa(t.Partitions),
+		},
+	}
 }
