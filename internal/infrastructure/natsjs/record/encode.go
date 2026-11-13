@@ -68,7 +68,7 @@ func (e *Encoder) Encode(
 }
 
 func EncodeHeartbeat(tenant string, partition uint16, writtenAt time.Time) ([]byte, error) {
-	if err := validateTenant(tenant); err != nil {
+	if err := ValidateTenant(tenant); err != nil {
 		return nil, err
 	}
 	data := appendHeader(make([]byte, 0, HeaderBytes+len(tenant)), Header{
@@ -84,7 +84,7 @@ func EncodeHeartbeat(tenant string, partition uint16, writtenAt time.Time) ([]by
 }
 
 func checkBatch(tenant string, spans []span.Span) error {
-	if err := validateTenant(tenant); err != nil {
+	if err := ValidateTenant(tenant); err != nil {
 		return err
 	}
 	if len(spans) == 0 {
@@ -224,7 +224,7 @@ func checksum(record []byte) uint32 {
 	return crc32.Update(sum, table, record[offsetCRC+crcBytes:])
 }
 
-func validateTenant(tenant string) error {
+func ValidateTenant(tenant string) error {
 	if !lengthFits(tenant) || !isLabel(tenant) {
 		return fmt.Errorf("%w: %q is not a DNS label of at most %d bytes", ErrInvalidTenant, tenant, MaxTenantBytes)
 	}

@@ -61,7 +61,7 @@ func parseHeader(data []byte) (Header, error) {
 		return Header{}, fmt.Errorf("%w: tenant runs past the record", ErrCorrupt)
 	}
 	tenant := string(data[HeaderBytes:tenantEnd])
-	if err := validateTenant(tenant); err != nil {
+	if err := ValidateTenant(tenant); err != nil {
 		return Header{}, fmt.Errorf("%w: %w", ErrCorrupt, err)
 	}
 	return Header{
