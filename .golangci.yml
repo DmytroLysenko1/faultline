@@ -166,6 +166,7 @@ linters:
             - "**/internal/infrastructure/memjournal/**"
             - "**/internal/infrastructure/memgraph/**"
             - "**/internal/infrastructure/natsjs/**"
+            - "**/internal/infrastructure/idlerule/**"
           deny:
             - pkg: go.opentelemetry.io/otel
               desc: the ingest and processing path is never traced

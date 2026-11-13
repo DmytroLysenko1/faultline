@@ -393,3 +393,285 @@ PASS
 ok  	github.com/DmytroLysenko1/faultline/test/pipeline	13.315s
 PASS
 ok  	github.com/DmytroLysenko1/faultline/test/replay	0.583s
+goos: darwin
+goarch: arm64
+pkg: github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/record
+cpu: Apple M1 Pro
+BenchmarkEncode/spans=1-10         	 3394296	       352.4 ns/op	       123.0 B/span	       352.4 ns/span	     216 B/op	       6 allocs/op
+BenchmarkEncode/spans=1-10         	 3410288	       361.1 ns/op	       123.0 B/span	       361.1 ns/span	     216 B/op	       6 allocs/op
+BenchmarkEncode/spans=1-10         	 3271622	       365.3 ns/op	       123.0 B/span	       365.3 ns/span	     216 B/op	       6 allocs/op
+BenchmarkEncode/spans=1-10         	 3223136	       369.9 ns/op	       123.0 B/span	       369.9 ns/span	     216 B/op	       6 allocs/op
+BenchmarkEncode/spans=1-10         	 3426616	       351.7 ns/op	       123.0 B/span	       351.7 ns/span	     216 B/op	       6 allocs/op
+BenchmarkEncode/spans=1-10         	 3415036	       383.5 ns/op	       123.0 B/span	       383.5 ns/span	     216 B/op	       6 allocs/op
+BenchmarkEncode/spans=1-10         	 3204304	       355.8 ns/op	       123.0 B/span	       355.8 ns/span	     216 B/op	       6 allocs/op
+BenchmarkEncode/spans=1-10         	 3441846	       352.7 ns/op	       123.0 B/span	       352.7 ns/span	     216 B/op	       6 allocs/op
+BenchmarkEncode/spans=1-10         	 3406005	       352.0 ns/op	       123.0 B/span	       352.0 ns/span	     216 B/op	       6 allocs/op
+BenchmarkEncode/spans=1-10         	 3415801	       352.5 ns/op	       123.0 B/span	       352.5 ns/span	     216 B/op	       6 allocs/op
+BenchmarkEncode/spans=64-10        	  140227	      8521 ns/op	        86.56 B/span	       133.1 ns/span	     216 B/op	       6 allocs/op
+BenchmarkEncode/spans=64-10        	  143341	      8341 ns/op	        86.56 B/span	       130.3 ns/span	     216 B/op	       6 allocs/op
+BenchmarkEncode/spans=64-10        	  143221	      8300 ns/op	        86.56 B/span	       129.7 ns/span	     216 B/op	       6 allocs/op
+BenchmarkEncode/spans=64-10        	  145059	      8287 ns/op	        86.56 B/span	       129.5 ns/span	     216 B/op	       6 allocs/op
+BenchmarkEncode/spans=64-10        	  145772	      8360 ns/op	        86.56 B/span	       130.6 ns/span	     216 B/op	       6 allocs/op
+BenchmarkEncode/spans=64-10        	  140479	      8493 ns/op	        86.56 B/span	       132.7 ns/span	     216 B/op	       6 allocs/op
+BenchmarkEncode/spans=64-10        	  141682	      8366 ns/op	        86.56 B/span	       130.7 ns/span	     216 B/op	       6 allocs/op
+BenchmarkEncode/spans=64-10        	  144391	      8368 ns/op	        86.56 B/span	       130.8 ns/span	     216 B/op	       6 allocs/op
+BenchmarkEncode/spans=64-10        	  144066	      8436 ns/op	        86.56 B/span	       131.8 ns/span	     216 B/op	       6 allocs/op
+BenchmarkEncode/spans=64-10        	  144031	      8451 ns/op	        86.56 B/span	       132.0 ns/span	     216 B/op	       6 allocs/op
+BenchmarkEncode/spans=512-10       	   18805	     63698 ns/op	        82.47 B/span	       124.4 ns/span	     226 B/op	       6 allocs/op
+BenchmarkEncode/spans=512-10       	   18844	     63802 ns/op	        82.47 B/span	       124.6 ns/span	     226 B/op	       6 allocs/op
+BenchmarkEncode/spans=512-10       	   18879	     63925 ns/op	        82.47 B/span	       124.9 ns/span	     226 B/op	       6 allocs/op
+BenchmarkEncode/spans=512-10       	   18825	     64131 ns/op	        82.47 B/span	       125.3 ns/span	     226 B/op	       6 allocs/op
+BenchmarkEncode/spans=512-10       	   18387	     65909 ns/op	        82.47 B/span	       128.7 ns/span	     226 B/op	       6 allocs/op
+BenchmarkEncode/spans=512-10       	   18688	     64035 ns/op	        82.47 B/span	       125.1 ns/span	     226 B/op	       6 allocs/op
+BenchmarkEncode/spans=512-10       	   18784	     64076 ns/op	        82.47 B/span	       125.1 ns/span	     226 B/op	       6 allocs/op
+BenchmarkEncode/spans=512-10       	   18675	     64227 ns/op	        82.47 B/span	       125.4 ns/span	     226 B/op	       6 allocs/op
+BenchmarkEncode/spans=512-10       	   18072	     65804 ns/op	        82.47 B/span	       128.5 ns/span	     226 B/op	       6 allocs/op
+BenchmarkEncode/spans=512-10       	   18212	     65246 ns/op	        82.47 B/span	       127.4 ns/span	     226 B/op	       6 allocs/op
+BenchmarkEncode/spans=2048-10      	    4910	    241009 ns/op	        78.97 B/span	       117.7 ns/span	     361 B/op	       6 allocs/op
+BenchmarkEncode/spans=2048-10      	    4998	    241137 ns/op	        78.97 B/span	       117.7 ns/span	     358 B/op	       6 allocs/op
+BenchmarkEncode/spans=2048-10      	    4906	    243115 ns/op	        78.97 B/span	       118.7 ns/span	     361 B/op	       6 allocs/op
+BenchmarkEncode/spans=2048-10      	    4995	    240695 ns/op	        78.97 B/span	       117.5 ns/span	     358 B/op	       6 allocs/op
+BenchmarkEncode/spans=2048-10      	    4993	    240505 ns/op	        78.97 B/span	       117.4 ns/span	     358 B/op	       6 allocs/op
+BenchmarkEncode/spans=2048-10      	    5001	    241262 ns/op	        78.97 B/span	       117.8 ns/span	     358 B/op	       6 allocs/op
+BenchmarkEncode/spans=2048-10      	    4971	    240196 ns/op	        78.97 B/span	       117.3 ns/span	     359 B/op	       6 allocs/op
+BenchmarkEncode/spans=2048-10      	    4974	    237525 ns/op	        78.97 B/span	       116.0 ns/span	     359 B/op	       6 allocs/op
+BenchmarkEncode/spans=2048-10      	    5005	    238343 ns/op	        78.97 B/span	       116.4 ns/span	     358 B/op	       6 allocs/op
+BenchmarkEncode/spans=2048-10      	    4932	    238722 ns/op	        78.97 B/span	       116.6 ns/span	     360 B/op	       6 allocs/op
+BenchmarkDecode/spans=1-10         	 4721025	       260.6 ns/op	       260.6 ns/span	     200 B/op	       5 allocs/op
+BenchmarkDecode/spans=1-10         	 4747261	       251.4 ns/op	       251.4 ns/span	     200 B/op	       5 allocs/op
+BenchmarkDecode/spans=1-10         	 4748935	       252.6 ns/op	       252.6 ns/span	     200 B/op	       5 allocs/op
+BenchmarkDecode/spans=1-10         	 4746670	       252.6 ns/op	       252.6 ns/span	     200 B/op	       5 allocs/op
+BenchmarkDecode/spans=1-10         	 4718376	       263.7 ns/op	       263.7 ns/span	     200 B/op	       5 allocs/op
+BenchmarkDecode/spans=1-10         	 4788154	       248.3 ns/op	       248.3 ns/span	     200 B/op	       5 allocs/op
+BenchmarkDecode/spans=1-10         	 4767310	       249.1 ns/op	       249.1 ns/span	     200 B/op	       5 allocs/op
+BenchmarkDecode/spans=1-10         	 4809166	       247.8 ns/op	       247.8 ns/span	     200 B/op	       5 allocs/op
+BenchmarkDecode/spans=1-10         	 4860951	       249.5 ns/op	       249.5 ns/span	     200 B/op	       5 allocs/op
+BenchmarkDecode/spans=1-10         	 4660660	       255.8 ns/op	       255.8 ns/span	     200 B/op	       5 allocs/op
+BenchmarkDecode/spans=64-10        	   86202	     14006 ns/op	       218.8 ns/span	   19728 B/op	     162 allocs/op
+BenchmarkDecode/spans=64-10        	   89499	     13720 ns/op	       214.4 ns/span	   19728 B/op	     162 allocs/op
+BenchmarkDecode/spans=64-10        	   82699	     14185 ns/op	       221.6 ns/span	   19728 B/op	     162 allocs/op
+BenchmarkDecode/spans=64-10        	   87280	     13506 ns/op	       211.0 ns/span	   19728 B/op	     162 allocs/op
+BenchmarkDecode/spans=64-10        	   91090	     13425 ns/op	       209.8 ns/span	   19728 B/op	     162 allocs/op
+BenchmarkDecode/spans=64-10        	   88525	     13395 ns/op	       209.3 ns/span	   19728 B/op	     162 allocs/op
+BenchmarkDecode/spans=64-10        	   89625	     13452 ns/op	       210.2 ns/span	   19728 B/op	     162 allocs/op
+BenchmarkDecode/spans=64-10        	   87949	     13775 ns/op	       215.2 ns/span	   19728 B/op	     162 allocs/op
+BenchmarkDecode/spans=64-10        	   87252	     13641 ns/op	       213.1 ns/span	   19728 B/op	     162 allocs/op
+BenchmarkDecode/spans=64-10        	   88606	     13594 ns/op	       212.4 ns/span	   19728 B/op	     162 allocs/op
+BenchmarkDecode/spans=512-10       	   12796	     94040 ns/op	       183.7 ns/span	  114152 B/op	     879 allocs/op
+BenchmarkDecode/spans=512-10       	   12333	     96613 ns/op	       188.7 ns/span	  114152 B/op	     879 allocs/op
+BenchmarkDecode/spans=512-10       	   12976	     92543 ns/op	       180.7 ns/span	  114152 B/op	     879 allocs/op
+BenchmarkDecode/spans=512-10       	   12894	     93193 ns/op	       182.0 ns/span	  114152 B/op	     879 allocs/op
+BenchmarkDecode/spans=512-10       	   12895	     92881 ns/op	       181.4 ns/span	  114152 B/op	     879 allocs/op
+BenchmarkDecode/spans=512-10       	   12691	     95509 ns/op	       186.5 ns/span	  114152 B/op	     879 allocs/op
+BenchmarkDecode/spans=512-10       	   12632	     94916 ns/op	       185.4 ns/span	  114152 B/op	     879 allocs/op
+BenchmarkDecode/spans=512-10       	   12703	     94328 ns/op	       184.2 ns/span	  114152 B/op	     879 allocs/op
+BenchmarkDecode/spans=512-10       	   12796	     93987 ns/op	       183.6 ns/span	  114152 B/op	     879 allocs/op
+BenchmarkDecode/spans=512-10       	   12609	     95270 ns/op	       186.1 ns/span	  114152 B/op	     879 allocs/op
+BenchmarkDecode/spans=2048-10      	    3594	    334232 ns/op	       163.2 ns/span	  440770 B/op	    2573 allocs/op
+BenchmarkDecode/spans=2048-10      	    3614	    346990 ns/op	       169.4 ns/span	  440770 B/op	    2573 allocs/op
+BenchmarkDecode/spans=2048-10      	    3632	    328399 ns/op	       160.4 ns/span	  440770 B/op	    2573 allocs/op
+BenchmarkDecode/spans=2048-10      	    3668	    334412 ns/op	       163.3 ns/span	  440770 B/op	    2573 allocs/op
+BenchmarkDecode/spans=2048-10      	    3456	    341976 ns/op	       167.0 ns/span	  440770 B/op	    2573 allocs/op
+BenchmarkDecode/spans=2048-10      	    3646	    334090 ns/op	       163.1 ns/span	  440770 B/op	    2573 allocs/op
+BenchmarkDecode/spans=2048-10      	    3681	    337783 ns/op	       164.9 ns/span	  440770 B/op	    2573 allocs/op
+BenchmarkDecode/spans=2048-10      	    3640	    330094 ns/op	       161.2 ns/span	  440770 B/op	    2573 allocs/op
+BenchmarkDecode/spans=2048-10      	    3690	    343406 ns/op	       167.7 ns/span	  440770 B/op	    2573 allocs/op
+BenchmarkDecode/spans=2048-10      	    3488	    332337 ns/op	       162.3 ns/span	  440769 B/op	    2573 allocs/op
+BenchmarkReadHeader-10             	  236284	      5086 ns/op	      16 B/op	       2 allocs/op
+BenchmarkReadHeader-10             	  236418	      5168 ns/op	      16 B/op	       2 allocs/op
+BenchmarkReadHeader-10             	  230590	      5164 ns/op	      16 B/op	       2 allocs/op
+BenchmarkReadHeader-10             	  233323	      5086 ns/op	      16 B/op	       2 allocs/op
+BenchmarkReadHeader-10             	  236379	      5063 ns/op	      16 B/op	       2 allocs/op
+BenchmarkReadHeader-10             	  237849	      5298 ns/op	      16 B/op	       2 allocs/op
+BenchmarkReadHeader-10             	  229598	      5103 ns/op	      16 B/op	       2 allocs/op
+BenchmarkReadHeader-10             	  237744	      5067 ns/op	      16 B/op	       2 allocs/op
+BenchmarkReadHeader-10             	  239322	      5054 ns/op	      16 B/op	       2 allocs/op
+BenchmarkReadHeader-10             	  238836	      5037 ns/op	      16 B/op	       2 allocs/op
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/record	108.732s
+goos: darwin
+goarch: arm64
+pkg: github.com/DmytroLysenko1/faultline/internal/interfaces/otlp
+cpu: Apple M1 Pro
+BenchmarkExport/spans=16              	    4072	    283305 ns/op	     17707 ns/span	   94193 B/op	    1559 allocs/op
+BenchmarkExport/spans=16              	    4226	    280540 ns/op	     17534 ns/span	   83234 B/op	    1559 allocs/op
+BenchmarkExport/spans=16              	    4270	    282516 ns/op	     17657 ns/span	   83228 B/op	    1559 allocs/op
+BenchmarkExport/spans=16              	    4360	    282375 ns/op	     17648 ns/span	   83217 B/op	    1559 allocs/op
+BenchmarkExport/spans=16              	    4320	    291527 ns/op	     18220 ns/span	   83219 B/op	    1559 allocs/op
+BenchmarkExport/spans=16              	    4360	    275545 ns/op	     17222 ns/span	   83214 B/op	    1559 allocs/op
+BenchmarkExport/spans=16              	    4275	    274650 ns/op	     17166 ns/span	   83220 B/op	    1559 allocs/op
+BenchmarkExport/spans=16              	    4123	    282668 ns/op	     17667 ns/span	   83235 B/op	    1559 allocs/op
+BenchmarkExport/spans=16              	    4195	    287290 ns/op	     17956 ns/span	   83226 B/op	    1559 allocs/op
+BenchmarkExport/spans=16              	    4076	    283626 ns/op	     17727 ns/span	   83239 B/op	    1559 allocs/op
+BenchmarkExport/spans=16-2            	    4122	    297066 ns/op	     18567 ns/span	   88003 B/op	    1558 allocs/op
+BenchmarkExport/spans=16-2            	    4275	    275178 ns/op	     17199 ns/span	   86659 B/op	    1558 allocs/op
+BenchmarkExport/spans=16-2            	    4358	    275908 ns/op	     17244 ns/span	   86792 B/op	    1558 allocs/op
+BenchmarkExport/spans=16-2            	    4442	    266631 ns/op	     16664 ns/span	   89631 B/op	    1558 allocs/op
+BenchmarkExport/spans=16-2            	    4444	    269385 ns/op	     16837 ns/span	   87859 B/op	    1558 allocs/op
+BenchmarkExport/spans=16-2            	    4190	    272917 ns/op	     17057 ns/span	   87201 B/op	    1558 allocs/op
+BenchmarkExport/spans=16-2            	    4095	    276273 ns/op	     17267 ns/span	   88383 B/op	    1558 allocs/op
+BenchmarkExport/spans=16-2            	    4219	    280266 ns/op	     17517 ns/span	   86824 B/op	    1558 allocs/op
+BenchmarkExport/spans=16-2            	    4276	    277156 ns/op	     17322 ns/span	   87103 B/op	    1558 allocs/op
+BenchmarkExport/spans=16-2            	    3304	    306098 ns/op	     19131 ns/span	   84949 B/op	    1558 allocs/op
+BenchmarkExport/spans=128             	     823	   1463679 ns/op	     11435 ns/span	  535386 B/op	    8595 allocs/op
+BenchmarkExport/spans=128             	     798	   1573890 ns/op	     12296 ns/span	  460117 B/op	    8594 allocs/op
+BenchmarkExport/spans=128             	     765	   1510037 ns/op	     11797 ns/span	  460302 B/op	    8594 allocs/op
+BenchmarkExport/spans=128             	     801	   1505370 ns/op	     11761 ns/span	  460103 B/op	    8594 allocs/op
+BenchmarkExport/spans=128             	     769	   1561187 ns/op	     12197 ns/span	  460280 B/op	    8594 allocs/op
+BenchmarkExport/spans=128             	     776	   1482162 ns/op	     11579 ns/span	  460237 B/op	    8594 allocs/op
+BenchmarkExport/spans=128             	     831	   1481212 ns/op	     11572 ns/span	  459945 B/op	    8594 allocs/op
+BenchmarkExport/spans=128             	     826	   1413522 ns/op	     11043 ns/span	  459966 B/op	    8594 allocs/op
+BenchmarkExport/spans=128             	     861	   1393276 ns/op	     10885 ns/span	  459792 B/op	    8594 allocs/op
+BenchmarkExport/spans=128             	     889	   1370510 ns/op	     10707 ns/span	  459670 B/op	    8594 allocs/op
+BenchmarkExport/spans=128-2           	     860	   1483761 ns/op	     11592 ns/span	  516531 B/op	    8594 allocs/op
+BenchmarkExport/spans=128-2           	     807	   1376290 ns/op	     10752 ns/span	  528657 B/op	    8594 allocs/op
+BenchmarkExport/spans=128-2           	     862	   1372260 ns/op	     10721 ns/span	  537471 B/op	    8595 allocs/op
+BenchmarkExport/spans=128-2           	     826	   1412126 ns/op	     11032 ns/span	  545535 B/op	    8595 allocs/op
+BenchmarkExport/spans=128-2           	     846	   1409690 ns/op	     11013 ns/span	  529924 B/op	    8594 allocs/op
+BenchmarkExport/spans=128-2           	     846	   1421541 ns/op	     11106 ns/span	  523268 B/op	    8594 allocs/op
+BenchmarkExport/spans=128-2           	     847	   1499238 ns/op	     11713 ns/span	  522251 B/op	    8594 allocs/op
+BenchmarkExport/spans=128-2           	     700	   1503086 ns/op	     11743 ns/span	  523546 B/op	    8594 allocs/op
+BenchmarkExport/spans=128-2           	     854	   1399372 ns/op	     10933 ns/span	  532593 B/op	    8594 allocs/op
+BenchmarkExport/spans=128-2           	     871	   1377340 ns/op	     10760 ns/span	  543668 B/op	    8595 allocs/op
+BenchmarkExport/spans=512             	     237	   5088916 ns/op	      9939 ns/span	 1857792 B/op	   30827 allocs/op
+BenchmarkExport/spans=512             	     232	   5224178 ns/op	     10203 ns/span	 1626483 B/op	   30822 allocs/op
+BenchmarkExport/spans=512             	     231	   5487793 ns/op	     10718 ns/span	 1626533 B/op	   30822 allocs/op
+BenchmarkExport/spans=512             	     208	   5970239 ns/op	     11661 ns/span	 1628380 B/op	   30823 allocs/op
+BenchmarkExport/spans=512             	     217	   5632311 ns/op	     11001 ns/span	 1627639 B/op	   30823 allocs/op
+BenchmarkExport/spans=512             	     223	   5499488 ns/op	     10741 ns/span	 1627173 B/op	   30823 allocs/op
+BenchmarkExport/spans=512             	     222	   5793722 ns/op	     11316 ns/span	 1627213 B/op	   30822 allocs/op
+BenchmarkExport/spans=512             	     217	   5501583 ns/op	     10745 ns/span	 1627624 B/op	   30823 allocs/op
+BenchmarkExport/spans=512             	     231	   5430571 ns/op	     10607 ns/span	 1626560 B/op	   30822 allocs/op
+BenchmarkExport/spans=512             	     228	   5313560 ns/op	     10378 ns/span	 1626772 B/op	   30822 allocs/op
+BenchmarkExport/spans=512-2           	     230	   5200055 ns/op	     10156 ns/span	 1793073 B/op	   30826 allocs/op
+BenchmarkExport/spans=512-2           	     229	   5219949 ns/op	     10195 ns/span	 1816841 B/op	   30825 allocs/op
+BenchmarkExport/spans=512-2           	     231	   5190169 ns/op	     10137 ns/span	 1833316 B/op	   30826 allocs/op
+BenchmarkExport/spans=512-2           	     230	   5134644 ns/op	     10029 ns/span	 1791902 B/op	   30826 allocs/op
+BenchmarkExport/spans=512-2           	     236	   5201036 ns/op	     10158 ns/span	 1809901 B/op	   30826 allocs/op
+BenchmarkExport/spans=512-2           	     223	   5334174 ns/op	     10418 ns/span	 1788097 B/op	   30825 allocs/op
+BenchmarkExport/spans=512-2           	     235	   5077717 ns/op	      9917 ns/span	 1821756 B/op	   30826 allocs/op
+BenchmarkExport/spans=512-2           	     236	   5159180 ns/op	     10077 ns/span	 1846693 B/op	   30827 allocs/op
+BenchmarkExport/spans=512-2           	     231	   5203929 ns/op	     10164 ns/span	 1801029 B/op	   30825 allocs/op
+BenchmarkExport/spans=512-2           	     230	   5252291 ns/op	     10258 ns/span	 1852316 B/op	   30826 allocs/op
+BenchmarkExport/spans=2048            	      60	  19778492 ns/op	      9657 ns/span	 7382578 B/op	  120751 allocs/op
+BenchmarkExport/spans=2048            	      63	  20210034 ns/op	      9868 ns/span	 6414052 B/op	  120751 allocs/op
+BenchmarkExport/spans=2048            	      61	  19978234 ns/op	      9755 ns/span	 6420479 B/op	  120749 allocs/op
+BenchmarkExport/spans=2048            	      64	  19973320 ns/op	      9753 ns/span	 6411240 B/op	  120751 allocs/op
+BenchmarkExport/spans=2048            	      63	  20734002 ns/op	     10124 ns/span	 6415665 B/op	  120749 allocs/op
+BenchmarkExport/spans=2048            	      61	  22212805 ns/op	     10846 ns/span	 6419590 B/op	  120752 allocs/op
+BenchmarkExport/spans=2048            	      62	  20410294 ns/op	      9966 ns/span	 6416082 B/op	  120751 allocs/op
+BenchmarkExport/spans=2048            	      60	  20668517 ns/op	     10092 ns/span	 6420504 B/op	  120751 allocs/op
+BenchmarkExport/spans=2048            	      62	  20863520 ns/op	     10187 ns/span	 6416008 B/op	  120751 allocs/op
+BenchmarkExport/spans=2048            	      61	  20006135 ns/op	      9769 ns/span	 6420210 B/op	  120748 allocs/op
+BenchmarkExport/spans=2048-2          	      62	  19019810 ns/op	      9287 ns/span	 6997038 B/op	  120751 allocs/op
+BenchmarkExport/spans=2048-2          	      64	  19917172 ns/op	      9725 ns/span	 7162013 B/op	  120747 allocs/op
+BenchmarkExport/spans=2048-2          	      61	  20172597 ns/op	      9850 ns/span	 7127896 B/op	  120751 allocs/op
+BenchmarkExport/spans=2048-2          	      61	  19599694 ns/op	      9570 ns/span	 7115853 B/op	  120748 allocs/op
+BenchmarkExport/spans=2048-2          	      62	  19479475 ns/op	      9511 ns/span	 6870421 B/op	  120749 allocs/op
+BenchmarkExport/spans=2048-2          	      61	  19578428 ns/op	      9560 ns/span	 7199906 B/op	  120751 allocs/op
+BenchmarkExport/spans=2048-2          	      62	  19492153 ns/op	      9518 ns/span	 6915165 B/op	  120751 allocs/op
+BenchmarkExport/spans=2048-2          	      58	  19906440 ns/op	      9720 ns/span	 7385706 B/op	  120753 allocs/op
+BenchmarkExport/spans=2048-2          	      58	  19270653 ns/op	      9409 ns/span	 7290603 B/op	  120751 allocs/op
+BenchmarkExport/spans=2048-2          	      62	  19012210 ns/op	      9283 ns/span	 7074947 B/op	  120751 allocs/op
+BenchmarkExportServerSide/spans=16    	   10000	    117206 ns/op	       245.8 gzip-B/span	      7325 ns/span	      1030 wire-B/span	   66210 B/op	    1340 allocs/op
+BenchmarkExportServerSide/spans=16    	    8769	    126490 ns/op	       245.8 gzip-B/span	      7906 ns/span	      1030 wire-B/span	   66212 B/op	    1340 allocs/op
+BenchmarkExportServerSide/spans=16    	    9097	    134526 ns/op	       245.8 gzip-B/span	      8408 ns/span	      1030 wire-B/span	   66211 B/op	    1340 allocs/op
+BenchmarkExportServerSide/spans=16    	    8992	    133452 ns/op	       245.8 gzip-B/span	      8341 ns/span	      1030 wire-B/span	   66211 B/op	    1340 allocs/op
+BenchmarkExportServerSide/spans=16    	    7984	    141087 ns/op	       245.8 gzip-B/span	      8818 ns/span	      1030 wire-B/span	   66213 B/op	    1340 allocs/op
+BenchmarkExportServerSide/spans=16    	    7970	    132960 ns/op	       245.8 gzip-B/span	      8310 ns/span	      1030 wire-B/span	   66213 B/op	    1340 allocs/op
+BenchmarkExportServerSide/spans=16    	    8679	    139215 ns/op	       245.8 gzip-B/span	      8701 ns/span	      1030 wire-B/span	   66212 B/op	    1340 allocs/op
+BenchmarkExportServerSide/spans=16    	    9505	    136496 ns/op	       245.8 gzip-B/span	      8531 ns/span	      1030 wire-B/span	   66211 B/op	    1340 allocs/op
+BenchmarkExportServerSide/spans=16    	    9033	    138847 ns/op	       245.8 gzip-B/span	      8678 ns/span	      1030 wire-B/span	   66211 B/op	    1340 allocs/op
+BenchmarkExportServerSide/spans=16    	    8167	    131692 ns/op	       245.8 gzip-B/span	      8231 ns/span	      1030 wire-B/span	   66213 B/op	    1340 allocs/op
+BenchmarkExportServerSide/spans=16-2  	    9273	    119915 ns/op	       245.8 gzip-B/span	      7495 ns/span	      1030 wire-B/span	   66211 B/op	    1340 allocs/op
+BenchmarkExportServerSide/spans=16-2  	    9804	    119388 ns/op	       245.8 gzip-B/span	      7462 ns/span	      1030 wire-B/span	   66211 B/op	    1340 allocs/op
+BenchmarkExportServerSide/spans=16-2  	    9628	    119634 ns/op	       245.8 gzip-B/span	      7477 ns/span	      1030 wire-B/span	   66211 B/op	    1340 allocs/op
+BenchmarkExportServerSide/spans=16-2  	    9429	    120199 ns/op	       245.8 gzip-B/span	      7512 ns/span	      1030 wire-B/span	   66211 B/op	    1340 allocs/op
+BenchmarkExportServerSide/spans=16-2  	    9978	    120611 ns/op	       245.8 gzip-B/span	      7538 ns/span	      1030 wire-B/span	   66210 B/op	    1340 allocs/op
+BenchmarkExportServerSide/spans=16-2  	   10000	    117439 ns/op	       245.8 gzip-B/span	      7340 ns/span	      1030 wire-B/span	   66210 B/op	    1340 allocs/op
+BenchmarkExportServerSide/spans=16-2  	   10000	    117033 ns/op	       245.8 gzip-B/span	      7315 ns/span	      1030 wire-B/span	   66210 B/op	    1340 allocs/op
+BenchmarkExportServerSide/spans=16-2  	    9916	    117199 ns/op	       245.8 gzip-B/span	      7325 ns/span	      1030 wire-B/span	   66210 B/op	    1340 allocs/op
+BenchmarkExportServerSide/spans=16-2  	    9453	    124187 ns/op	       245.8 gzip-B/span	      7762 ns/span	      1030 wire-B/span	   66211 B/op	    1340 allocs/op
+BenchmarkExportServerSide/spans=16-2  	    9860	    120362 ns/op	       245.8 gzip-B/span	      7523 ns/span	      1030 wire-B/span	   66210 B/op	    1340 allocs/op
+BenchmarkExportServerSide/spans=128   	    1724	    704167 ns/op	       114.9 gzip-B/span	      5501 ns/span	       835.1 wire-B/span	  422264 B/op	    8276 allocs/op
+BenchmarkExportServerSide/spans=128   	    1713	    781630 ns/op	       114.9 gzip-B/span	      6106 ns/span	       835.1 wire-B/span	  422265 B/op	    8276 allocs/op
+BenchmarkExportServerSide/spans=128   	    1732	    793156 ns/op	       114.9 gzip-B/span	      6197 ns/span	       835.1 wire-B/span	  422263 B/op	    8276 allocs/op
+BenchmarkExportServerSide/spans=128   	    1699	    772151 ns/op	       114.9 gzip-B/span	      6032 ns/span	       835.1 wire-B/span	  422266 B/op	    8276 allocs/op
+BenchmarkExportServerSide/spans=128   	    1719	    772350 ns/op	       114.9 gzip-B/span	      6034 ns/span	       835.1 wire-B/span	  422264 B/op	    8276 allocs/op
+BenchmarkExportServerSide/spans=128   	    1624	    787931 ns/op	       114.9 gzip-B/span	      6156 ns/span	       835.1 wire-B/span	  422274 B/op	    8276 allocs/op
+BenchmarkExportServerSide/spans=128   	    1706	    794876 ns/op	       114.9 gzip-B/span	      6210 ns/span	       835.1 wire-B/span	  422266 B/op	    8276 allocs/op
+BenchmarkExportServerSide/spans=128   	    1725	    797987 ns/op	       114.9 gzip-B/span	      6234 ns/span	       835.1 wire-B/span	  422264 B/op	    8276 allocs/op
+BenchmarkExportServerSide/spans=128   	    1693	    814267 ns/op	       114.9 gzip-B/span	      6361 ns/span	       835.1 wire-B/span	  422267 B/op	    8276 allocs/op
+BenchmarkExportServerSide/spans=128   	    1678	    791047 ns/op	       114.9 gzip-B/span	      6180 ns/span	       835.1 wire-B/span	  422269 B/op	    8276 allocs/op
+BenchmarkExportServerSide/spans=128-2 	    1753	    708865 ns/op	       114.9 gzip-B/span	      5538 ns/span	       835.1 wire-B/span	  422262 B/op	    8276 allocs/op
+BenchmarkExportServerSide/spans=128-2 	    1753	    685847 ns/op	       114.9 gzip-B/span	      5358 ns/span	       835.1 wire-B/span	  422262 B/op	    8276 allocs/op
+BenchmarkExportServerSide/spans=128-2 	    1732	    693466 ns/op	       114.9 gzip-B/span	      5418 ns/span	       835.1 wire-B/span	  422263 B/op	    8276 allocs/op
+BenchmarkExportServerSide/spans=128-2 	    1737	    700612 ns/op	       114.9 gzip-B/span	      5474 ns/span	       835.1 wire-B/span	  422263 B/op	    8276 allocs/op
+BenchmarkExportServerSide/spans=128-2 	    1699	    711721 ns/op	       114.9 gzip-B/span	      5560 ns/span	       835.1 wire-B/span	  422267 B/op	    8276 allocs/op
+BenchmarkExportServerSide/spans=128-2 	    1755	    695862 ns/op	       114.9 gzip-B/span	      5436 ns/span	       835.1 wire-B/span	  422262 B/op	    8276 allocs/op
+BenchmarkExportServerSide/spans=128-2 	    1706	    695830 ns/op	       114.9 gzip-B/span	      5436 ns/span	       835.1 wire-B/span	  422266 B/op	    8276 allocs/op
+BenchmarkExportServerSide/spans=128-2 	    1747	    707067 ns/op	       114.9 gzip-B/span	      5524 ns/span	       835.1 wire-B/span	  422262 B/op	    8276 allocs/op
+BenchmarkExportServerSide/spans=128-2 	    1730	    707571 ns/op	       114.9 gzip-B/span	      5528 ns/span	       835.1 wire-B/span	  422263 B/op	    8276 allocs/op
+BenchmarkExportServerSide/spans=128-2 	    1742	    715974 ns/op	       114.9 gzip-B/span	      5594 ns/span	       835.1 wire-B/span	  422262 B/op	    8276 allocs/op
+BenchmarkExportServerSide/spans=512   	     441	   2881726 ns/op	       119.3 gzip-B/span	      5628 ns/span	       739.7 wire-B/span	 1507490 B/op	   30091 allocs/op
+BenchmarkExportServerSide/spans=512   	     453	   3123065 ns/op	       119.3 gzip-B/span	      6100 ns/span	       739.7 wire-B/span	 1507422 B/op	   30091 allocs/op
+BenchmarkExportServerSide/spans=512   	     434	   3228713 ns/op	       119.3 gzip-B/span	      6306 ns/span	       739.7 wire-B/span	 1507527 B/op	   30091 allocs/op
+BenchmarkExportServerSide/spans=512   	     436	   3168599 ns/op	       119.3 gzip-B/span	      6189 ns/span	       739.7 wire-B/span	 1507515 B/op	   30091 allocs/op
+BenchmarkExportServerSide/spans=512   	     440	   3008105 ns/op	       119.3 gzip-B/span	      5875 ns/span	       739.7 wire-B/span	 1507492 B/op	   30091 allocs/op
+BenchmarkExportServerSide/spans=512   	     436	   3041003 ns/op	       119.3 gzip-B/span	      5939 ns/span	       739.7 wire-B/span	 1507515 B/op	   30091 allocs/op
+BenchmarkExportServerSide/spans=512   	     441	   3018570 ns/op	       119.3 gzip-B/span	      5896 ns/span	       739.7 wire-B/span	 1507487 B/op	   30091 allocs/op
+BenchmarkExportServerSide/spans=512   	     448	   2959540 ns/op	       119.3 gzip-B/span	      5780 ns/span	       739.7 wire-B/span	 1507448 B/op	   30091 allocs/op
+BenchmarkExportServerSide/spans=512   	     447	   3022698 ns/op	       119.3 gzip-B/span	      5904 ns/span	       739.7 wire-B/span	 1507454 B/op	   30091 allocs/op
+BenchmarkExportServerSide/spans=512   	     442	   3024096 ns/op	       119.3 gzip-B/span	      5906 ns/span	       739.7 wire-B/span	 1507481 B/op	   30091 allocs/op
+BenchmarkExportServerSide/spans=512-2 	     438	   2918351 ns/op	       119.3 gzip-B/span	      5700 ns/span	       739.7 wire-B/span	 1507507 B/op	   30091 allocs/op
+BenchmarkExportServerSide/spans=512-2 	     436	   2954440 ns/op	       119.3 gzip-B/span	      5770 ns/span	       739.7 wire-B/span	 1507519 B/op	   30091 allocs/op
+BenchmarkExportServerSide/spans=512-2 	     447	   2835395 ns/op	       119.3 gzip-B/span	      5538 ns/span	       739.7 wire-B/span	 1507456 B/op	   30091 allocs/op
+BenchmarkExportServerSide/spans=512-2 	     447	   2827277 ns/op	       119.3 gzip-B/span	      5522 ns/span	       739.7 wire-B/span	 1507457 B/op	   30091 allocs/op
+BenchmarkExportServerSide/spans=512-2 	     456	   2795469 ns/op	       119.3 gzip-B/span	      5460 ns/span	       739.7 wire-B/span	 1507409 B/op	   30091 allocs/op
+BenchmarkExportServerSide/spans=512-2 	     445	   2784657 ns/op	       119.3 gzip-B/span	      5439 ns/span	       739.7 wire-B/span	 1507468 B/op	   30091 allocs/op
+BenchmarkExportServerSide/spans=512-2 	     457	   2839956 ns/op	       119.3 gzip-B/span	      5547 ns/span	       739.7 wire-B/span	 1507403 B/op	   30091 allocs/op
+BenchmarkExportServerSide/spans=512-2 	     435	   2879731 ns/op	       119.3 gzip-B/span	      5624 ns/span	       739.7 wire-B/span	 1507523 B/op	   30091 allocs/op
+BenchmarkExportServerSide/spans=512-2 	     451	   2831116 ns/op	       119.3 gzip-B/span	      5530 ns/span	       739.7 wire-B/span	 1507438 B/op	   30091 allocs/op
+BenchmarkExportServerSide/spans=512-2 	     441	   2843243 ns/op	       119.3 gzip-B/span	      5553 ns/span	       739.7 wire-B/span	 1507490 B/op	   30091 allocs/op
+BenchmarkExportServerSide/spans=2048           	     100	  10620353 ns/op	       115.9 gzip-B/span	      5186 ns/span	       730.4 wire-B/span	 5941012 B/op	  118492 allocs/op
+BenchmarkExportServerSide/spans=2048           	     100	  11724922 ns/op	       115.9 gzip-B/span	      5725 ns/span	       730.4 wire-B/span	 5941007 B/op	  118492 allocs/op
+BenchmarkExportServerSide/spans=2048           	     100	  11515298 ns/op	       115.9 gzip-B/span	      5623 ns/span	       730.4 wire-B/span	 5941006 B/op	  118492 allocs/op
+BenchmarkExportServerSide/spans=2048           	     100	  11458932 ns/op	       115.9 gzip-B/span	      5595 ns/span	       730.4 wire-B/span	 5941008 B/op	  118492 allocs/op
+BenchmarkExportServerSide/spans=2048           	     100	  11682307 ns/op	       115.9 gzip-B/span	      5704 ns/span	       730.4 wire-B/span	 5941008 B/op	  118492 allocs/op
+BenchmarkExportServerSide/spans=2048           	     100	  11698417 ns/op	       115.9 gzip-B/span	      5712 ns/span	       730.4 wire-B/span	 5941007 B/op	  118492 allocs/op
+BenchmarkExportServerSide/spans=2048           	     100	  11745250 ns/op	       115.9 gzip-B/span	      5735 ns/span	       730.4 wire-B/span	 5941007 B/op	  118492 allocs/op
+BenchmarkExportServerSide/spans=2048           	     100	  11862673 ns/op	       115.9 gzip-B/span	      5792 ns/span	       730.4 wire-B/span	 5941007 B/op	  118492 allocs/op
+BenchmarkExportServerSide/spans=2048           	     100	  11815863 ns/op	       115.9 gzip-B/span	      5769 ns/span	       730.4 wire-B/span	 5941007 B/op	  118492 allocs/op
+BenchmarkExportServerSide/spans=2048           	     100	  11767114 ns/op	       115.9 gzip-B/span	      5746 ns/span	       730.4 wire-B/span	 5941008 B/op	  118492 allocs/op
+BenchmarkExportServerSide/spans=2048-2         	     100	  10509918 ns/op	       115.9 gzip-B/span	      5132 ns/span	       730.4 wire-B/span	 5941015 B/op	  118492 allocs/op
+BenchmarkExportServerSide/spans=2048-2         	     100	  10412955 ns/op	       115.9 gzip-B/span	      5084 ns/span	       730.4 wire-B/span	 5941013 B/op	  118492 allocs/op
+BenchmarkExportServerSide/spans=2048-2         	     100	  10418656 ns/op	       115.9 gzip-B/span	      5087 ns/span	       730.4 wire-B/span	 5941013 B/op	  118492 allocs/op
+BenchmarkExportServerSide/spans=2048-2         	     100	  10422654 ns/op	       115.9 gzip-B/span	      5089 ns/span	       730.4 wire-B/span	 5941013 B/op	  118492 allocs/op
+BenchmarkExportServerSide/spans=2048-2         	     100	  15616245 ns/op	       115.9 gzip-B/span	      7625 ns/span	       730.4 wire-B/span	 5941011 B/op	  118492 allocs/op
+BenchmarkExportServerSide/spans=2048-2         	     100	  10727748 ns/op	       115.9 gzip-B/span	      5238 ns/span	       730.4 wire-B/span	 5941015 B/op	  118492 allocs/op
+BenchmarkExportServerSide/spans=2048-2         	     100	  10750529 ns/op	       115.9 gzip-B/span	      5249 ns/span	       730.4 wire-B/span	 5941013 B/op	  118492 allocs/op
+BenchmarkExportServerSide/spans=2048-2         	     100	  10631902 ns/op	       115.9 gzip-B/span	      5191 ns/span	       730.4 wire-B/span	 5941013 B/op	  118492 allocs/op
+BenchmarkExportServerSide/spans=2048-2         	     100	  10640791 ns/op	       115.9 gzip-B/span	      5196 ns/span	       730.4 wire-B/span	 5941012 B/op	  118492 allocs/op
+BenchmarkExportServerSide/spans=2048-2         	     100	  10448083 ns/op	       115.9 gzip-B/span	      5102 ns/span	       730.4 wire-B/span	 5941015 B/op	  118492 allocs/op
+BenchmarkExportServerSideParallel              	     444	   3001050 ns/op	    170607 spans/s	 1667156 B/op	   30240 allocs/op
+BenchmarkExportServerSideParallel              	     438	   2974867 ns/op	    172109 spans/s	 1669378 B/op	   30242 allocs/op
+BenchmarkExportServerSideParallel              	     422	   3023149 ns/op	    169360 spans/s	 1675609 B/op	   30248 allocs/op
+BenchmarkExportServerSideParallel              	     439	   3081594 ns/op	    166148 spans/s	 1669003 B/op	   30242 allocs/op
+BenchmarkExportServerSideParallel              	     430	   3035637 ns/op	    168663 spans/s	 1672436 B/op	   30245 allocs/op
+BenchmarkExportServerSideParallel              	     429	   3093926 ns/op	    165486 spans/s	 1672826 B/op	   30245 allocs/op
+BenchmarkExportServerSideParallel              	     436	   2932017 ns/op	    174624 spans/s	 1670131 B/op	   30243 allocs/op
+BenchmarkExportServerSideParallel              	     438	   2953158 ns/op	    173374 spans/s	 1669377 B/op	   30242 allocs/op
+BenchmarkExportServerSideParallel              	     424	   3138084 ns/op	    163157 spans/s	 1674805 B/op	   30247 allocs/op
+BenchmarkExportServerSideParallel              	     405	   3118663 ns/op	    164173 spans/s	 1682773 B/op	   30255 allocs/op
+BenchmarkExportServerSideParallel-2            	     774	   1695247 ns/op	    302021 spans/s	 1599439 B/op	   30176 allocs/op
+BenchmarkExportServerSideParallel-2            	     782	   1669684 ns/op	    306645 spans/s	 1598472 B/op	   30176 allocs/op
+BenchmarkExportServerSideParallel-2            	     787	   1694105 ns/op	    302225 spans/s	 1597879 B/op	   30175 allocs/op
+BenchmarkExportServerSideParallel-2            	     786	   1629811 ns/op	    314147 spans/s	 1597998 B/op	   30175 allocs/op
+BenchmarkExportServerSideParallel-2            	     810	   1620114 ns/op	    316027 spans/s	 1595242 B/op	   30173 allocs/op
+BenchmarkExportServerSideParallel-2            	     772	   1670125 ns/op	    306564 spans/s	 1599682 B/op	   30177 allocs/op
+BenchmarkExportServerSideParallel-2            	     769	   1695851 ns/op	    301913 spans/s	 1600052 B/op	   30177 allocs/op
+BenchmarkExportServerSideParallel-2            	     790	   1754735 ns/op	    291782 spans/s	 1597525 B/op	   30175 allocs/op
+BenchmarkExportServerSideParallel-2            	     782	   1687659 ns/op	    303379 spans/s	 1598472 B/op	   30176 allocs/op
+BenchmarkExportServerSideParallel-2            	     777	   1648750 ns/op	    310538 spans/s	 1599073 B/op	   30176 allocs/op
+PASS
+ok  	github.com/DmytroLysenko1/faultline/internal/interfaces/otlp	226.462s

@@ -11,6 +11,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/clock"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/idlerule"
 )
 
 var (
@@ -37,7 +38,7 @@ type Journal struct {
 	source    Clock
 	lock      sync.Mutex
 	monotonic clock.Monotonic
-	idle      idleRule
+	idle      idlerule.Rule
 	queue     chan entry
 	closed    bool
 	held      Stats
@@ -53,8 +54,8 @@ func New(limits Limits, source Clock) (*Journal, error) {
 	return &Journal{
 		limits: limits,
 		source: source,
-		idle: idleRule{
-			after: limits.IdleAfter,
+		idle: idlerule.Rule{
+			After: limits.IdleAfter,
 		},
 		queue: make(chan entry, limits.MaxBatches),
 	}, nil
@@ -112,7 +113,7 @@ func (j *Journal) enqueueLocked(next *entry) error {
 		return err
 	}
 	next.batch.ReceivedAt = j.stampLocked()
-	if j.idle.dueBefore(next.batch) && j.roomForHeartbeatLocked() {
+	if j.idle.DueBefore(next.batch) && j.roomForHeartbeatLocked() {
 		j.pushLocked(new(heartbeatAt(next.batch.ReceivedAt)))
 	}
 	j.pushLocked(next)
@@ -136,7 +137,7 @@ func (j *Journal) pulseIfIdle() {
 		return
 	}
 	now := j.stampLocked()
-	if j.idle.due(now) {
+	if j.idle.Due(now) {
 		j.pushLocked(new(heartbeatAt(now)))
 	}
 }
@@ -151,7 +152,7 @@ func (j *Journal) roomForHeartbeatLocked() bool {
 
 func (j *Journal) pushLocked(next *entry) {
 	j.queue <- *next
-	j.idle.record(next.batch)
+	j.idle.Record(next.batch)
 	j.held = j.held.with(next)
 }
 
