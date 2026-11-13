@@ -15,6 +15,7 @@ var (
 	ErrNoCheckpoint   = errors.New("no checkpoint for partition")
 	ErrCheckpointBusy = errors.New("previous checkpoint is still uploading")
 	errNoWriter       = errors.New("checkpoint store began no writer")
+	errSpoolLeft      = errors.New("checkpoint spool left behind")
 )
 
 type CheckpointMeta struct {
@@ -106,7 +107,7 @@ func (c *checkpointer) pendingAtStop() bool {
 func (c *checkpointer) write(ctx context.Context, builder *topology.Builder, now time.Time) error {
 	c.next = now.Add(c.interval)
 	err := c.save(ctx, builder)
-	if canceledByCaller(ctx, err) {
+	if canceledByCaller(ctx, err) && !errors.Is(err, errSpoolLeft) {
 		return err
 	}
 	c.counters.record(c.through, err)
@@ -122,7 +123,7 @@ func (c *checkpointer) save(ctx context.Context, builder *topology.Builder) erro
 		return err
 	}
 	if err := builder.WriteCheckpoint(writer); err != nil {
-		return errors.Join(fmt.Errorf("write checkpoint through %d: %w", c.through.Sequence, err), writer.Abort())
+		return errors.Join(fmt.Errorf("write checkpoint through %d: %w", c.through.Sequence, err), leftSpool(writer.Abort()))
 	}
 	if err := writer.Close(); err != nil {
 		return fmt.Errorf("close checkpoint through %d: %w", c.through.Sequence, err)
@@ -135,20 +136,27 @@ func (c *checkpointer) begin(ctx context.Context) (CheckpointWriter, error) {
 		Position:   c.through,
 		ReceivedAt: c.receivedAt,
 	})
-	if err := strayWriter(writer, err); err != nil {
+	if err := checkedBegin(writer, err); err != nil {
 		return nil, fmt.Errorf("begin checkpoint through %d: %w", c.through.Sequence, err)
 	}
 	return writer, nil
 }
 
-func strayWriter(writer CheckpointWriter, err error) error {
+func checkedBegin(writer CheckpointWriter, err error) error {
 	switch {
 	case err != nil && writer != nil:
-		return errors.Join(err, writer.Abort())
+		return errors.Join(err, leftSpool(writer.Abort()))
 	case err == nil && writer == nil:
 		return errNoWriter
 	}
 	return err
+}
+
+func leftSpool(abortErr error) error {
+	if abortErr == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %w", errSpoolLeft, abortErr)
 }
 
 func reached(now, deadline time.Time, period time.Duration) bool {

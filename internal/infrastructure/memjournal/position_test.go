@@ -17,6 +17,7 @@ import (
 const appendsEach = 200
 
 type positioned struct {
+	Partition  uint16
 	Sequence   uint64
 	Heartbeat  bool
 	ReceivedAt time.Time
@@ -26,10 +27,8 @@ func positionsOf(deliveries []processing.Delivery) []positioned {
 	var got []positioned
 	for _, delivery := range deliveries {
 		position := delivery.Position()
-		if position.Partition != 0 {
-			return nil
-		}
 		got = append(got, positioned{
+			Partition:  position.Partition,
 			Sequence:   position.Sequence,
 			Heartbeat:  delivery.Batch().Heartbeat,
 			ReceivedAt: delivery.Batch().ReceivedAt,

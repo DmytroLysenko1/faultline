@@ -36,6 +36,7 @@ const (
 	receiveStep    = time.Second
 	neverFire      = 1000 * time.Hour
 	publishEach    = 1
+	publishOnShape = 1 << 30
 	heartbeatAhead = 10 * time.Minute
 	earlyFire      = 2 * time.Second
 	killSeries     = 64
@@ -45,6 +46,10 @@ const (
 // firePeriods: early panes fire on the clock, which starts over with the restarted processor; the
 // finals must not depend on when they fired.
 var firePeriods = []time.Duration{neverFire, earlyFire}
+
+// heldLimits: publishing after every Receive, or only when the graph changes shape — then a due
+// checkpoint waits for the next publish.
+var heldLimits = []int64{publishEach, publishOnShape}
 
 func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
@@ -106,6 +111,7 @@ type scenario struct {
 	perReceive int
 	interval   time.Duration
 	firePeriod time.Duration
+	maxHeld    int64
 }
 
 type outcome struct {
@@ -136,7 +142,7 @@ func (s *scenario) process(ctx context.Context, t *testing.T, r *run) *lastPubli
 	r.reader.Clock, r.reader.PerReceive = clock, s.perReceive
 	publisher := &lastPublisher{}
 	pipeline, err := processing.NewPipeline(r.reader, r.builder, publisher, r.store, clock,
-		processing.Cadence{FirePeriod: s.firePeriod, MaxHeldBytes: publishEach, CheckpointInterval: s.interval})
+		processing.Cadence{FirePeriod: s.firePeriod, MaxHeldBytes: s.maxHeld, CheckpointInterval: s.interval})
 	if err != nil {
 		t.Fatalf("NewPipeline: %v", err)
 	}
@@ -218,6 +224,7 @@ func TestARestartedPipelinePublishesTheSameFinalsAsAnUninterruptedOne(t *testing
 			perReceive: 1 + rng.IntN(maxPerReceive),
 			interval:   time.Duration(1+rng.IntN(maxInterval)) * receiveStep,
 			firePeriod: firePeriods[rng.IntN(len(firePeriods))],
+			maxHeld:    heldLimits[rng.IntN(len(heldLimits))],
 		}
 		want := s.uninterrupted(t)
 		log := processingtest.NewRetainedLog(partition, s.batches)

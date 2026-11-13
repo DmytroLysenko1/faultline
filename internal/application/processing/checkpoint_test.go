@@ -672,3 +672,44 @@ func TestACancelDuringTheDrainIsAQuietStop(t *testing.T) {
 		t.Errorf("committed %+v", got)
 	}
 }
+
+// TestAClockThatJumpsBackCostsOneEarlyCheckpoint: after a jump back the deadline lies an hour
+// ahead; waiting for it would leave the journal unretained for that hour, so the next publish
+// checkpoints and the cadence restarts from the new time.
+func TestAClockThatJumpsBackCostsOneEarlyCheckpoint(t *testing.T) {
+	p, store, _ := stepping(t, tenBatches, everyThird)
+	jumped := false
+	store.OnBegin(func(*processing.CheckpointMeta) {
+		if !jumped {
+			jumped = true
+			p.clock.At = p.clock.At.Add(-time.Hour)
+		}
+	})
+
+	p.run(t)
+
+	assertCommitted(t, store, []uint64{3, 4, 7, tenBatches})
+}
+
+// TestASpoolLeftByACutCheckpointIsReported: the caller cut the checkpoint and the half-written spool
+// could not be removed; the stop stays quiet, but the leftover is a failure to see.
+func TestASpoolLeftByACutCheckpointIsReported(t *testing.T) {
+	p, store, _ := stepping(t, tenBatches, everyThird)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	store.OnWrite(func() error {
+		cancel()
+		return context.Canceled
+	})
+	store.FailAbort(errAbortStuck)
+
+	err := p.pipeline.Run(ctx)
+
+	if err != nil {
+		t.Fatalf("Run = %v, want a quiet stop", err)
+	}
+	stats := p.pipeline.CheckpointStats()
+	if stats.Failed != 1 || !errors.Is(stats.LastFailure, errAbortStuck) {
+		t.Errorf("stats = %+v, want one failure carrying the abort error", stats)
+	}
+}

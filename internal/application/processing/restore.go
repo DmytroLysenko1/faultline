@@ -47,7 +47,7 @@ func Restore(
 	meta, checkpoint, err := source.Latest(ctx, partition)
 	restored, err := request.from(&meta, checkpoint, err)
 	if checkpoint != nil {
-		err = request.closed(checkpoint, err)
+		err = request.closeInto(checkpoint, err)
 	}
 	if err != nil {
 		return Restored{}, err
@@ -98,7 +98,7 @@ func (r *restoreRequest) restore(meta *CheckpointMeta, checkpoint io.Reader) (Re
 	}, nil
 }
 
-func (r *restoreRequest) closed(checkpoint io.Closer, err error) error {
+func (r *restoreRequest) closeInto(checkpoint io.Closer, err error) error {
 	if closeErr := checkpoint.Close(); closeErr != nil {
 		return errors.Join(err, fmt.Errorf("close checkpoint of partition %d: %w", r.partition, closeErr))
 	}

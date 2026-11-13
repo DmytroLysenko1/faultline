@@ -38,7 +38,7 @@ type Pipeline struct {
 	timings     timings
 }
 
-func NewPipeline(feed spanFeed, builder *topology.Builder, publisher graphPublisher, checkpoints checkpointSink,
+func NewPipeline(feed spanFeed, builder *topology.Builder, publisher graphPublisher, sink checkpointSink,
 	clock clock, cadence Cadence,
 ) (*Pipeline, error) {
 	if err := cadence.Validate(); err != nil {
@@ -47,7 +47,7 @@ func NewPipeline(feed spanFeed, builder *topology.Builder, publisher graphPublis
 	if clock == nil {
 		return nil, fmt.Errorf("%w: nil clock", ErrInvalidCadence)
 	}
-	if cadence.CheckpointInterval > 0 && checkpoints == nil {
+	if cadence.CheckpointInterval > 0 && sink == nil {
 		return nil, fmt.Errorf("%w: checkpoint interval %s without a checkpoint store", ErrInvalidCadence,
 			cadence.CheckpointInterval)
 	}
@@ -58,7 +58,7 @@ func NewPipeline(feed spanFeed, builder *topology.Builder, publisher graphPublis
 		clock:     clock,
 		cadence:   cadence,
 		checkpoints: checkpointer{
-			sink:     checkpoints,
+			sink:     sink,
 			interval: cadence.CheckpointInterval,
 		},
 	}, nil

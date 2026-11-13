@@ -234,7 +234,8 @@ func TestRestoreSurvivesAStoreThatBreaksItsContract(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reader := &countingCloser{Reader: bytes.NewReader(nil)}
-			restored, err := processing.Restore(t.Context(), tt.args(reader), partition, new(processingtest.Limits()), telemetrytest.Epoch())
+			restored, err := processing.Restore(t.Context(), tt.args(reader), partition, new(processingtest.Limits()),
+				telemetrytest.Epoch())
 
 			if !errors.Is(err, tt.want.err) {
 				t.Fatalf("Restore = %v, want %v", err, tt.want.err)

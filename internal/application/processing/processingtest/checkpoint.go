@@ -29,8 +29,8 @@ type storedCheckpoint struct {
 
 // CheckpointStore keeps the latest checkpoint per partition the way the real store promises: a
 // checkpoint becomes latest only after its writer closes, and only then does retention move up to
-// it. The real store uploads after Close, so an upload it loses — or retention it cannot move — is
-// never an error of Close.
+// it. The real store uploads after Close, so an upload it loses is never an error of Close; a
+// checkpoint retention cannot follow — past the log, another partition — fails the test.
 type CheckpointStore struct {
 	tb          testing.TB
 	retention   Retention
@@ -48,7 +48,6 @@ type CheckpointStore struct {
 	failRead    error
 	failAbort   error
 	loseUploads bool
-	retainErrs  []error
 	onWrite     func() error
 	onBegin     func(*processing.CheckpointMeta)
 }
@@ -100,12 +99,6 @@ func (s *CheckpointStore) LoseUploads(lose bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.loseUploads = lose
-}
-
-func (s *CheckpointStore) RetentionFailures() []error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]error(nil), s.retainErrs...)
 }
 
 // OnWrite runs before every Write of the checkpoint; an error it returns is what Write returns.
@@ -227,9 +220,7 @@ func (s *CheckpointStore) retain(through processing.Position) {
 		return
 	}
 	if err := s.retention.Commit(s.tb.Context(), through); err != nil {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.retainErrs = append(s.retainErrs, err)
+		s.tb.Errorf("retention could not follow the checkpoint through %+v: %v", through, err)
 	}
 }
 
