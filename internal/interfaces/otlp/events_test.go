@@ -2,6 +2,7 @@ package otlp_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -86,6 +87,31 @@ func TestRejectedLogIsThrottledAndCarriesWhatItSkipped(t *testing.T) {
 	}
 }
 
+// TestALostWriteLogReopensAndCountsWhatItSkipped: a long outage keeps logging once per interval, and
+// each record says how many failed requests it stands for.
+func TestALostWriteLogReopensAndCountsWhatItSkipped(t *testing.T) {
+	h := start(t, returning(ingest.AcceptResult{}, ingest.ErrUnavailable))
+	for range 3 {
+		exportUnavailable(t, h)
+	}
+	if got := len(h.Logs.Events(t, "otlp.export.unavailable")); got != 1 {
+		t.Fatalf("%d lost-write errors inside one interval, want 1", got)
+	}
+	h.Clock.Advance(otlp.LogInterval)
+	exportUnavailable(t, h)
+	events := h.Logs.Events(t, "otlp.export.unavailable")
+	if len(events) != 2 || events[1]["level"] != "ERROR" || events[1]["suppressed_requests"] != float64(2) {
+		t.Errorf("records after the interval = %v, want a second ERROR with 2 suppressed requests", events)
+	}
+}
+
+func exportUnavailable(t *testing.T, h harness) {
+	t.Helper()
+	if _, err := h.Client.Export(t.Context(), requestOf(1)); status.Code(err) != codes.Unavailable {
+		t.Fatalf("Export: %v, want UNAVAILABLE", err)
+	}
+}
+
 func TestInvalidTraceparentAddsNoTraceID(t *testing.T) {
 	for _, header := range []string{
 		"01-" + validTraceID + "-00f067aa0ba902b7-01",
@@ -146,9 +172,16 @@ func TestFailuresLogOnlyWhatAnOperatorMustSee(t *testing.T) {
 		},
 		{
 			Name: "shutdown is a debug note, not an incident",
-			Args: ingest.ErrUnavailable,
+			Args: errors.Join(ingest.ErrUnavailable, ingest.ErrNotAttempted),
 			Want: map[string]int{
 				"DEBUG otlp.export.interrupted": 2,
+			},
+		},
+		{
+			Name: "a write the journal lost is an error, throttled to one per interval",
+			Args: fmt.Errorf("journal publish: insufficient_resources: %w", ingest.ErrUnavailable),
+			Want: map[string]int{
+				"ERROR otlp.export.unavailable": 1,
 			},
 		},
 		{

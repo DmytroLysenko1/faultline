@@ -48,6 +48,10 @@ func failureOf(err error) failure {
 }
 
 func failureRules() []failureRule {
+	return append(journalRules(), contextRules()...)
+}
+
+func journalRules() []failureRule {
 	return []failureRule{
 		{
 			target: ingest.ErrOverloaded,
@@ -60,10 +64,20 @@ func failureRules() []failureRule {
 			report: (*events).tooLarge,
 		},
 		{
-			target: ingest.ErrUnavailable,
+			target: ingest.ErrNotAttempted,
 			status: unavailableStatus,
 			report: (*events).interrupted,
 		},
+		{
+			target: ingest.ErrUnavailable,
+			status: unavailableStatus,
+			report: (*events).unavailable,
+		},
+	}
+}
+
+func contextRules() []failureRule {
+	return []failureRule{
 		{
 			target: context.Canceled,
 			status: status.FromContextError,

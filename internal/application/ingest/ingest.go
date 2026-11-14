@@ -18,6 +18,7 @@ var (
 	ErrOverloaded    = errors.New("span journal overloaded")
 	ErrBatchTooLarge = errors.New("batch exceeds span journal capacity")
 	ErrUnavailable   = errors.New("span journal unavailable")
+	ErrNotAttempted  = errors.New("span journal did not attempt the write")
 )
 
 const MaxReasons = 16

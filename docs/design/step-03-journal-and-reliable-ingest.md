@@ -150,7 +150,7 @@ OK на `Export` отдаётся **только** после того, как `
 Запись могла закоммититься после того, как мы перестали ждать (замер спайка: лидер жив, обе реплики остановлены — `PublishMsg` висит до дедлайна 3 s; после возврата реплик Raft-запись может закоммититься). Поэтому:
 - клиент получает **`UNAVAILABLE`** (истёк наш под-дедлайн при живом дедлайне клиента) или `DEADLINE_EXCEEDED` / `CANCELLED` (истёк или отменён дедлайн клиента) — **никогда OK**;
 - повтор безопасен: тот же OTLP-запрос → те же спаны → то же тело записи → тот же ключ дедупа → `PubAck.Duplicate` в окне 5 min (метка писателя в заголовке у повтора другая, но в ключ не входит);
-- повтор позже окна дедупа (или после смены правил маршрутов) создаёт вторую запись — её гасят tombstones матчера 60 s, дальше **принятый риск** двойного счёта (как в шаге 1), виден по `pairing.duplicate`. Collector не повторяет дольше `max_elapsed_time` 300 s < окна 5 min;
+- повтор позже окна дедупа (или после смены правил маршрутов) создаёт вторую запись — её гасят tombstones матчера 60 s, дальше **принятый риск** двойного счёта (как в шаге 1), виден по `pairing.duplicate`. Collector не повторяет дольше `max_elapsed_time` 300 s от первой попытки — это ровно окно 5 min, а окно считается от записи оригинала, поэтому повторы одной серии в него попадают; выпадают повтор после рестарта Collector с постоянной очередью (серия начинается заново) и увеличенный `max_elapsed_time` — это тот же принятый риск двойного счёта (tombstones 60 s, по D-30 — 15 s, его не ловят);
 - **дубли, не потери, ещё в двух случаях** (ревью pstack, проба P3 и `stream.go:7020`): (а) карта дедупа для **отсечённых** записей не восстанавливается после рестарта узла или снапшота (`rebuildDedupe` строит её только из хранилища, `stream.go:1634–1666`); (б) повтор после stepdown лидера без реплик может дать две записи с одним ключом (кластерное применение дедуп не перепроверяет). Оба случая гасят tombstones в пределах 60 s; тест FR-ING-003 проверяет «≥ 1 запись, финалы как при одной», а не «ровно одна».
 
 **Ключ дедупа (D-8).** У OTLP нет ключа идемпотентности, поэтому ключ — содержимое: `hex(SHA-256(тенант ‖ 0x00 ‖ партиция u16 LE ‖ 0x00 ‖ тело записи)[:16])` (как в глоссарии; метка писателя и версия правил в ключ не входят).
@@ -167,8 +167,9 @@ OK на `Export` отдаётся **только** после того, как `
 | Выборы при живом кворуме | `no responders` до выборов, скрытый повтор 250 ms; запись в полёте при смене лидера может получить 10077 с описанием «store closed» | OK после выборов, иначе `UNAVAILABLE` | спайк в процессе: 0 отказов на 200 публикаций; **ПРОВЕРИТЬ В СРЕЗЕ 0** по сети (C5) |
 | Повтор, пока оригинал в полёте | ошибка **10158** | `UNAVAILABLE` (причина `in_process`) → следующий повтор получит `Duplicate` | мгновенно |
 | Разрыв соединения | `ReconnectBufSize(-1)`: `nats.ErrReconnectBufExceeded` сразу | `UNAVAILABLE` | замер: 55 µs |
-| Нет ресурсов JetStream / JetStream выключен сервером (ошибка диска) | APIError **10047** и подобные | `UNAVAILABLE` (причина `insufficient_resources`) + Error-лог | мгновенно |
-| Стрим отсутствует | `ErrNoStreamResponse` | `UNAVAILABLE` + Error `journal.stream_missing` | ≈ 500 ms |
+| Лимит ресурсов JetStream сервера или аккаунта исчерпан | APIError **10023** при публикации (**10047** — при создании и обновлении стрима, то есть в `EnsureTopology`) | `UNAVAILABLE` (причина `insufficient_resources`) + Error `otlp.export.unavailable` | мгновенно |
+| Ошибка ввода-вывода диска / JetStream выключен сервером | сервер не отвечает на публикацию (nats-server v2.15.3 `stream.go:7499–7507`) или подписки стрима исчезают | `UNAVAILABLE` (причина `timeout` или `no_responders`) + Error `otlp.export.unavailable` | под-дедлайн или ≈ 500 ms |
+| Стрим отсутствует | `ErrNoStreamResponse` | `UNAVAILABLE` (причина `no_responders`, как при потере лидера) + Error `otlp.export.unavailable`; само отсутствие стрима ловит `VerifyTopology` при старте | ≈ 500 ms |
 
 **Классификация ответов сервера — одна функция `natsjs.classify`** (ревью pstack: R3 под потоком отвечает не так, как R1 спайка):
 
@@ -178,13 +179,21 @@ OK на `Export` отдаётся **только** после того, как `
 | `ErrorCode 10077` с другим описанием (`store closed` и пр.) | сбой хранилища, смена лидера | `ingest.ErrUnavailable` (причина `store_failed`) |
 | `ErrorCode 10071` или **`10164`** | CAS-конфликт «wrong last sequence» (10164 — запись в полёте на subject, `jetstream_batching.go:782–791`; проба: `map[10164:200]` под потоком R3) | для пульса — «конфликт», не ошибка |
 | `ErrorCode 10158` | дубль в полёте | `ingest.ErrUnavailable` (причина `in_process`) |
-| `ErrorCode 10047` | нет ресурсов | `ingest.ErrUnavailable` (причина `insufficient_resources`) |
+| `ErrorCode 10023` или `10047` | лимит ресурсов (10023 — при публикации, 10047 — при создании и обновлении стрима) | `ingest.ErrUnavailable` (причина `insufficient_resources`) |
 | `ErrNoStreamResponse`, наш под-дедлайн, `ErrReconnectBufExceeded`, `ErrConnectionClosed` | недоступность | `ingest.ErrUnavailable` |
 | `nats.ErrMaxPayload`, `record.ErrTooLarge` | слишком велик | `ingest.ErrBatchTooLarge` |
-| ctx клиента | отмена / дедлайн | ошибка ctx (обёрнута) |
-| прочее | неизвестно | `ingest.ErrUnavailable` (причина `unexpected`) + Error-лог (дросселирован) |
+| ctx клиента | отмена / дедлайн | `classify`: причина `canceled` / `timeout` с `ingest.ErrUnavailable`; ответ запроса выбирает `journal.outcome` (см. «Сделано в 2b» ниже) |
+| прочее | неизвестно | `ingest.ErrUnavailable` (причина `unexpected`) |
 
-Описание сравнивается с текстом константы сервера закреплённой версии; тест `TestEveryNATSErrorMapsToOneIngestSentinel` собирает ответы с живого встроенного R3, а не из литералов, и падает, если сервер сменит текст.
+**Сделано в 2b — где лог.** Путь публикации журнала и `natsjs.classify` не логируют (соединения `natsjs` пишут только `nats.disconnected` / `nats.reconnected` / `nats.closed`): ошибка с причиной в тексте уходит наверх, а журнал считает её в `Stats` — `Failed[причина]` и отдельно `Closing`, `Doomed`, `Interrupted`, `EncodeTooLarge`. Логирует обработчик OTLP — финальное место обработки:
+- запись, которую журнал пытался сделать и потерял, — Error `otlp.export.unavailable` с ошибкой (причина в тексте), дросселирован раз в `LogInterval` с числом подавленных запросов;
+- отказ без попытки записи (`ingest.ErrNotAttempted` вместе с `ErrUnavailable`: журнал закрывается или у клиента не осталось времени) и отмена или дедлайн клиента — Debug `otlp.export.interrupted`;
+- `journal.Stats` доходит до `pipeline.stats` в срезе 4 (wiring).
+- известный шум: у клиента с коротким дедлайном (150 ms … ≈ 2,1 s) истечение под-дедлайна — тоже Error `otlp.export.unavailable`, хотя причина в его дедлайне; лог дросселирован, а Collector по умолчанию даёт 5 s.
+
+**Сделано в 2b — ответ запроса (`journal.outcome`).** Все записи подтверждены — OK, даже если клиент уже ушёл: исход известен и надёжен, заставлять клиента повторять незачем. Иначе — голая ошибка ctx клиента (без сентинела), если он отменил запрос или его дедлайн истёк. Иначе «слишком велик» → «перегружен» → «недоступен». Публикация, истёкшая по своему под-дедлайну при живом ctx клиента, отвечает `ingest.ErrUnavailable` и **не** совпадает с `context.DeadlineExceeded` (причина остаётся в тексте ошибки и в `Stats.Failed[timeout]`) — чтобы ни один вызывающий, проверяющий ctx-ошибки первыми, не принял отказ журнала за свой дедлайн (`otlp` и так проверяет сентинелы первыми). Ошибка публикатора без класса получает `ErrUnavailable` и считается как `unexpected`. У каждой ошибки, кроме ошибки ctx клиента, ровно один сентинел; `ErrNotAttempted` — уточнение к `ErrUnavailable`, а не отдельный смысл.
+
+Описание сравнивается с текстом константы сервера закреплённой версии; тест `TestEveryNATSErrorMapsToOneIngestSentinel` собирает ответы с живого встроенного сервера (один узел), а не из литералов, и падает, если сервер сменит текст; коды, которые трудно вызвать вживую (10023, 10047 и др.), проверены литералами в `classify_internal_test.go`.
 
 **Скрытый повтор `nats.go` входит в бюджет явно** (D-9): `jetstream.WithRetryAttempts(2)`, `jetstream.WithRetryWait(250 * time.Millisecond)` в каждой публикации; таймаут подтверждения асинхронной публикации — `jetstream.WithPublishAsyncTimeout(publish_timeout)` (`jetstream_options.go:72`): зависшее подтверждение завершается ошибкой и удаляется из таблицы клиента (`publish.go:365`), поэтому бюджет ожидания не утекает.
 
@@ -193,6 +202,8 @@ OK на `Export` отдаётся **только** после того, как `
 По умолчанию 8 MiB (`nats.go:63`): публикация во время разрыва уходит на сервер после переподключения — возможно после того, как клиент повторил запрос, и тогда позже окна дедупа появится дубль; плюс 8 MiB неучтённой памяти. Поэтому `nats.ReconnectBufSize(-1)` на всех трёх соединениях (`natsjs/conn.go`, единственная точка; forbidigo).
 
 **Доказательство «ни один путь не отвечает OK до PubAck» (ред. 3, асинхронная публикация).** `Journal.Append` возвращает `nil` только когда **каждое** `PubAckFuture` записи запроса отдало значение из `Ok()` — канала, в который клиент пишет только разобранный ответ с непустым `PubAck` (`publish.go:74–82`); ошибка любой записи, истечение под-дедлайна или ctx → ошибка, и тогда OK нет, даже если другие записи подтверждены (их повтор целого запроса даст `Duplicate`). `AcceptBatch.Execute` (`ingest.go:81`) без ошибки возвращает только при `nil` от `enqueue`; `Export` (`receiver.go:22`) отвечает OK только без ошибки. **Один путь к OK без `Append` есть и он правильный**: запрос без валидных спанов (`ingest.go:92–94`) получает OK с `partial_success` — данных нет; в I17 — корзина «пустой». Тест `TestNoPathAnswersOKWithoutAPubAck` (fake будущих подтверждений: часть ок, часть ошибка, часть висит) + мутации «вернуть nil на таймауте» и «вернуть nil, когда подтверждена первая запись» обязаны его ронять.
+
+**Сделано в 2b (синхронная публикация).** `Append` возвращает `nil` только когда каждый `Publish` записи вернул PubAck (`Duplicate` — тоже PubAck); ошибки партиций ждутся все, без отмены соседей, ответ выбирает `journal.outcome` (выше). Тест `TestNoPathAnswersOKWithoutAPubAck` перебирает каждую причину на каждой из четырёх партиций и проверяет ровно один сентинел.
 
 ### `max_payload` и «всё или ничего» (I4)
 
@@ -268,6 +279,12 @@ OK на `Export` отдаётся **только** после того, как `
 - запрос OTLP → по записи на каждую затронутую партицию; OK — когда подтверждены все; повтор целого: подтверждённые части отвечают `Duplicate`, недостающие пишутся — **идемпотентный повтор целого** вместо «всё или ничего» (I4 уточняется); при P = 1 — одна запись, как в ред. 2 (приложение А);
 - тенант — метка в записи (D-3'); изоляция тенантов — квоты на входе (шаг 3b — справедливая доля слотов по токену, шаг 18 — token bucket FR-SEC-005), а не отдельное хранение;
 - **в шаге 3 процессор обслуживает P = 1** (валидатор: `FAULTLINE_PARTITIONS` = 1 до шага 11); ингестер, формат записи, ключ дедупа, имена стримов, ключи аренды и чекпоинта, идентификатор финала (D-26) — уже под P. Шаг 11 добавляет только назначение партиций процессорам и слияние частичных агрегатов (счётчики и DDSketch сливаемы; id финала включает партицию) — без смены формата записи и чекпоинта.
+
+**Сделано в 2a/2b — конфигурация стримов.**
+- `EnsureTopology` (процессор): первый проход только читает; создаёт и обновляет только когда расхождений нет (неизменяемое поле не совпало — `ErrStreamDrift`, ничего не трогается); `config_version` в метаданных (`faultline.config_version`, рядом `faultline.partitions`) не даёт старому релизу откатить новую конфигурацию; после обновления конфигурация перечитывается; повторы с попыткой 1 s переживают переподключения и выборы. Расхождение, найденное уже при применении или перечитывании, может оставить часть партиций обновлёнными — повтор `EnsureTopology` доводит до конца. Durable-консьюмер (вариант (b) ADR-3) `EnsureTopology` пока не создаёт — срез 3.
+- **Окно без CAS.** У конфигурации стрима нет условного обновления по ревизии: два процессора с разными версиями могут обновить её почти одновременно, и «последний победил». Закрывает окно только единственный писатель конфигурации: при P = 1 — держатель аренды `processor.p0` (срез 3: `EnsureTopology` только после взятия аренды). При P > 1 аренда партиции не сериализует запись чужих стримов — владельца конфигурации (аренда `p0` или отдельный ключ) решает дизайн среза 3, до шага 11.
+- `VerifyTopology` (ингестер) блокирует старт по политике проекта: нет стрима, неизменяемые поля (`replicas`, `max_age` и пр. — NATS умеет менять replicas, но смена — ручная операция), окно дедупа короче своего. Любое отличие изменяемых полей (`max_bytes`, сжатие, `config_version`, окно дедупа — и короче, и длиннее) возвращается заметками и логируется при старте (срез 4).
+- **Один источник P.** `journal.Options.Topology` — то же значение `natsjs.Topology`, из которого построен публикатор; в wiring (срез 4) оба строятся из одного значения, иначе спаны трассы ушли бы не в ту партицию.
 
 **Ёмкость партиции** (ревью osmani и pstack, второй круг) — считается в записях/с одной Raft-группы и в спанах/с процессора:
 - запись: `ha` (ленивый fsync) — тысячи записей/с; `ha-strict` — 210 записей/с при 10 параллельных на ноутбуке (кривая C7 на целевом PV — срез 0);
@@ -554,7 +571,9 @@ waitCtx := WithTimeout(ctx, min(publish_timeout (2 s), remaining − publish_res
 
 ### Остановка ингестера
 
-`GracefulStop` gRPC (и `Shutdown` HTTP в 3b) ждёт хэндлеры (каждый ≤ под-дедлайна 2 s) → `otlp_grace` 3,5 s (D-15) → `Journal.Close` (`settler` дожидается завершения всех подтверждений ≤ `publish_timeout`) → `Drain` соединения публикации ≤ 0,5 s → HTTP. Ни один хэндлер не отвечает OK без PubAck.
+`GracefulStop` gRPC (и `Shutdown` HTTP в 3b) ждёт хэндлеры (каждый ≤ под-дедлайна 2 s) → `otlp_grace` 3,5 s (D-15) → `Journal.Close` (ред. 3, асинхронная публикация: `settler` дожидается завершения всех подтверждений ≤ `publish_timeout`) → `Drain` соединения публикации ≤ 0,5 s → HTTP. Ни один хэндлер не отвечает OK без PubAck.
+
+**Сделано в 2b (синхронная публикация, КТ-0).** `Journal.Close(ctx)` сразу отказывает новым `Append` (`ErrUnavailable` + `ErrNotAttempted`, счётчик `Closing`) и ждёт уже идущие — каждый ≤ под-дедлайна; все вызовы `Close` делят одного ожидающего; если кончился ctx самого `Close`, он возвращает обёрнутую ошибку ctx, а Append-ы ещё идут. Порядок `Journal.Close` → `Drain` обязателен: `Drain` **не ждёт** публикации, ожидающие PubAck, — `nats.go` завершает их ошибкой «connection closed», и запрос, который успел бы подтвердиться, получил бы отказ.
 
 ---
 
@@ -659,7 +678,7 @@ waitCtx := WithTimeout(ctx, min(publish_timeout (2 s), remaining − publish_res
 | spool-файл чекпоинта | `Pipeline` пишет (пауза), `checkpoint.Store` читает и удаляет | передача владения через `Close` писателя; новый `Begin`, пока загрузка идёт, — пропуск |
 | бюджет ожидания подтверждений | `Journal.Append` берёт, `settler` отпускает | `semaphore.Weighted`; одна горутина-владелец отпускания |
 | `topology.Builder`, `held` | горутина `Pipeline.Run` | как в шаге 2; `WriteCheckpoint` — в той же горутине между итерациями |
-| изменяемые поля конфигурации стримов | роль `processor` (`EnsureTopology`) | ингестер — `VerifyTopology`, расхождение — exit 1 |
+| изменяемые поля конфигурации стримов | роль `processor` (`EnsureTopology`; с среза 3 — только после взятия аренды) | ингестер — `VerifyTopology`: блокирующее расхождение — exit 1, остальное — заметки в лог |
 | [3b] слоты, доли токенов, справочник, KV токенов | тап / `stats.Handler` / `tokens.Directory.Run` / `faultline tokens` | как в ред. 2 (приложение А) |
 
 ## 3. Форма каждого порта
@@ -978,7 +997,7 @@ FSM ингестера — как в ред. 2 (приложение А) с за
 | **КТ-0** | **Решения о масштабе по числам E0** (P, профиль, лимиты сопоставления, бюджеты, размер пода, ADR-4) | апрув пользователя | |
 | 1 | `natsjs/record` (заголовок 32 B, партиция, `PartitionOf`), `idlerule`, `BenchmarkExport*` | round-trip, CRC до версии, fuzz, 0 аллокаций на спан | pocock |
 | 2 | `natsjs` (`Dial`, `EnsureTopology`/`VerifyTopology`, `classify`) + `natsjs/journal` (партиции, `PublishAsync` или синхронно — по H7, `settler`); FR-ING-003 на встроенном R3 | FMEA 1–6, 12, 14, 15, 17–20 | **concurrency-reviewer** |
-| 3 | `natsjs/feed` (насос, кредит, `ReceivedAt`, пульс, личность, DLQ, стоп), `natsjs/lease` (эпоха), `Commit` по варианту ADR-4 | FMEA 8–11, 22–25 | **concurrency-reviewer** |
+| 3 | `natsjs/feed` (насос, кредит, `ReceivedAt`, пульс, личность, DLQ, стоп), `natsjs/lease` (эпоха), `Commit` по варианту ADR-4; `EnsureTopology` только после аренды и владелец конфигурации стримов при P > 1 | FMEA 8–11, 22–25 | **concurrency-reviewer** |
 | 3c | Чекпоинт: сериализация агрегатов домена (D-26), `Builder.WriteCheckpoint`/`RestoreBuilder`, `natsjs/checkpoint` (spool, Object Store, CAS, удержание), каденс в `Pipeline`, восстановление в `cmd` | I14 через рестарт (kill-тест 100 сценариев), FMEA 7, 16b, 34–37; пробы паузы и восстановления | **concurrency-reviewer**, pocock |
 | **КТ-1** | **I14 через рестарт на дампе OTel Demo и синтетике E0** | иначе — стоп, разбор до продолжения | |
 | 4 | `cmd`: роли, восстановление, шов `drainSource`, бюджеты ролей по КТ-0 | e2e ролей, остановка по бюджету | **concurrency-reviewer** |
@@ -1174,7 +1193,7 @@ func PartitionOf(traceID ids.TraceID, partitions int) uint16
 | [HIGH] Хранение — pstack — два процессора (rolling restart): старый отсекает записи, которые новый ещё не прочитал → потеря подтверждённого | `Recreate` + `replicas: 1`; пропуск отсечки при > 1 консьюмере `faultline-processor-`; `InactiveThreshold` 30 s; тест `TestPurgeIsSkippedWhileAnotherProcessorReads`; открытый вопрос 4 (модель/lease) |
 | [HIGH] Формат — pstack — незнакомая версия пропускалась как poison → rolling-обновление «ингестер раньше процессора» теряет всё подтверждённое новой версии | `ErrUnknownVersion` отдельно от `ErrCorrupt`: насос встаёт, отсечка стоит; порядок выкладки processor → ingester |
 | [HIGH] Поток — pstack — ред. 0 брал гипотезу шага 2 «пульсы пишет приём»: N ингестеров дают N пульсов и пульс перед чужой записью с растущим кандидатом (late_dropped досылки) | пульс пишет процессор CAS-записью (10071 подтверждён замером); голодание CAS — безусловный пульс после 3 конфликтов с остаточным риском в тексте |
-| [HIGH] Ретраи — osmani — неизвестная ошибка NATS отображалась в `INTERNAL`: клиент OTLP её не повторяет и выбрасывает данные | неизвестное → `ErrUnavailable` → `UNAVAILABLE` + Error-лог; исход неизвестен, повтор безопасен по дедупу |
+| [HIGH] Ретраи — osmani — неизвестная ошибка NATS отображалась в `INTERNAL`: клиент OTLP её не повторяет и выбрасывает данные | неизвестное → `ErrUnavailable` → `UNAVAILABLE` + Error-лог (срез 2b: `otlp.export.unavailable`, дросселирован); исход неизвестен, повтор безопасен по дедупу |
 | [MEDIUM] Потребитель — osmani — `Fetch` на итерацию: inbox + горутина + 2 канала + `time.After` на сообщение; замер — 11× медленнее | `Messages()` + насос; `PullMaxMessagesWithBytesLimit(256, 16 MiB)` (иначе канал на 1 000 000) |
 | [MEDIUM] Формат — osmani — межзаписевое интернирование строк в декодере: карта растёт с числом различных имён за жизнь процесса | строки на каждую запись; соответствует `Footprint` |
 | [MEDIUM] Жизненный цикл — osmani — сумма остановки `all` 10,8 s > 10 s | `otlp_grace` 3,5 s (D-15); таблица бюджета |
@@ -1416,8 +1435,8 @@ stateDiagram-v2
 
 | Вопрос дежурного | Сигнал (группа.поле) |
 |---|---|
-| Подтверждаем ли и как быстро? | `journal.published`, `journal.duplicates`, `journal.empty`, гистограмма `journal.puback_le_ms` (1 … 500, +Inf; **таймауты и отмены — в +Inf** со значением `publish_timeout`, иначе при остановке диска p99 «слепнет» — ревью osmani), `journal.puback_p99_ms` |
-| Почему отказываем? | `journal.overloaded`, `journal.unavailable_{no_responders,timeout,disconnected,store_failed,in_process,insufficient_resources,unexpected}`, `journal.too_large`, `journal.interrupted`, `ingest.slot_rejections`, `ingest.rate_rejections` |
+| Подтверждаем ли и как быстро? | `journal.published`, `journal.duplicates`, гистограмма `journal.puback_le_ms` (1 … 2 000, +Inf; публикация, упёршаяся в под-дедлайн 2 s, ложится в +Inf (фактическое время чуть больше границы), под-дедлайн короче 2 s — в корзину своего времени, поэтому p99 при остановке диска не «слепнет» — ревью osmani), `journal.append_le_ms` (весь запрос, только начатые), `journal.puback_p99_ms` |
+| Почему отказываем? | `journal.failed_{причина}` по всем причинам `natsjs.Reason` (`no_responders`, `timeout`, `disconnected`, `store_failed`, `in_process`, `insufficient_resources`, `stream_mismatch`, `sealed`, `account_limits`, `stream_full`, `too_large`, `canceled`, `closed`, `unexpected`), `journal.encode_too_large`, `journal.doomed`, `journal.closing`, `journal.interrupted`, `ingest.slot_rejections`, `ingest.rate_rejections` (имена полей — из `journal.Stats`, перенос в `pipeline.stats` — срез 4) |
 | Хватает ли слотов? | `ingest.slots_in_use_max`, `ingest.slots_busy_ratio` (взвешенная по времени занятость), `otlp.connections_open`, `otlp.connections_closed_by_age` |
 | Аутентификация | `auth.accepted`, `auth.rejected_{missing,malformed,unknown,mismatch,tenant}`, `auth.stale_rejections`, `auth.directory_age_seconds`, `auth.tokens` |
 | Отстаёт ли обработка? | **`feed.lag_seconds`** = время процессора − `ReceivedAt` последней завершённой записи; **`feed.pending_records`** = `LastSeq` стрима − позиция насоса (из `Stream.Info` раз в 30 s — у ред. 1 значение из `NumPending` последней записи замерзало, когда процессор стоял); `journal.stream_bytes`, **`journal.time_to_full_seconds`** = свободно / Δбайт за интервал |
@@ -1432,7 +1451,7 @@ stateDiagram-v2
 |---|---|---|
 | `feed.lag_high` | `feed.lag_seconds` > 30 s два отчёта подряд (NFR-SELF-003: «отставание обработки > 30 s» не позже 2 min) | два отчёта подряд ≤ 30 s |
 | `journal.time_to_full_low` | время до заполнения стрима < 10 min | два отчёта подряд ≥ 20 min |
-| `journal.puback_slow` | p99 PubAck (с таймаутами в +Inf) > 200 ms **два** отчёта подряд (ред. 1 — три, до 120 s; ревью osmani) | два отчёта подряд ≤ 200 ms |
+| `journal.puback_slow` | p99 PubAck (таймауты — в корзине под-дедлайна) > 200 ms **два** отчёта подряд (ред. 1 — три, до 120 s; ревью osmani) | два отчёта подряд ≤ 200 ms |
 | `ingest.slots_saturated` | занятость слотов ≥ 8 из 10 весь интервал два отчёта подряд | два отчёта подряд < 6 |
 | `journal.sequence_gap` | Δ`feed.sequence_gap_records` > 0 | два отчёта подряд без новых |
 | `journal.poison_records` | Δ`feed.poison_skipped` > 0 | два отчёта подряд без новых |
@@ -1443,7 +1462,7 @@ stateDiagram-v2
 | `feed.lease_lost` | аренда потеряна | (процесс выходит) |
 | `auth.token_directory_stale` | возраст справочника > `token_max_staleness` | два отчёта подряд свежий |
 
-Логи — `slog` на границах (тап, насос, обслуживание, репортёр, `run`); Error `journal.poison_record`, `journal.sequence_gap`, `journal.publish_unexpected`, `journal.stream_missing`, `journal.stream_identity_changed`; Warn `otlp.auth.rejected`, `feed.replay_tail_truncated` — дросселированы; ни одного лога на запись или на запрос в штатном режиме.
+Логи — `slog` на границах (тап, насос, обслуживание, репортёр, `run`); Error `journal.poison_record`, `journal.sequence_gap`, `otlp.export.unavailable` (отказ записи, причина в тексте ошибки; срез 2b), `journal.stream_identity_changed`; Warn `otlp.auth.rejected`, `feed.replay_tail_truncated` — дросселированы; ни одного лога на запись или на запрос в штатном режиме.
 
 ### А.6 Конфигурация ред. 2
 
@@ -1507,7 +1526,7 @@ stateDiagram-v2
 
 **Шов остановки в `cmd`** (ревью pocock): `drainSource { Close(); Remainder() remainder }` с двумя реализациями — `memjournal` (`Stats`, `drain_incomplete`, код 1) и `natsjs/feed` (`feed_unprocessed`, код 0). `cmd/faultline/roles.go` — таблица «роль → компоненты»; этапы остановки выводятся из набора компонентов, а не из `switch role` в `stop.go`. Текущий `spanJournal{Close(); Stats() memjournal.Stats}` (`system.go:40–43`) заменяется этим швом.
 
-**Кто создаёт стрим и KV** (ревью pocock и osmani): `EnsureStreams` (создание и `UpdateStream` изменяемых полей: `MaxBytes`, окно дедупа, сжатие) вызывает **только роль `processor`** (и `all`); ингестер вызывает `VerifyStreams` — только сравнение, расхождение → exit 1 с диффом «ожидалось / в NATS». В `StreamConfig.Metadata` хранятся `faultline.tenant` и `faultline.config_version` — расхождение тенанта или версии между ролями ловится при старте. «Неизменяемые» поля (subjects, retention, storage, replicas, discard, `MaxAge`, `MaxMsgSize`) — политика проекта (replicas NATS умеет менять), их смена — ручная операция по README. Ред. 1 позволяла `UpdateStream` каждой роли — при rolling-смене конфига старый и новый поды по кругу ставили бы разные `MaxBytes`.
+**Кто создаёт стрим и KV** (ревью pocock и osmani): `EnsureStreams` (создание и `UpdateStream` изменяемых полей: `MaxBytes`, окно дедупа, сжатие) вызывает **только роль `processor`** (и `all`); ингестер вызывает `VerifyStreams` — только сравнение, расхождение → exit 1 с диффом «ожидалось / в NATS» (ред. 3, срез 2a: `VerifyTopology` — exit 1 только на блокирующие расхождения, метаданные — `faultline.config_version` и `faultline.partitions`, см. «Сделано в 2a/2b»). В `StreamConfig.Metadata` хранятся `faultline.config_version` и `faultline.partitions` (ред. 3: тенант в метаданных стрима не хранится — стримы общие для тенантов, D-3') — расхождение версии или числа партиций между ролями ловится при старте. «Неизменяемые» поля (subjects, retention, storage, replicas, discard, `MaxAge`, `MaxMsgSize`) — политика проекта (replicas NATS умеет менять), их смена — ручная операция по README. Ред. 1 позволяла `UpdateStream` каждой роли — при rolling-смене конфига старый и новый поды по кругу ставили бы разные `MaxBytes`.
 
 **Развёртывание.** Связь с NATS: `.creds` и TLS из Secret. Манифест `processor`: `replicas: 1`, `strategy: Recreate` (вместе с арендой). kind: Docker VM сейчас **15,6 GiB** (`docker info`: 16 787 681 280 B, 12.11). Оценка: OTel Demo ≈ 6,9 GiB + узел ≈ 1 GiB + ингестер 2 GiB + процессор 2 GiB + NATS R1 0,5 GiB = **12,4 GiB**; с R3 (+1 GiB) — 13,4 GiB, на грани. `make demo-3` — NATS R1; R3 — testcontainers без OTel Demo (D-13). До E1 (шаг 6) Docker VM — 20 GiB.
 
@@ -1619,7 +1638,7 @@ type Options struct {
 
 func New(conn *natsjs.Conn, options Options) (*Journal, error)
 func (j *Journal) Append(ctx context.Context, spans []span.Span) error // порт ingest.spanJournal
-func (j *Journal) Stats() Stats // Published, Duplicates, Overloaded, TooLarge, Interrupted, Unavailable [reasons]uint64, AckLatency [buckets]uint64
+func (j *Journal) Stats() Stats // ред. 3, срез 2b: Published, Duplicates, Failed [ReasonCount]uint64, EncodeTooLarge, Doomed, Closing, Interrupted, PubAck и Append [12]uint64
 
 // feed
 var ErrStreamIdentity = errors.New("journal stream identity changed")

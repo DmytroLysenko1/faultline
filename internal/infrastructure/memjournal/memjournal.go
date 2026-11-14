@@ -70,7 +70,7 @@ func (j *Journal) Append(ctx context.Context, spans []span.Span) error {
 	j.lock.Lock()
 	defer j.lock.Unlock()
 	if j.closed {
-		return ingest.ErrUnavailable
+		return errors.Join(ingest.ErrUnavailable, ingest.ErrNotAttempted)
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("append: %w", err)

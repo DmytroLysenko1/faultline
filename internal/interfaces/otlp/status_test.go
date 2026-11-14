@@ -65,8 +65,16 @@ func TestExportMapsEveryAcceptorErrorToItsStatus(t *testing.T) {
 			},
 		},
 		{
-			Name: "closed journal is unavailable",
+			Name: "a journal fault is unavailable",
 			Args: ingest.ErrUnavailable,
+			Want: statusWant{
+				Code:    codes.Unavailable,
+				Message: "span journal unavailable",
+			},
+		},
+		{
+			Name: "closed journal is unavailable",
+			Args: errors.Join(ingest.ErrUnavailable, ingest.ErrNotAttempted),
 			Want: statusWant{
 				Code:    codes.Unavailable,
 				Message: "span journal unavailable",

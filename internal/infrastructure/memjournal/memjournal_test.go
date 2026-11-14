@@ -465,8 +465,9 @@ func TestClosedJournalRejectsAppendsAndDrainsTheRest(t *testing.T) {
 	mustAppend(t, journal, queued)
 	journal.Close()
 	journal.Close()
-	if err := journal.Append(t.Context(), spansOf(t, 1, smallBatch)); !errors.Is(err, ingest.ErrUnavailable) {
-		t.Fatalf("append after close: err = %v, want %v", err, ingest.ErrUnavailable)
+	err := journal.Append(t.Context(), spansOf(t, 1, smallBatch))
+	if !errors.Is(err, ingest.ErrUnavailable) || !errors.Is(err, ingest.ErrNotAttempted) {
+		t.Fatalf("append after close: err = %v, want %v, not attempted", err, ingest.ErrUnavailable)
 	}
 	rest := mustReceive(t, journal, receiveAll)
 	releaseAll(rest)

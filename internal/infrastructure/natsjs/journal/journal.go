@@ -159,7 +159,7 @@ func (j *Journal) enter() error {
 	defer j.lock.Unlock()
 	if j.closed {
 		j.counters.closing.Add(1)
-		return fmt.Errorf("append: %w", errors.Join(ingest.ErrUnavailable, errClosing))
+		return fmt.Errorf("append: %w", errors.Join(ingest.ErrUnavailable, ingest.ErrNotAttempted, errClosing))
 	}
 	j.inflight.Add(1)
 	return nil
@@ -177,7 +177,8 @@ func (j *Journal) budget(ctx context.Context) (time.Duration, error) {
 	remaining := time.Until(deadline)
 	if remaining <= publishReserve+minAttempt {
 		j.counters.doomed.Add(1)
-		return 0, fmt.Errorf("append with %s left: %w", remaining, errors.Join(ingest.ErrUnavailable, errDoomed))
+		return 0, fmt.Errorf("append with %s left: %w", remaining,
+			errors.Join(ingest.ErrUnavailable, ingest.ErrNotAttempted, errDoomed))
 	}
 	return min(j.options.PublishTimeout, remaining-publishReserve), nil
 }

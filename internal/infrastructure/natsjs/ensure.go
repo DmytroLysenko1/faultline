@@ -254,6 +254,7 @@ func verifyStream(ctx context.Context, js jetstream.JetStream, want *jetstream.S
 			Stream: want.Name,
 			Field:  fieldDuplicateWindow,
 			Want:   want.Duplicates.String(),
+			Got:    got.Duplicates.String(),
 		})
 	}
 	return Verification{

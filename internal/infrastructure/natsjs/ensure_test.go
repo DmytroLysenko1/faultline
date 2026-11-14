@@ -229,6 +229,27 @@ func TestVerifyTopologyStopsOnlyWhatTheIngesterDependsOn(t *testing.T) {
 	}
 }
 
+// TestAShortDedupWindowSaysWhatNATSHas: the ingester's start fails with a diff an operator can act
+// on, both sides filled in.
+func TestAShortDedupWindowSaysWhatNATSHas(t *testing.T) {
+	cluster := natsjstest.Start(t, singleNode)
+	ensured(t, cluster, topologyOf(onePartition, oneReplica))
+	ingester := topologyOf(onePartition, oneReplica)
+	ingester.DuplicateWindow = 2 * testWindow
+
+	verified, _ := dial(t, cluster).VerifyTopology(t.Context(), ingester)
+
+	want := []natsjs.Drift{{
+		Stream: ingester.Stream(firstPartition),
+		Field:  "duplicate_window",
+		Want:   (2 * testWindow).String(),
+		Got:    testWindow.String(),
+	}}
+	if diff := cmp.Diff(want, verified.Blocking); diff != "" {
+		t.Errorf("blocking drift (-want +got):\n%s", diff)
+	}
+}
+
 func assertVerification(t *testing.T, verified natsjs.Verification, err error, blocking, note string) {
 	t.Helper()
 	if blocking != "" {

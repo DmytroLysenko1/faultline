@@ -170,6 +170,9 @@ func TestNoPathAnswersOKWithoutAPubAck(t *testing.T) {
 				if diff := cmp.Diff(sentinelsOf(reason), matchedSentinels(err)); diff != "" {
 					t.Errorf("partition %d failing: Append = %v, sentinels (-want +got):\n%s", failing, err, diff)
 				}
+				if errors.Is(err, ingest.ErrNotAttempted) {
+					t.Errorf("partition %d failing: Append = %v says not attempted, but the write was tried", failing, err)
+				}
 				if got := journalOf.Stats().Failed[reason]; got != 1 {
 					t.Errorf("failed[%s] = %d, want 1", reason, got)
 				}
@@ -418,8 +421,10 @@ func TestTooLittleTimeLeftIsRefusedBeforeAnythingIsPublished(t *testing.T) {
 
 		err := appendWithin(t, journalOf, doomedAt, spansAcross(1, 1))
 
-		if !errors.Is(err, ingest.ErrUnavailable) || len(publisher.published()) != 0 {
-			t.Errorf("Append = %v after %d publishes, want ErrUnavailable after none", err, len(publisher.published()))
+		if !errors.Is(err, ingest.ErrUnavailable) || !errors.Is(err, ingest.ErrNotAttempted) ||
+			len(publisher.published()) != 0 {
+			t.Errorf("Append = %v after %d publishes, want ErrUnavailable, not attempted, after none", err,
+				len(publisher.published()))
 		}
 		if stats := journalOf.Stats(); stats.Doomed != 1 || stats.Append != (journal.Histogram{}) {
 			t.Errorf("doomed %d, append latencies %v; want 1 and none: a refused request is not a fast one",
@@ -491,7 +496,8 @@ func TestCloseWaitsForAppendsInFlightAndRefusesNewOnes(t *testing.T) {
 			t.Errorf("Close returned after %s, the append in flight needed %s", took, answerDelay)
 		}
 		late := appendWithin(t, journalOf, callerBudget, spansAcross(1, 2))
-		if !errors.Is(late, ingest.ErrUnavailable) || len(publisher.published()) != 1 || journalOf.Stats().Closing != 1 {
+		if !errors.Is(late, ingest.ErrUnavailable) || !errors.Is(late, ingest.ErrNotAttempted) ||
+			len(publisher.published()) != 1 || journalOf.Stats().Closing != 1 {
 			t.Errorf("Append after Close = %v after %d publishes, want ErrUnavailable and no publish", late,
 				len(publisher.published()))
 		}

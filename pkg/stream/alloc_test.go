@@ -8,6 +8,8 @@ import (
 	"github.com/DmytroLysenko1/faultline/pkg/stream"
 )
 
+const measureAttempts = 3
+
 type countCell struct {
 	requests uint64
 }
@@ -51,7 +53,22 @@ func TestSteadyStateBatchesDoNotAllocate(t *testing.T) {
 	}
 }
 
+// TestFirstBatchWithLateEventsInEveryFinalWindowDoesNotAllocate takes the fewest mallocs of a few attempts: the
+// count is the whole process's, so a GC cycle or a runtime goroutine now and then adds one that is not the batch's,
+// while an allocation of the batch itself shows in every attempt.
 func TestFirstBatchWithLateEventsInEveryFinalWindowDoesNotAllocate(t *testing.T) {
+	allocs := firstBatchMallocs(t)
+	for range measureAttempts - 1 {
+		allocs = min(allocs, firstBatchMallocs(t))
+	}
+
+	if allocs != 0 {
+		t.Fatalf("late events in the 3 final, unretired windows of every series allocated %d times, want 0", allocs)
+	}
+}
+
+func firstBatchMallocs(t *testing.T) uint64 {
+	t.Helper()
 	windows := newCountingWindows(t, capacity, false)
 	start := at(time.Hour)
 	windows.Begin(stream.Mark{Time: start, Known: true}, start)
@@ -64,7 +81,7 @@ func TestFirstBatchWithLateEventsInEveryFinalWindowDoesNotAllocate(t *testing.T)
 	mark := start.Add(4 * windowSize)
 	windows.Begin(stream.Mark{Time: mark, Known: true}, mark)
 
-	allocs := mallocsDuring(func() {
+	return mallocsDuring(func() {
 		for key := range capacity {
 			for window := range 4 {
 				windows.Locate(key, start.Add(time.Duration(window)*windowSize))
@@ -72,14 +89,12 @@ func TestFirstBatchWithLateEventsInEveryFinalWindowDoesNotAllocate(t *testing.T)
 		}
 		windows.End()
 	})
-
-	if allocs != 0 {
-		t.Fatalf("late events in the 3 final, unretired windows of every series allocated %d times, want 0", allocs)
-	}
 }
 
+// mallocsDuring first finishes the GC cycle the setup may have started, so it does not end inside run.
 func mallocsDuring(run func()) uint64 {
 	var before, after runtime.MemStats
+	runtime.GC()
 	runtime.ReadMemStats(&before)
 	run()
 	runtime.ReadMemStats(&after)

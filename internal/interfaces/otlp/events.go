@@ -21,6 +21,7 @@ type events struct {
 	rejected   *throttle.Throttle
 	overloads  *throttle.Throttle
 	rejections *throttle.Throttle
+	outages    *throttle.Throttle
 }
 
 func newEvents(options Options) *events {
@@ -29,6 +30,7 @@ func newEvents(options Options) *events {
 		rejected:   throttle.New(LogInterval, options.Clock),
 		overloads:  throttle.New(LogInterval, options.Clock),
 		rejections: throttle.New(LogInterval, options.Clock),
+		outages:    throttle.New(LogInterval, options.Clock),
 	}
 }
 
@@ -64,6 +66,17 @@ func (e *events) tooLarge(ctx context.Context, err error) {
 
 func (e *events) internal(ctx context.Context, err error) {
 	e.logger.LogAttrs(ctx, slog.LevelError, "otlp.export.failed", withTrace(ctx, slog.Any("error", err))...)
+}
+
+func (e *events) unavailable(ctx context.Context, err error) {
+	suppressed, admitted := e.outages.Admit(0)
+	if !admitted {
+		return
+	}
+	e.logger.LogAttrs(ctx, slog.LevelError, "otlp.export.unavailable", withTrace(ctx,
+		slog.Any("error", err),
+		slog.Int64("suppressed_requests", suppressed.Events),
+	)...)
 }
 
 func (e *events) interrupted(ctx context.Context, err error) {
