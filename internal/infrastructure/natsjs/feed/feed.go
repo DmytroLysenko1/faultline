@@ -15,13 +15,17 @@ import (
 )
 
 var (
-	ErrStreamIdentity = errors.New("journal stream identity changed")
-	ErrPositionRange  = errors.New("checkpoint position is outside the stream")
-	ErrCorruptRecord  = errors.New("corrupt journal record")
-	ErrConsumerLost   = errors.New("journal consumer could not be recreated")
-	ErrLeaseLost      = errors.New("partition lease lost")
-	ErrInvalidOptions = errors.New("invalid feed options")
-	ErrInvalidLimit   = errors.New("receive limit must be positive")
+	ErrStreamIdentity       = errors.New("journal stream identity changed")
+	ErrPositionRange        = errors.New("checkpoint position is outside the stream")
+	ErrUnknownRecordVersion = errors.New("journal record of an unknown version")
+	ErrSystemicCorruption   = errors.New("journal records corrupt one after another")
+	ErrDeadLetterRejected   = errors.New("dead letter queue refused a corrupt record")
+	ErrConsumerLost         = errors.New("journal consumer could not be recreated")
+	ErrLeaseLost            = errors.New("partition lease lost")
+	ErrLeaseSuspended       = errors.New("partition lease not valid for retention")
+	ErrForeignPosition      = errors.New("position of another partition")
+	ErrInvalidOptions       = errors.New("invalid feed options")
+	ErrInvalidLimit         = errors.New("receive limit must be positive")
 )
 
 const (
@@ -35,6 +39,7 @@ const (
 )
 
 type partitionLease interface {
+	Valid() bool
 	Lost() <-chan struct{}
 }
 
@@ -45,20 +50,29 @@ type Options struct {
 	MaxBytes     int64
 	MaxFootprint int64
 	PullMaxBytes int
+	IdleAfter    time.Duration
 }
 
 func (o *Options) validate(start *Start) error {
 	if o == nil {
 		return fmt.Errorf("%w: no options", ErrInvalidOptions)
 	}
-	for _, check := range []func() error{o.validatePartition, o.validateCredit} {
+	for _, check := range []func() error{o.validatePartition, o.validateCredit, o.validateIdle} {
 		if err := check(); err != nil {
 			return err
 		}
 	}
+	return o.validateStart(start)
+}
+
+func (o *Options) validateStart(start *Start) error {
 	if start.After.Partition != o.Partition {
 		return fmt.Errorf("%w: start of partition %d for partition %d", ErrInvalidOptions, start.After.Partition,
 			o.Partition)
+	}
+	if start.After.Sequence > 0 && start.ReceivedAt.IsZero() {
+		return fmt.Errorf("%w: a start after position %d without its ReceivedAt", ErrInvalidOptions,
+			start.After.Sequence)
 	}
 	return nil
 }
@@ -86,6 +100,13 @@ func (o *Options) validateCredit() error {
 	return nil
 }
 
+func (o *Options) validateIdle() error {
+	if o.IdleAfter <= 0 {
+		return fmt.Errorf("%w: idle after %s must be positive", ErrInvalidOptions, o.IdleAfter)
+	}
+	return nil
+}
+
 type Start struct {
 	After      processing.Position
 	ReceivedAt time.Time
@@ -94,6 +115,8 @@ type Start struct {
 
 type Feed struct {
 	created    time.Time
+	partition  uint16
+	stream     partitionStream
 	lease      partitionLease
 	deliveries chan *delivery
 	halted     chan struct{}
@@ -143,6 +166,8 @@ func newFeed(
 	pumping, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	feed := &Feed{
 		created:    source.identity.Created,
+		partition:  options.Partition,
+		stream:     source.stream,
 		lease:      lease,
 		deliveries: make(chan *delivery, queuedDeliveries),
 		halted:     make(chan struct{}),
@@ -154,6 +179,7 @@ func newFeed(
 		counters:   &counters{},
 		timer:      stoppedTimer(),
 	}
+	feed.counters.purged.Store(purgedBefore(source.identity.First))
 	run := newPump(source, start, options, feed)
 	go feed.pump(pumping, run)
 	go feed.watch()

@@ -2,6 +2,7 @@ package feed_test
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"slices"
@@ -49,6 +50,7 @@ const (
 	spansPerRecord  = 2
 	serviceName     = "checkout"
 	nodeNamePrefix  = "n"
+	idleAfter       = 35 * time.Second
 )
 
 func TestMain(m *testing.M) {
@@ -73,6 +75,7 @@ func optionsOf(topology natsjs.Topology) *feed.Options {
 		MaxBytes:     feedMaxBytes,
 		MaxFootprint: maxFootprint,
 		PullMaxBytes: pullMaxBytes,
+		IdleAfter:    idleAfter,
 	}
 }
 
@@ -87,6 +90,10 @@ func newHeldLease() *heldLease {
 
 func (l *heldLease) Lost() <-chan struct{} {
 	return l.lost
+}
+
+func (l *heldLease) Valid() bool {
+	return true
 }
 
 type live struct {
@@ -358,4 +365,80 @@ func (l *live) consumerNode(t *testing.T) int {
 		t.Fatalf("consumer node %q is not a test node: %v", host, err)
 	}
 	return node
+}
+
+const (
+	settleWithin = 30 * time.Second
+	settleEvery  = 100 * time.Millisecond
+)
+
+// publishRaw writes bytes to the partition's subject as no journal would, to land a corrupt record.
+func (l *live) publishRaw(t testing.TB, data []byte) {
+	t.Helper()
+	if err := l.publishData(t, data, rand.Text()); err != nil {
+		t.Fatalf("publish raw: %v", err)
+	}
+}
+
+// deadLetters is what the DLQ holds, in order.
+func (l *live) deadLetters(t testing.TB) []*jetstream.RawStreamMsg {
+	t.Helper()
+	stream, err := l.raw.Stream(t.Context(), natsjs.DeadLetterStream)
+	if err != nil {
+		t.Fatalf("DLQ: %v", err)
+	}
+	state := stream.CachedInfo().State
+	var letters []*jetstream.RawStreamMsg
+	for sequence := state.FirstSeq; state.Msgs > 0 && sequence <= state.LastSeq; sequence++ {
+		letter, err := stream.GetMsg(t.Context(), sequence)
+		if err != nil {
+			t.Fatalf("DLQ message %d: %v", sequence, err)
+		}
+		letters = append(letters, letter)
+	}
+	return letters
+}
+
+// editDeadLetters changes the DLQ's configuration by hand, as an operator would.
+func (l *live) editDeadLetters(t testing.TB, edit func(config *jetstream.StreamConfig)) {
+	t.Helper()
+	stream, err := l.raw.Stream(t.Context(), natsjs.DeadLetterStream)
+	if err != nil {
+		t.Fatalf("DLQ: %v", err)
+	}
+	config := stream.CachedInfo().Config
+	edit(&config)
+	if _, err := l.raw.UpdateStream(t.Context(), config); err != nil {
+		t.Fatalf("edit the DLQ: %v", err)
+	}
+}
+
+// settled waits for condition, a state the feed reaches on its own, within settleWithin.
+func settled(t testing.TB, what string, condition func() bool) {
+	t.Helper()
+	ticker := time.NewTicker(settleEvery)
+	defer ticker.Stop()
+	timeout := time.NewTimer(settleWithin)
+	defer timeout.Stop()
+	for !condition() {
+		select {
+		case <-ticker.C:
+		case <-timeout.C:
+			t.Fatalf("%s not within %s", what, settleWithin)
+		}
+	}
+}
+
+// redial connects the processor again, as after a restart that moved the server to a new port.
+func (l *live) redial(t testing.TB) *natsjs.Conn {
+	t.Helper()
+	conn, err := natsjs.Dial(t.Context(), &natsjs.ConnOptions{
+		URLs: l.cluster.URLs(), Name: t.Name(), ConnectTimeout: connectTimeout, DrainTimeout: drainTimeout,
+	})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	t.Cleanup(func() { closeConn(t, conn) })
+	l.raw = rawJetStream(t, l.cluster)
+	return conn
 }

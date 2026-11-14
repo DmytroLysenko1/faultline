@@ -93,11 +93,20 @@ func Dial(ctx context.Context, options *ConnOptions) (*Conn, error) {
 		Feed:    links[1],
 		Control: links[2],
 	}
-	if maxPayload := conn.Publish.NATS.MaxPayload(); !payloadFits(maxPayload) {
+	if err := payloadsFit(links); err != nil {
 		closeAll(links)
-		return nil, fmt.Errorf("%w: max_payload %d, need %d", ErrPayloadLimit, maxPayload, payloadNeed())
+		return nil, err
 	}
 	return conn, nil
+}
+
+func payloadsFit(links []*Link) error {
+	for index, link := range links {
+		if maxPayload := link.NATS.MaxPayload(); !payloadFits(maxPayload) {
+			return fmt.Errorf("%w: %s max_payload %d, need %d", ErrPayloadLimit, roles[index], maxPayload, payloadNeed())
+		}
+	}
+	return nil
 }
 
 func (c *Conn) Connected() bool {

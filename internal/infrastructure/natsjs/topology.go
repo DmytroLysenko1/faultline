@@ -7,14 +7,17 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
+
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/record"
 )
 
 var (
-	ErrInvalidTopology  = errors.New("invalid journal topology")
-	ErrStreamDrift      = errors.New("journal stream configuration drifted")
-	ErrPayloadLimit     = errors.New("nats max_payload is below the journal record limit")
-	ErrUnknownPartition = errors.New("partition outside the journal topology")
-	ErrNotHolder        = errors.New("not the holder of the topology lease")
+	ErrInvalidTopology    = errors.New("invalid journal topology")
+	ErrStreamDrift        = errors.New("journal stream configuration drifted")
+	ErrPayloadLimit       = errors.New("nats max_payload is below the journal record limit")
+	ErrUnknownPartition   = errors.New("partition outside the journal topology")
+	ErrNotHolder          = errors.New("not the holder of the topology lease")
+	ErrDeadLetterTopology = errors.New("dead letter stream not ready")
 )
 
 const (
@@ -25,6 +28,13 @@ const (
 
 	streamFormat  = "FAULTLINE_SPANS_P%d"
 	subjectFormat = "faultline.spans.p%d"
+
+	DeadLetterStream        = "FAULTLINE_DLQ"
+	deadLetterSubjects      = "faultline.dlq.>"
+	deadLetterFormat        = "faultline.dlq.p%d"
+	deadLetterMaxAge        = 7 * 24 * time.Hour
+	deadLetterMaxBytes      = 1 << 30
+	deadLetterMinDuplicates = 5 * time.Minute
 
 	metaVersion    = "faultline.config_version"
 	metaPartitions = "faultline.partitions"
@@ -95,6 +105,30 @@ func (t Topology) Stream(partition uint16) string {
 
 func (t Topology) Subject(partition uint16) string {
 	return fmt.Sprintf(subjectFormat, partition)
+}
+
+func (t Topology) DeadLetterSubject(partition uint16) string {
+	return fmt.Sprintf(deadLetterFormat, partition)
+}
+
+func (t Topology) deadLetterConfig() jetstream.StreamConfig {
+	return jetstream.StreamConfig{
+		Name:        DeadLetterStream,
+		Subjects:    []string{deadLetterSubjects},
+		Retention:   jetstream.LimitsPolicy,
+		Discard:     jetstream.DiscardNew,
+		Storage:     jetstream.FileStorage,
+		Replicas:    t.Replicas,
+		MaxAge:      deadLetterMaxAge,
+		MaxMsgSize:  record.MaxRecordBytes + HeaderBudget,
+		MaxBytes:    deadLetterMaxBytes,
+		Duplicates:  max(t.DuplicateWindow, deadLetterMinDuplicates),
+		Compression: jetstream.NoCompression,
+		AllowDirect: false,
+		Metadata: map[string]string{
+			metaVersion: strconv.Itoa(t.ConfigVersion),
+		},
+	}
 }
 
 func (t Topology) config(partition uint16) jetstream.StreamConfig {

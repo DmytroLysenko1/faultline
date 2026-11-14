@@ -18,6 +18,7 @@ const (
 	MaxRecordBytes        = 6 << 20
 	MaxTenantBytes        = 63
 	MsgIDLength           = 32
+	HeartbeatTenant       = "faultline"
 	pooledBufferMax       = 1 << 20
 )
 

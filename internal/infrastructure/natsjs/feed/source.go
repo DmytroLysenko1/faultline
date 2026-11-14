@@ -16,8 +16,9 @@ type reader interface {
 	Stop()
 }
 
-type describer interface {
+type partitionStream interface {
 	Describe(ctx context.Context) (identity, error)
+	Purge(ctx context.Context, below uint64) error
 }
 
 type message struct {
@@ -31,6 +32,8 @@ type identity struct {
 	Created time.Time
 	First   uint64
 	Last    uint64
+	Bytes   uint64
+	Msgs    uint64
 }
 
 func (i identity) matches(start *Start) error {
@@ -52,13 +55,17 @@ func identityOf(info *jetstream.StreamInfo) identity {
 		Created: info.Created,
 		First:   info.State.FirstSeq,
 		Last:    info.State.LastSeq,
+		Bytes:   info.State.Bytes,
+		Msgs:    info.State.Msgs,
 	}
 }
 
 type source struct {
 	reader   reader
-	stream   describer
+	stream   partitionStream
 	identity identity
+	letters  deadLetters
+	pulses   pulses
 }
 
 func openSource(
@@ -104,7 +111,25 @@ func readSource(
 		},
 		stream:   stream,
 		identity: found,
+		letters:  letterQueue(js, options),
+		pulses:   partitionPulses(js, options),
 	}, nil
+}
+
+func letterQueue(js jetstream.JetStream, options *Options) deadLetterQueue {
+	return deadLetterQueue{
+		js:       js,
+		topology: options.Topology,
+	}
+}
+
+func partitionPulses(js jetstream.JetStream, options *Options) journalPulses {
+	return journalPulses{
+		js:        js,
+		partition: options.Partition,
+		stream:    options.Topology.Stream(options.Partition),
+		subject:   options.Topology.Subject(options.Partition),
+	}
 }
 
 func discard(
@@ -209,4 +234,8 @@ func (s journalStream) Describe(ctx context.Context) (identity, error) {
 		return identity{}, err
 	}
 	return identityOf(info), nil
+}
+
+func (s journalStream) Purge(ctx context.Context, below uint64) error {
+	return s.stream.Purge(ctx, jetstream.WithPurgeSequence(below))
 }

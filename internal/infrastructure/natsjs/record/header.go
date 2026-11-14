@@ -26,13 +26,14 @@ func ReadHeader(data []byte, partition uint16, maxFootprint int64) (Header, erro
 
 func checkEnvelope(data []byte) error {
 	if !sizeFits(len(data)) {
-		return fmt.Errorf("%w: %d bytes do not fit between the header and the guard", ErrCorrupt, len(data))
+		return corruptBy(CorruptLength, fmt.Errorf("%w: %d bytes do not fit between the header and the guard", ErrCorrupt,
+			len(data)))
 	}
 	if data[0] != magicFirst || data[1] != magicSecond {
-		return fmt.Errorf("%w: bad magic", ErrCorrupt)
+		return corruptBy(CorruptMagic, fmt.Errorf("%w: bad magic", ErrCorrupt))
 	}
 	if binary.LittleEndian.Uint32(data[offsetCRC:]) != checksum(data) {
-		return fmt.Errorf("%w: checksum mismatch", ErrCorrupt)
+		return corruptBy(CorruptChecksum, fmt.Errorf("%w: checksum mismatch", ErrCorrupt))
 	}
 	return nil
 }
@@ -58,11 +59,11 @@ func checkKnown(data []byte) error {
 func parseHeader(data []byte) (Header, error) {
 	tenantEnd := HeaderBytes + int(data[offsetTenantLen])
 	if tenantEnd > len(data) {
-		return Header{}, fmt.Errorf("%w: tenant runs past the record", ErrCorrupt)
+		return Header{}, corruptBy(CorruptTenant, fmt.Errorf("%w: tenant runs past the record", ErrCorrupt))
 	}
 	tenant := string(data[HeaderBytes:tenantEnd])
 	if err := ValidateTenant(tenant); err != nil {
-		return Header{}, fmt.Errorf("%w: %w", ErrCorrupt, err)
+		return Header{}, corruptBy(CorruptTenant, fmt.Errorf("%w: %w", ErrCorrupt, err))
 	}
 	return Header{
 		Version:      data[offsetVersion],
@@ -78,9 +79,11 @@ func parseHeader(data []byte) (Header, error) {
 func checkHeader(header *Header, size int, partition uint16, maxFootprint int64) error {
 	switch {
 	case header.Partition != partition:
-		return fmt.Errorf("%w: record of partition %d in partition %d", ErrCorrupt, header.Partition, partition)
+		return corruptBy(CorruptPartition, fmt.Errorf("%w: record of partition %d in partition %d", ErrCorrupt,
+			header.Partition, partition))
 	case header.Weight > maxFootprint:
-		return fmt.Errorf("%w: weight %d exceeds the largest batch footprint %d", ErrCorrupt, header.Weight, maxFootprint)
+		return corruptBy(CorruptWeight, fmt.Errorf("%w: weight %d exceeds the largest batch footprint %d", ErrCorrupt,
+			header.Weight, maxFootprint))
 	}
 	return checkShape(header, size-HeaderBytes-len(header.Tenant))
 }
@@ -90,14 +93,15 @@ func checkShape(header *Header, bodyBytes int) error {
 		return checkHeartbeat(header.Weight, bodyBytes)
 	}
 	if header.Weight == 0 {
-		return fmt.Errorf("%w: batch without weight", ErrCorrupt)
+		return corruptBy(CorruptShape, fmt.Errorf("%w: batch without weight", ErrCorrupt))
 	}
 	return nil
 }
 
 func checkHeartbeat(weight int64, bodyBytes int) error {
 	if weight != 0 || bodyBytes != 0 {
-		return fmt.Errorf("%w: heartbeat with weight %d and %d body bytes", ErrCorrupt, weight, bodyBytes)
+		return corruptBy(CorruptShape, fmt.Errorf("%w: heartbeat with weight %d and %d body bytes", ErrCorrupt, weight,
+			bodyBytes))
 	}
 	return nil
 }

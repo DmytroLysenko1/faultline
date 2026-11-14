@@ -124,8 +124,9 @@ func TestPendingAndLagFollowTheLastRecordRead(t *testing.T) {
 
 func TestReceivedAtTakesTheEarlierClockAndNeverGoesBack(t *testing.T) {
 	type stamps struct {
-		leader time.Time
-		writer time.Time
+		leader    time.Time
+		writer    time.Time
+		heartbeat bool
 	}
 	tests := []struct {
 		name        string
@@ -158,6 +159,11 @@ func TestReceivedAtTakesTheEarlierClockAndNeverGoesBack(t *testing.T) {
 			wantClamped: 1,
 		},
 		{
+			name:    "a heartbeat carries journal time, so its skew is not counted",
+			records: []stamps{{leader: at(5 * time.Second), writer: at(2 * time.Second), heartbeat: true}},
+			want:    []time.Time{at(2 * time.Second)},
+		},
+		{
 			name:        "after a restore the checkpoint's time is the floor",
 			resumedAt:   at(time.Minute),
 			records:     []stamps{{leader: at(30 * time.Second), writer: at(30 * time.Second)}},
@@ -170,7 +176,11 @@ func TestReceivedAtTakesTheEarlierClockAndNeverGoesBack(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				h := open(t, &Start{ReceivedAt: tt.resumedAt}, testOptions(), answering())
 				for index, stamp := range tt.records {
-					h.reader.push(step{next: heartbeatAt(t, uint64(index+1), stamp.writer, stamp.leader)})
+					next := batchAt(t, uint64(index+1), spansOf(t, 0), stamp.writer, stamp.leader)
+					if stamp.heartbeat {
+						next = heartbeatAt(t, uint64(index+1), stamp.writer, stamp.leader)
+					}
+					h.reader.push(step{next: next})
 				}
 
 				got, err := receiveNow(t, h.feed)
@@ -372,42 +382,43 @@ func TestAConsumerCheckedOnceIsNotCheckedAgain(t *testing.T) {
 func TestTheFeedStopsWithItsCauseAndHandsOutNothingMore(t *testing.T) {
 	tests := []struct {
 		name     string
-		failing  func(t *testing.T) step
+		failing  func(t *testing.T, h *harness) step
 		wantErr  error
 		wantStop StopReason
 	}{
 		{
 			name:     "a stream deleted while nats.go recreated the consumer",
-			failing:  func(*testing.T) step { return step{err: jetstream.ErrStreamNotFound} },
+			failing:  func(*testing.T, *harness) step { return step{err: jetstream.ErrStreamNotFound} },
 			wantErr:  ErrStreamIdentity,
 			wantStop: StopIdentity,
 		},
 		{
 			name:     "a consumer nats.go could not recreate",
-			failing:  func(*testing.T) step { return step{err: errors.New("reset attempts exhausted")} },
+			failing:  func(*testing.T, *harness) step { return step{err: errors.New("reset attempts exhausted")} },
 			wantErr:  ErrConsumerLost,
 			wantStop: StopConsumerLost,
 		},
 		{
-			name:     "a corrupt record",
-			failing:  func(*testing.T) step { return step{next: &message{data: []byte("garbage"), sequence: 2}} },
-			wantErr:  ErrCorruptRecord,
-			wantStop: StopCorrupt,
+			name:     "a record of a version this processor does not know",
+			failing:  func(t *testing.T, _ *harness) step { return step{next: unknownVersionAt(t, 2)} },
+			wantErr:  ErrUnknownRecordVersion,
+			wantStop: StopUnknownVersion,
 		},
 		{
-			name: "a record of another partition",
-			failing: func(t *testing.T) step {
-				return step{next: batchOf(t, 1, 2, spansOf(t, 0), at(0), at(0))}
+			name: "a corrupt record the DLQ refuses for good",
+			failing: func(_ *testing.T, h *harness) step {
+				h.letters.refuse(&jetstream.APIError{ErrorCode: codeSealed})
+				return step{next: &message{data: []byte("garbage"), sequence: 2}}
 			},
-			wantErr:  ErrCorruptRecord,
-			wantStop: StopCorrupt,
+			wantErr:  ErrDeadLetterRejected,
+			wantStop: StopDeadLetterRejected,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				h := openPlain(t)
-				h.reader.push(step{next: heartbeatAt(t, 1, at(0), at(0))}, tt.failing(t))
+				h.reader.push(step{next: heartbeatAt(t, 1, at(0), at(0))}, tt.failing(t, h))
 				synctest.Wait()
 
 				got, err := h.feed.Receive(t.Context(), receiveLimit, longWait)
@@ -614,11 +625,11 @@ func TestAWaitingReceiveIsAnsweredByAHaltAtOnce(t *testing.T) {
 			wantErr: processing.ErrFeedClosed,
 		},
 		{
-			name: "a corrupt record",
-			halt: func(_ *testing.T, h *harness) func() {
-				return func() { h.reader.push(step{next: &message{data: []byte("garbage"), sequence: 1}}) }
+			name: "a record of an unknown version",
+			halt: func(t *testing.T, h *harness) func() {
+				return func() { h.reader.push(step{next: unknownVersionAt(t, 1)}) }
 			},
-			wantErr: ErrCorruptRecord,
+			wantErr: ErrUnknownRecordVersion,
 		},
 	}
 	for _, tt := range tests {
@@ -645,7 +656,8 @@ func TestEveryStopReasonHasItsMetricName(t *testing.T) {
 		got = append(got, reason.String())
 	}
 
-	want := []string{"none", "closed", "lease_lost", "identity", "corrupt", "consumer_lost", "unknown"}
+	want := []string{"none", "closed", "lease_lost", "identity", "unknown_version", "systemic_corruption",
+		"dead_letter_rejected", "consumer_lost", "unknown"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("stop reason names mismatch (-want +got):\n%s", diff)
 	}

@@ -76,7 +76,7 @@ func TestEveryFailureIsExactlyOneIngestSentinel(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := classify(tt.args)
+			got := Classify(tt.args)
 
 			if got.Reason != tt.wantReason {
 				t.Errorf("reason = %s, want %s", got.Reason, tt.wantReason)

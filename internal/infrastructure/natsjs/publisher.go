@@ -59,7 +59,7 @@ func (p *Publisher) Publish(ctx context.Context, partition uint16, data []byte, 
 		jetstream.WithRetryWait(publishRetryWait),
 	)
 	if err != nil {
-		return false, classify(err)
+		return false, Classify(err)
 	}
 	if ack.Stream != p.Streams[partition] {
 		return false, &PublishError{

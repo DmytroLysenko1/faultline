@@ -177,7 +177,7 @@ OK на `Export` отдаётся **только** после того, как `
 |---|---|---|
 | `ErrorCode 10077` с описанием `maximum bytes exceeded` | стрим полон (`DiscardNew`) | `ingest.ErrOverloaded` |
 | `ErrorCode 10077` с другим описанием (`store closed` и пр.) | сбой хранилища, смена лидера | `ingest.ErrUnavailable` (причина `store_failed`) |
-| `ErrorCode 10071` или **`10164`** | CAS-конфликт «wrong last sequence» (10164 — запись в полёте на subject, `jetstream_batching.go:782–791`; проба: `map[10164:200]` под потоком R3) | для пульса — «конфликт», не ошибка |
+| `ErrorCode 10071` или **`10164`** | CAS-конфликт «wrong last sequence». 10164 — только в атомарном батче и при CAS по subject (`jetstream_batching.go:759, :777–791`; проба ред. 2 `map[10164:200]` — CAS по subject); CAS по последней позиции стрима, которым пишется пульс (3.3), на одиночной публикации отвечает 10071 | для пульса — «конфликт», не ошибка (оба кода) |
 | `ErrorCode 10158` | дубль в полёте | `ingest.ErrUnavailable` (причина `in_process`) |
 | `ErrorCode 10023` или `10047` | лимит ресурсов (10023 — при публикации, 10047 — при создании и обновлении стрима) | `ingest.ErrUnavailable` (причина `insufficient_resources`) |
 | `ErrNoStreamResponse`, наш под-дедлайн, `ErrReconnectBufExceeded`, `ErrConnectionClosed` | недоступность | `ingest.ErrUnavailable` |
@@ -299,7 +299,7 @@ OK на `Export` отдаётся **только** после того, как `
 
 **`ReceivedAt = max(предыдущее, min(метка лидера, метка писателя))`** в порядке позиций партиции. Метку ставит лидер при предложении (`jetstream_batching.go:1077`), реплики применяют её из Raft-записи (`jetstream_cluster.go:5958`); метка писателя — в заголовке записи. Сбитые часы одного из двух не проходят через `min`; часы позади «замораживают» время максимумом не дольше величины сдвига. Видно: `feed.clock_skew_max_ms`, self-alert `journal.clock_skew` > 5 s (A-03 становится проверкой). **Предыдущее значение хранится в чекпоинте** — после восстановления повтор продолжает ту же функцию, и I14 держится на границе рестарта.
 
-**Пульс** пишет только держатель аренды партиции (D-19) и только когда насос догнал стрим (`NumPending` последней записи = 0, насос не ждёт кредит, не стоит на DLQ, не в «стопе»): правило `idlerule` (общее с `memjournal`) — была запись с данными; наибольший кандидат не рос `idle_advance_after` (35 s). Публикация — пустая запись «пульс» с `Nats-Expected-Last-Subject-Sequence` = последняя прочитанная позиция; конфликт **10071 или 10164** — пульса нет, правило проверится снова. Голодание CAS засчитывается только при прочитанных между попытками записях без роста кандидата; после 3 таких конфликтов — безусловный пульс (`feed.heartbeat_unconditional`). Состояние правила простоя после восстановления начинается заново («до первой записи с данными») — пульсы — записи журнала, детерминизм от этого не зависит, а первый пульс после рестарта приходит не раньше `idle_advance_after`.
+**Пульс** пишет только держатель аренды партиции (D-19, `Valid()` перед каждой публикацией) и только когда насос догнал стрим: последний `Next` вернул таймаут или у последней прочитанной записи `NumPending` = 0; насос не ждёт кредит, не стоит на DLQ и не в «стопе». Правило `idlerule` общее с `memjournal`: была запись с данными, и наибольший кандидат не рос `idle_advance_after` (35 s). «Сейчас» правила — время журнала: последний `ReceivedAt` плюс монотонное время с его доставки. Этим же временем помечен пульс, поэтому отстающие часы процессора не держат правило `Due`. Пульс пишется не чаще раза в `idle_advance_after`. Публикация — пустая запись «пульс» с `Nats-Expected-Last-Sequence` = последняя прочитанная позиция стрима любого вида: пакет, пульс или запись, ушедшая в DLQ; при `Open` — позиция чекпоинта или `max(FirstSeq, 1) − 1`. Msg-ID — `hb-p<n>-<база>`. CAS по стриму переживает `Purge` и рестарт: `lseq` не уменьшается. Конфликт 10071 — пульса нет, правило проверится на следующем возврате `Next`. Прочие ошибки — `feed.heartbeat_failures`, не стоп. Голодание засчитывается, только если между попытками насос прочитал записи, а правило осталось `Due`. На 3-м таком конфликте подряд пишется безусловный пульс (`-u`, `feed.heartbeats_unconditional`); прочитанный пульс закрывает простой и начинает серию заново. Конфликт без прочитанного — `feed.heartbeat_conflicts_unread`: консьюмер не отдаёт записанное, конфликт не засчитывается. После восстановления правило начинается с чекпоинта (`Started`, `Since = ReceivedAt` чекпоинта): первый пульс — не раньше `idle_advance_after` и не позже ещё 15 s (`nextWait`).
 
 Гипотеза шага 2 «пульсы пишет процесс приёма» **опровергнута** (N ингестеров → N пульсов и пульс перед чужой записью); «`ReceivedAt` ставит журнал NATS» — **подтверждена с уточнением** (`min` двух меток).
 
@@ -317,7 +317,7 @@ OK на `Export` отдаётся **только** после того, как `
 |---|---|---|
 | Консьюмер | эфемерный, `AckNone`, `OptStartSeq` = позиция чекпоинта + 1 | durable `processor-p<n>` (создаёт `EnsureTopology`), `AckAll`, `PriorityPolicyPinned` (`consumer_config.go:363`) — сервер держит одного активного читателя |
 | Старт | `OptStartSeq` | `ResetConsumerToSequence(позиция + 1)` (менеджер консьюмеров стрима, `stream.go:125–133`) — убирает ожидание `AckWait` и переупорядочивание |
-| Удержание | стрим `Limits` + `DiscardNew` + `MaxBytes` + `MaxAge 0`; процессор после фиксации чекпоинта: `Purge(WithPurgeSubject, WithPurgeSequence(позиция + 1))` | стрим `Interest` + `DiscardNew` + `MaxBytes`; процессор после фиксации чекпоинта: `AckAll(позиция)`; сервер удаляет запись, когда её подтвердили **все** группы читателей (шаг 4: сырые события — вторая группа). `Interest` не хранит записи только при **нуле** консьюмеров (`stream.go:7256–7259`); durable существует и пока процесс лежит |
+| Удержание | стрим `Limits` + `DiscardNew` + `MaxBytes` + `MaxAge 0`; процессор после фиксации чекпоинта: `Purge(WithPurgeSequence(позиция + 1))` без `WithPurgeSubject` (subject в стриме один — быстрый путь compact) | стрим `Interest` + `DiscardNew` + `MaxBytes`; процессор после фиксации чекпоинта: `AckAll(позиция)`; сервер удаляет запись, когда её подтвердили **все** группы читателей (шаг 4: сырые события — вторая группа). `Interest` не хранит записи только при **нуле** консьюмеров (`stream.go:7256–7259`); durable существует и пока процесс лежит |
 | Пересоздание стрима | проверка личности перед `Purge` | durable исчезает вместе со стримом → ошибка насоса; личность стрима сверяется с чекпоинтом при восстановлении |
 | Что мерить в спайке | — | порядок доставки после `ResetConsumerToSequence` и смены лидера; задержка `AckAll`; аллокации; поведение при `DiscardNew` и отстающей группе; что делает `Interest`, если durable удалён руками |
 
@@ -352,6 +352,15 @@ OK на `Export` отдаётся **только** после того, как `
 
 Порядок «загружен → указатель → удержание» — единственный: обратный удалил бы из журнала записи, не покрытые надёжным чекпоинтом.
 
+**Сделано в 3.3** (`natsjs/feed`, `natsjs`, `natsjs/record`; дизайн-контракт среза — итоговая редакция после шести ревизий):
+- **DLQ.** `EnsureTopology` держателя `p0` создаёт `FAULTLINE_DLQ` (`faultline.dlq.>`) после стримов партиций: File, R партиций, `DiscardNew`, 7 d, 1 GiB, `MaxMsgSize = MaxRecordBytes + HeaderBudget`, окно дедупа `max(DuplicateWindow, 5 min)`, `AllowDirect false`. Его отказ — `natsjs.ErrDeadLetterTopology`, не фатальный (стримы партиций уже готовы). Изменяемые поля (окно дедупа, `allow_direct` — у всех стримов) `EnsureTopology` возвращает к нужным. `natsjs.Classify` экспортирован; `Dial` проверяет `max_payload` у всех трёх соединений.
+- **Порча.** `record.CorruptError{Reason}` (length, magic, crc, tenant, partition, weight, shape, body). Одиночная → копия с заголовками `Faultline-*` (тело ≤ `MaxRecordBytes`, `Faultline-Truncated`), Msg-ID `dlq-p<n>-<Created>-<seq>`, позиция завершается после PubAck; кредит возвращается до ожидания. Окно `{low, high}`: стоп `ErrSystemicCorruption` до 3-й копии, если обе позиции `p ≠ 0 ∧ p < seq ∧ p + 100 > seq`; засев лениво на первой порче из последней копии своей партиции с тем же `Created` (не разбирается, `low ≥ high ∧ low ≠ 0` или `high` дальше `LastSeq` при `Open` — пустое окно и `dlq_seed_malformed`; 10059/10037 — пустое; прочее — удержание). Незнакомая версия/вид/флаги — `ErrUnknownRecordVersion`.
+- **Удержание на DLQ.** Попытка 2 s, повтор 1 s без предела: `Close`, отмена и потеря аренды — тихий выход; `!Valid()` — без попытки; sealed / чужой стрим / слишком большое — `ErrDeadLetterRejected`; закрытое соединение вне остановки — `ErrConsumerLost`; всё прочее — удержание, `DeadLetterStalled` + `DeadLetterLastError` (`feed.DeadLetterClass`).
+- **Пульс.** Насос держателя, `Options.IdleAfter` (35 s), порт аренды `Valid()` + `Lost()`, тенант `record.HeartbeatTenant`. CAS `Nats-Expected-Last-Sequence` = последняя прочитанная позиция любого вида, метка — время журнала, не чаще раза в `IdleAfter`; конфликт (10071/10164), без повтора; безусловный `-u` на 3-м конфликте подряд с прочитанным между ними; без прочитанного — `HeartbeatConflictsUnread`. `ClockSkewMax` — только по пакетам. `Open` отказывает старту с чекпоинтом без `ReceivedAt`.
+- **`Commit(ctx, through)`.** `min(ctx, 5 s)`: стоп → `processing.ErrFeedClosed`, `!Valid` → `ErrLeaseSuspended`, чужая партиция → `ErrForeignPosition`, `≤ purged` → nil без запросов; `Info`: `Created` → `ErrStreamIdentity`, `> LastSeq` → `ErrPositionRange`; стоп и аренда ещё раз; `Purge(WithPurgeSequence(target + 1))`, шаг `256 MiB / средняя запись` от `max(purged, FirstSeq − 1)`, `purged` — CAS-max. `Close` не ждёт `Commit` в полёте: `through` обязан быть в чекпоинте, выигравшем CAS указателя.
+- **Stats:** `DeadLettered`, `DeadLetterStalled`, `DeadLetterLastError`, `HeartbeatsWritten`, `HeartbeatConflicts`, `HeartbeatConflictsUnread`, `HeartbeatFailures`, `HeartbeatsUnconditional`, `PurgedThrough`, `PurgeFailures`; I18 в покое `Read = DeliveredBatches + Heartbeats + DeadLettered + Held`. `StopReason`: `corrupt` убран; `unknown_version`, `systemic_corruption`, `dead_letter_rejected`. `ErrCorruptRecord`/`StopCorrupt` удалены.
+- **Тесты.** Unit (synctest) на фейках-имитациях: DLQ с дедупом, его истечением и чисткой оператором; журнал с CAS по последней позиции и вклинивающимся ингестером; живой стрим, который `Purge` уменьшает. Встроенный NATS: копия и дедуп через рестарт, обрезка у предела, системная порча через рестарт, DLQ удалён / полон / sealed / мал / чужой стрим, `Close` и закрытое соединение во время удержания, пульс R1/R3 на новом, вычищенном, восстановленном, перезапущенном и усечённом стриме и за порченой записью, `Commit` и шаг 256 MiB, давление вместо потери (FMEA 8), DLQ в `EnsureTopology`. Мутанты: см. отчёт среза. Не покрыто живьём: 10158 на R3 с погашенными узлами и 10002 по лимиту аккаунта — только unit по кодам.
+
 **Восстановление при старте процессора:** аренда → эпоха → `checkpoint.Store.Latest(p<n>)` → проверка: личность стрима совпадает, версии совместимы, лимиты совместимы, позиция ∈ [первая позиция стрима − 1, последняя] → `RestoreBuilder` → `Feed.Open(с позиции + 1, ReceivedAt)` → `Pipeline`. Указателя нет (первый старт) — пустое состояние, чтение с первой позиции стрима. Любая проверка не прошла — **fail-closed**: выход с кодом 1 и Error `checkpoint.restore_failed` с причиной; оператор осознанно запускает с `FAULTLINE_CHECKPOINT_RECOVERY=discard` — тогда пустое состояние с первой оставшейся позиции и Error `checkpoint.discarded` (явная, учтённая потеря состояния, а не молчаливая).
 
 **Эпоха как fencing-токен (D-26, ревью pocock).** Эпоха (ревизия ключа аренды при `kv.Create`) входит в имя чекпоинта, проверяется CAS указателя и (шаг 4) входит в версию строк финалов: `ReplacingMergeTree(version = (эпоха, ревизия окна))` — финал устаревшего держателя после паузы GC не перезапишет финал нового. Аренда без эпохи (ред. 2) давала «последний победил».
@@ -360,7 +369,7 @@ OK на `Export` отдаётся **только** после того, как `
 
 - Удаляет записи только удержание после фиксации чекпоинта, и только ниже его позиции (I15); `MaxAge = 0`, `DiscardNew` — сервер сам не удаляет необработанное (ADR-4: отвергнуты `DiscardOld`, `MaxAge`, `WorkQueue`; `Interest` — только с durable, вариант (б)).
 - Размер стрима в норме ≈ данные за `checkpoint_interval` + время загрузки (≈ 10–20 s); «стрим полон» ⇔ процессор или загрузка чекпоинта отстают на `MaxBytes`. Время до заполнения при стоящем процессоре: 125 000 спанов/с × 80 B (E0) ≈ 9,5 MiB/s на партицию → `ha` 32 GiB на партицию ≈ 57 min (горячая партиция при перекосе 1,26 — ≈ 45 min), `dev` 2 GiB ≈ 3,6 min при той же скорости (на демо — часы). Хвост повтора, кольцо выборок, валидатор `DESIGN_EVENTS_PER_SEC` ред. 2 — **удалены** (D-23 отменён).
-- Отсечка не больше 256 MiB за цикл (после долгого простоя `compactLocked` удаляет блоки под блокировкой хранилища — шаг ограничивает всплеск PubAck).
+- Отсечка не больше 256 MiB за цикл (после долгого простоя `compactLocked` удаляет блоки под блокировкой хранилища — шаг ограничивает всплеск PubAck). `Commit` (3.3) берёт шаг как `256 MiB / средняя запись` из того же `Info`; снять шаг — по перемеру p99 `Purge` на File R3 целевого диска (срез 7).
 
 ### Восстановление после `SIGKILL` — что получает пользователь
 
@@ -375,7 +384,13 @@ OK на `Export` отдаётся **только** после того, как `
 
 ### Пробелы, poison pill, системная порча, стрим пересоздан
 
-Как в ред. 2 (DLQ для одиночной порчи с PubAck перед завершением позиции; 3 подряд или > 1 %/min — стоп; неизвестная версия — стоп; пробел — счётчик и alert; личность стрима — сверка при восстановлении и раз в 30 s, нарушение — стоп без удержания, код 1; `MaxResetAttempts` 5). Новое: позиция повреждённой записи, ушедшей в DLQ, «применена» для чекпоинта (повтор после восстановления её не переиграет, DLQ-публикация идемпотентна по `Msg-Id` = SHA-256 байтов). `/healthz` (liveness) остаётся 200 при стопе насоса — граф в памяти отдаётся; `/readyz` → 503.
+**Одиночная порча** — CRC, магия, длина, тенант, партиция, вес, форма, тело или отказ `batch.NewOwning`. Копия уходит в `FAULTLINE_DLQ` (`faultline.dlq.p<n>`, Msg-ID `dlq-p<n>-<Created>-<seq>`, тело ≤ `MaxRecordBytes`, заголовки `Faultline-*` с окном порчи). Позиция завершается только после PubAck. Позиция из DLQ в чекпоинт не попадает: чекпоинт сдвигается следующей записью или пульсом, а повтор после восстановления публикует ту же копию (в окне дедупа — `Duplicate`).
+
+**Системная порча** — 3 порчи на отрезке 100 позиций стрима; считаются только позиции раньше текущей. Стоп наступает до публикации 3-й копии. Окно `{low, high}` несёт каждая копия (`Faultline-Window`). Насос засевает его лениво — на первой порче жизни фида, из последней копии своей партиции с тем же `Created`; ошибка засева — удержание. **Неизвестная версия**, вид или флаги при верном CRC — стоп.
+
+**Отказы DLQ.** DLQ недоступен, полон, упёрся в лимит аккаунта, ответил 10158, нет прав — **удержание**: повтор раз в 1 s, `dlq_stalled` с классом, стопа нет. Постоянные отказы — sealed, чужой стрим, слишком большое — стоп `dead_letter_rejected`. Закрытое соединение фида вне остановки — стоп `consumer_lost`.
+
+**Личность стрима** сверяется при `Open`, после каждого пересоздания консьюмера и перед `Purge`. Нарушение — стоп без удержания, код 1. `/healthz` (liveness) остаётся 200 при стопе насоса — граф в памяти отдаётся; `/readyz` → 503.
 
 ### Аренда партиции (D-19, ADR-6)
 
@@ -492,7 +507,7 @@ OK на `Export` отдаётся **только** после того, как `
 | Лимит tombstones | **1,5 млн** (+≈ 60 MiB) — **D-* на апрув** | при P = 8 модель даёт 98 % лимита 1 млн на горячей партиции — без запаса |
 | `max_pending` / `tombstoneTTL` | **200 000 / 15 s** | вместимость при 125 000 подтверждена (0 вытеснений, пик 66 %); на горячей партиции — 83 % (модель); двойной счёт 6 ppm и завышение «неотвеченных» — свойства сопоставления, не лимитов (H6) |
 | Ёмкость партиции (цель) | **157 500 спанов/с на горячей партиции** при 1 млн / P = 8 | ограничивает сопоставление (модель); запись — 1,9–3,8× запаса (H1, открытая нагрузка), процессор — ≤ 383 000 (H5, верхняя граница) |
-| `FAULTLINE_STREAM_MAX_BYTES` | **32 GiB на партицию**; `max_file_store` узла **≥ P × MaxBytes + дедуп** (≥ 256 GiB + 0,4 GiB при P = 8) | горячая партиция 157 500 × 80 B ≈ 12 MiB/s → 32 GiB ≈ 45 min простоя процессора (средняя ≈ 57 min) ≥ 30 min FMEA 8; NATS резервирует `MaxBytes` (ошибка 10005 на стенде) |
+| `FAULTLINE_STREAM_MAX_BYTES` | **32 GiB на партицию**; `max_file_store` узла **≥ P × MaxBytes + 1 GiB DLQ** на реплику (≥ 257 GiB при P = 8; индекс дедупа ≈ 0,4 GiB — в памяти сервера, не в файлах) | горячая партиция 157 500 × 80 B ≈ 12 MiB/s → 32 GiB ≈ 45 min простоя процессора (средняя ≈ 57 min) ≥ 30 min FMEA 8; NATS резервирует `MaxBytes` (ошибка 10005 на стенде) |
 | Размер пода процессора | **1 ядро, `GOMEMLIMIT` 1 600 MiB, лимит 2 GiB** — без D-* | H5: куча пик 675 MiB при 125 000; горячая партиция 157 500 — ≈ 850 MiB (модель) |
 | Режим публикации | **синхронный** (подтверждение — когда подтверждены все записи запроса), **записи запроса по партициям — параллельно** (срез 2) | H7 не решена; последовательная публикация 8 записей умножает задержку запроса (стенд `journal.go:226–236`) |
 | Число ингестеров на 1 млн | **не решено**; ≥ 10 по замеру при P = 1 | H8: при P = 8 не мерилось — повтор E0.4 после среза 2 |
@@ -691,7 +706,7 @@ waitCtx := WithTimeout(ctx, min(publish_timeout (2 s), remaining − publish_res
 | указатель чекпоинта партиции | `checkpoint.Store` держателя аренды | CAS `kv.Update(ревизия)` + эпоха в указателе не больше своей |
 | объекты чекпоинта | `checkpoint.Store` | имя содержит эпоху и позицию — разные держатели не пишут в один объект |
 | удержание журнала (`Purge` / `AckAll`) | `checkpoint.Store` → `Feed.Commit` | только после успешного CAS указателя |
-| пульс партиции | обслуживание `Feed` держателя аренды | CAS `Nats-Expected-Last-Subject-Sequence` (10071/10164) |
+| пульс партиции | насос `Feed` держателя аренды | CAS `Nats-Expected-Last-Sequence` по стриму (10071) + `Valid()` перед публикацией |
 | позиция чтения, `ReceivedAt` | насос `Feed` | single-writer |
 | кредит декодированных байтов | `semaphore.Weighted` `Feed` | `Acquire` — насос, `Release` — доставка (`sync.OnceFunc`) |
 | spool-файл чекпоинта | `Pipeline` пишет (пауза), `checkpoint.Store` читает и удаляет | передача владения через `Close` писателя; новый `Begin`, пока загрузка идёт, — пропуск |
@@ -796,7 +811,7 @@ Circuit breaker не нужен: зависимость одна (NATS), отк�
 | 6a–c | NATS недоступен при старте / во время / при остановке | exit 1 / `UNAVAILABLE` за 55 µs / `UNAVAILABLE` | — | I13 | E (как в ред. 2 (приложение А)) |
 | 7 | **процессор убит `SIGKILL`** | ничего | состояние из чекпоинта ≤ 10 s + повтор с его позиции; финалы = непрерывный прогон | I14, I15 | E `TestKilledProcessorProducesTheSameFinalsAsAnUninterruptedRun`; C `TestKillLeaderAndProcessorTogether` |
 | 8 | процессор медленнее входа 30 min | OK, пока стрим не полон, затем `RESOURCE_EXHAUSTED` | ничего не удалено; чекпоинты идут, удержание отстаёт; `feed.lag_seconds`, `journal.time_to_full_low` | I15, NFR-SELF-003 | E `TestASlowProcessorTurnsIntoBackpressureNotLoss`; L E0.3 |
-| 9 | недекодируемая запись / неизвестная версия | ничего | DLQ и пропуск / стоп | I18 | E (как в ред. 2 (приложение А)) |
+| 9 | недекодируемая запись / неизвестная версия | ничего | DLQ и пропуск после PubAck; DLQ недоступен — удержание; постоянный отказ DLQ или закрытое соединение фида — стоп / неизвестная версия — стоп | I18, I19 | U+E `TestCorruptRecordGoesToTheDLQAndIsSkipped`, `TestDLQOutageStallsVisibly`, `TestUnknownVersionHaltsTheFeedWithoutSkipping` |
 | 10 | пробел в последовательности | ничего | учтён, alert | I18 | E `TestASequenceGapIsCountedAndAlerted` |
 | 11 | партиция без трафика | ничего | пульсы держателя аренды | I9 | E `TestAnIdlePartitionGetsHeartbeatsFromItsProcessor` |
 | 12 | **запрос с трейсами двух партиций, подтверждена одна** | `UNAVAILABLE` → повтор целого → OK | одна запись на партицию (`Duplicate` на записанную) | I13, I4' | E `TestAPartiallyAcknowledgedRequestIsRetriedWhole` (ингестер с P = 2) |
@@ -812,8 +827,8 @@ Circuit breaker не нужен: зависимость одна (NATS), отк�
 | 21 | OS crash / `docker stop` узла + смена лидера | `docker stop` — потерь нет; OS crash — граница профиля (D-7') | — | I13 (граница) | C `TestDockerStopOfAReplicaLosesNoAcknowledgedRecord`; L E0.5 |
 | 22 | стрим партиции удалён и создан заново | ингестер: OK в новый стрим | процессор: личность не совпала с чекпоинтом → стоп без удержания, код 1; оператор — `CHECKPOINT_RECOVERY=discard` | I15 | E `TestARecreatedStreamStopsTheFeedWithoutRetention` |
 | 23 | часы лидера впереди на 10 min | ничего | `ReceivedAt` по метке писателя; `journal.clock_skew` | I14 | U `TestAFastLeaderClockDoesNotMoveReceivedAt` |
-| 24 | **два процессора / зомби-держатель после паузы GC** | ничего | второй ждёт аренду; зомби не проходит CAS указателя по эпохе; удержание только после CAS нового | I15, I14 | E `TestAStaleLeaseHolderCannotMoveTheCheckpointPointer`, `TestOnlyTheLeaseHolderWritesHeartbeatsAndCheckpoints` |
-| 25 | системная порча | ничего | стоп после 3 подряд | I15 | E `TestSystemicCorruptionHaltsInsteadOfDraining` |
+| 24 | **два процессора / зомби-держатель после паузы GC** | ничего | второй ждёт аренду; зомби не проходит CAS указателя по эпохе; удержание только после CAS нового | I15, I14 | E `TestAStaleLeaseHolderCannotMoveTheCheckpointPointer`, `TestOnlyTheLeaseHolderReadsWritesHeartbeatsAndPurges` |
+| 25 | системная порча | ничего | стоп на 3-й порче в пределах 100 позиций стрима; окно переживает рестарт | I15, I19 | U+E `TestSystemicCorruptionHaltsInsteadOfDraining` |
 | 26–27 | [3b] поток мелких запросов; N клиентов и злой клиент | `RESOURCE_EXHAUSTED`; справедливая доля по токену | — | I5 | как в ред. 2 (приложение А) + `TestOneTokenCannotTakeAllSlots` |
 | 29 | [3b] лидер KV токенов потерян > 45 s | `UNAVAILABLE` всем | — | FR-SEC-002 | E |
 | 30–33 | [3b] OTLP/HTTP перегрузка, без токена / gzip-бомба, недоступность; NATS без сертификата | `429` / `401`, `413` / `503` / отказ соединения | — | FR-ING-005, NFR-SEC-001 | как в ред. 2 (приложение А) |
@@ -994,7 +1009,7 @@ FSM ингестера — как в ред. 2 (приложение А) с за
 | D-33 | Батч Collector-gateway ≥ 2 048 спанов (README): при P = 8 запись ≈ 20 KiB, дедуп ≈ 0,4 GiB | **принято пользователем 13.11** (КТ-0) |
 | D-34 | Лимит tombstones 1 млн → 1,5 млн (+≈ 60 MiB): горячая партиция при P = 8 — 98 % лимита по модели | **принято пользователем 13.11** (КТ-0) |
 | D-35 | `natsjs/checkpoint`: загрузка в Object Store кусками ≤ 64 MiB с ограничением темпа (256 MiB подняли p99 PubAck до 3,4 s) | **принято пользователем 13.11** (КТ-0) |
-| D-36 | `FAULTLINE_STREAM_MAX_BYTES` 32 GiB на партицию; `max_file_store` узла ≥ P × `MaxBytes` + дедуп | **принято пользователем 13.11** (КТ-0) |
+| D-36 | `FAULTLINE_STREAM_MAX_BYTES` 32 GiB на партицию; `max_file_store` узла ≥ P × `MaxBytes` + 1 GiB DLQ на реплику | **принято пользователем 13.11** (КТ-0) |
 
 ## Открытые вопросы
 
@@ -1162,7 +1177,11 @@ Warn `lease.suspended` по спаду `Valid()`, Info по возврату; Er
 var (
 	ErrStreamIdentity = errors.New("journal stream identity changed")
 	ErrPositionRange  = errors.New("checkpoint position is outside the stream")
-	ErrCorruptRecord  = errors.New("corrupt journal record") // 3.2: стоп; 3.3: DLQ
+	ErrUnknownRecordVersion = errors.New("journal record of an unknown version")       // 3.3, стоп
+	ErrSystemicCorruption   = errors.New("journal records corrupt one after another") // 3.3, стоп
+	ErrDeadLetterRejected   = errors.New("dead letter queue refused a corrupt record") // 3.3, стоп
+	ErrLeaseSuspended       = errors.New("partition lease not valid for retention")    // 3.3, Commit
+	ErrForeignPosition      = errors.New("position of another partition")              // 3.3, Commit
 	ErrConsumerLost   = errors.New("journal consumer could not be recreated")
 	ErrLeaseLost      = errors.New("partition lease lost") // свой sentinel; cmd проверяет и lease.ErrLeaseLost
 	ErrInvalidOptions = errors.New("invalid feed options")
@@ -1339,7 +1358,10 @@ func (f *Feed) Commit(ctx context.Context, through processing.Position) error //
 `lease.lost`. Фид: `feed.stops{reason=identity|range|corrupt|consumer_lost|lease_lost}`, `feed.read`, `feed.delivered_batches`,
 `feed.heartbeats`, `feed.held`, `feed.released` (I18); `feed.consumer_resets`, `feed.identity_check_failures`,
 `feed.received_at_clamped`, `feed.clock_skew_max_ms`, `feed.pending_records` (из `NumPending`), `feed.lag_seconds`,
-`feed.sequence_gap_records`, Warn `feed.stop_abandoned`; Info `lifecycle.feed_resumed`, `lifecycle.feed_caught_up`.
+`feed.sequence_gap_records`, `feed.dead_lettered`, `feed.dead_letter_stalled` (с классом последней ошибки),
+`feed.heartbeats_written`, `feed.heartbeat_conflicts`, `feed.heartbeat_conflicts_unread`, `feed.heartbeat_failures`,
+`feed.heartbeats_unconditional`, `feed.purged_through`, `feed.purge_failures`, Warn `feed.stop_abandoned`; Info
+`lifecycle.feed_resumed`, `lifecycle.feed_caught_up`.
 
 ### Требования к срезу natsjs/checkpoint и cmd
 
@@ -1355,6 +1377,14 @@ func (f *Feed) Commit(ctx context.Context, through processing.Position) error //
   `$JS.API.STREAM.PURGE.KV_faultline_leases {"seq": <max эпоха всех указателей + 1>}` (`nats req`; единственный
   описанный способ) → процессоры вверх. Проба: `Purge(seq 1000)` → следующий `Create` получает ревизию 1000.
 - Runbook уменьшения TTL аренды: только при процессорах в 0 — `MaxAge` действует задним числом на живые ключи.
+- Реакция на ошибки `Feed.Commit` (3.3): `ErrLeaseSuspended` — пропуск удержания в этом цикле; `ErrStreamIdentity`
+  и `ErrPositionRange` — пропуск с Error (насос встанет по личности сам); `ErrForeignPosition` — баг вызывающего,
+  Error; ошибка `Purge` и частичное удержание (`PurgedThrough` < `through`) — следующий `Commit` с тем же или
+  большим `through`; `processing.ErrFeedClosed` — удержание больше не вызывать.
+- Порядок остановки: фиды закрываются до `Conn.Close` — соединение фида, закрытое раньше, стопит фид
+  `ErrConsumerLost`.
+- `EnsureTopology` держателя `p0` возвращает отказ DLQ обёрнутым `natsjs.ErrDeadLetterTopology` после стримов
+  партиций: Warn и продолжать (без DLQ порча держит позицию на `no_responders`).
 
 ### Правки спеки (step-03)
 
@@ -1646,7 +1676,7 @@ pocock — approve after MEDIUM (2 HIGH); osmani — approve after MEDIUM (1 HIG
 | [MEDIUM] pstack PROVEN P2: CAS-конфликт в R3 — 10164, дубль в полёте — 10158, 10077 — общий код | `natsjs.classify` по `ErrorCode` + описанию; тест на ответах живого R3 |
 | [MEDIUM] pstack PROVEN `wm_test`: финалы повтора хвоста ≠ исходным; правило «меньшее покрытие не заменяет» ненадёжно | граница переписана; шаг 4 — `feed_caught_up`, `Release` после записи финала; шаг 5 — чекпоинт с watermark и `prev` |
 | [MEDIUM] pstack + osmani: незнакомая версия — вечный стоп и паралич; бит версии без CRC; незнакомый вид/флаг пропускался; порядок выкладки — договорённость | CRC всей записи до версии; незнакомые вид/флаги — стоп; объявления читателей + флаг версии записи, ингестер не стартует (D-22); runbook отката |
-| [MEDIUM] osmani + pstack: системная порча уходит в DLQ `DiscardOld` и вытесняет подтверждённое; остановка DLQ невидима; DLQ-запись может превысить `max_payload` | 3 подряд или > 1 %/min → стоп; `journal.dlq_stalled` + `/readyz`; DLQ `MaxMsgSize` и Msg-Id по хэшу |
+| [MEDIUM] osmani + pstack: системная порча уходит в DLQ `DiscardOld` и вытесняет подтверждённое; остановка DLQ невидима; DLQ-запись может превысить `max_payload` | 3 подряд или > 1 %/min → стоп; `journal.dlq_stalled` + `/readyz`; DLQ `MaxMsgSize` и Msg-Id по хэшу (3.3: 3 на 100 позиций с окном из последней копии, DLQ `DiscardNew` и удержание, Msg-ID `dlq-p<n>-<Created>-<seq>`) |
 | [MEDIUM] osmani: бюджет недосчитан ≈ 63 MiB (декодирование вне кредита, pull 2 × окно, буфер соединения публикации, индекс хвоста) | вес в заголовке, кредит до декодирования; окно 8 MiB; строки бюджета; итог `all` + NATS 1 297,8 MiB (с OTLP/HTTP), запас 62,2 |
 | [MEDIUM] pocock + osmani: индекс хвоста на каждую запись — до 96 MiB вне бюджета | кольцо выборок раз в секунду (≈ 6 KiB) |
 | [MEDIUM] osmani: нет сигнала отставания по времени (NFR-SELF-003); `pending` замерзает; p99 PubAck слепнет без таймаутов; алерт до 120 s | `feed.lag_seconds`, `pending` из `Stream.Info`, `time_to_full`, таймауты в +Inf, два отчёта |
@@ -1709,7 +1739,7 @@ pocock — approve after MEDIUM (2 HIGH); osmani — approve after MEDIUM (1 HIG
 | Дедуп | встроенный R1/R3 | повтор → `Duplicate`; после отсечки оригинала → `Duplicate`; после смены лидера → `Duplicate`; property: разбиения и повторы в окне → тот же журнал и те же финалы |
 | Формат | unit + fuzz | round-trip, детерминизм тела, страж 6 MiB, CRC до версии, неизвестные версия/вид/флаг → стоп, вес ≠ фактическому → `ErrCorrupt`; `FuzzRecordDecode`, `FuzzRecordRoundTrip` |
 | `ReceivedAt`, часы, пульс | unit + встроенный R1 | `min` меток: лидер впереди на 10 min — `ReceivedAt` по писателю, `journal.clock_skew`; часы назад — прижатие; пульс только после первой записи с данными и только догнав стрим; пульс не встаёт перед непрочитанной записью; голодание CAS засчитывается только с прочитанными записями |
-| Потребитель | встроенный R1 | рестарт сервера → без пробела; пробел → счётчик (база — первая позиция); одиночная порча → DLQ; 3 подряд → стоп; DLQ недоступен → стоп и `dlq_stalled`; неизвестная версия → стоп; сырые байты при стоящем Pipeline ≤ 22 MiB (записи ≈ 100 KiB) |
+| Потребитель | встроенный R1 | рестарт сервера → без пробела; пробел → счётчик (база — первая позиция); одиночная порча → DLQ; 3 на 100 позиций → стоп (окно из `Faultline-Window` последней копии, ошибка засева — удержание); DLQ недоступен → удержание и `dlq_stalled`; неизвестная версия → стоп; сырые байты при стоящем Pipeline ≤ 22 MiB (записи ≈ 100 KiB) |
 | Аренда | встроенный R1 | два процессора: второй не ready и не читает; потеря аренды (ключ удалён руками) → нет пульса и отсечки, выход 1; `kubectl delete pod`-модель: новый ждёт ≤ 15 s |
 | Токены | unit + встроенный R1 + fuzz | формат и границы, `FuzzParseToken`; отзыв ≤ 15 s (synctest); справочник устарел > 45 s → `UNAVAILABLE`; два токена; чужой тенант; отказ до декодирования; маркеры удаления чистятся; токен нигде не напечатан |
 | Слоты и скорость | unit + встроенный | 11-й запрос → `RESOURCE_EXHAUSTED` до декодирования; каждый RPC, прошедший тап, возвращает слот (успех, ошибка декодирования, отмена, паника); 2 001-й запрос в секунду → `RESOURCE_EXHAUSTED` |
@@ -1761,7 +1791,7 @@ pocock — approve after MEDIUM (2 HIGH); osmani — approve after MEDIUM (1 HIG
 | 22 | **стрим удалён и создан заново** | ингестер: OK в новый стрим после `EnsureStreams` | процессор видит смену `Created` → стоп без отсечки → код 1 → новый процессор читает новую личность с первой позиции; ничего не пропущено | I15 | E `TestARecreatedStreamStopsTheFeedWithoutPurging` (повтор пробы P4) |
 | 23 | **часы лидера впереди на 10 min** | ничего | `ReceivedAt` по метке писателя (`min`); watermark и хвост не уходят в будущее; `journal.clock_skew` | I14, I9 | U `TestAFastLeaderClockDoesNotMoveReceivedAt`; E с подменой метки писателя |
 | 24 | **два процессора** (`kubectl delete pod`, eviction, NotReady узла) | ничего | второй ждёт аренду (≤ 15 s), не читает и не отвечает ready; один писатель пульсов, одна отсечка, один `GetGraph` | I15, I14 | E `TestOnlyTheLeaseHolderReadsWritesHeartbeatsAndPurges`, `TestALostLeaseStopsPurgeBeforeAnythingElse` |
-| 25 | **системная порча** (баг кодировщика) | ничего (до заполнения стрима) | 3 повреждённые подряд → стоп, ничего не вытеснено из DLQ, записи в стриме | I15, I18 | E `TestSystemicCorruptionHaltsInsteadOfDraining` |
+| 25 | **системная порча** (баг кодировщика) | ничего (до заполнения стрима) | 3 порчи в пределах 100 позиций → стоп до 3-й копии, ничего не вытеснено из DLQ (`DiscardNew`), записи в стриме | I15, I18 | E `TestSystemicCorruptionHaltsInsteadOfDraining` |
 | 26 | **поток крошечных запросов** (SDK по 1 спану) | сверх 2 000 запросов/с экземпляра — `RESOURCE_EXHAUSTED` | карта дедупа сервера ограничена | I5 (NATS) | U `TestRequestRateBudgetRejectsBeforeDecoding` |
 | 27 | **N Collector'ов и злой клиент без токена** | 11-й одновременный запрос — `RESOURCE_EXHAUSTED`; соединений до 64 | бюджет памяти прежний (10 слотов) | I5 | E `TestManyClientsShareTheSlotsAndEveryRPCReturnsItsSlot` |
 | 28 | **rolling upgrade: ингестер с v2, живой процессор читает только v1** | — | ингестер не стартует (exit 1) по объявлениям `faultline_control` | I15 | E `TestIngesterRefusesAWriteVersionNoReaderSupports` |
@@ -1812,17 +1842,18 @@ stateDiagram-v2
   Кредит --> Кредит: нет кредита (Pipeline отстаёт)
   Кредит --> Читает: Acquire → Decode → доставка
   Читает --> DLQ: ErrCorrupt (одиночная)
-  DLQ --> DLQ: нет PubAck (backoff, dlq_stalled)
+  DLQ --> DLQ: временный отказ или аренда не Valid (повтор 1 s, dlq_stalled)
   DLQ --> Читает: PubAck → позиция завершена
-  Читает --> Стоп: ErrUnknownVersion / 3 порчи подряд
-  Читает --> Фатал: Created изменился, позиция вне FirstSeq..LastSeq, reset × 5, аренда потеряна
+  DLQ --> Стоп: постоянный отказ / соединение фида закрыто
+  Читает --> Стоп: ErrUnknownVersion / 3 порчи на 100 позиций
+  Читает --> Фатал: Created изменился, позиция вне FirstSeq..LastSeq, reset × 7, аренда потеряна
   Стоп --> Закрыт: Close
   Читает --> Закрыт: Close (SIGTERM) → аренда отпущена
   Фатал --> [*]: без отсечки; close(deliveries); Receive → ошибка; код 1
   Закрыт --> [*]: close(deliveries); ErrFeedClosed
 ```
 
-Неочевидные гонки и как они закрыты: (а) пульс против публикации ингестера — CAS сервера (10071/10164), одна атомарная операция; (б) отсечка против чтения тем же процессом — горизонт ≤ первой незавершённой; (в) два процессора — аренда CAS + TTL, отсечка и пульс только при продлении моложе 10 s, потеря аренды сначала гасит отсечку и пульс; (г) отсечка против пересоздания стрима — проверка `Created` и диапазона позиций в том же цикле перед отсечкой; остаточное окно «пересоздали между проверкой и `Purge`» ≤ 5 s и требует удаления стрима оператором — записано в «Границах». Модель TLA+ для (в)+(г) — открытый вопрос 4 (не блокирует: аренда закрывает класс по построению).
+Неочевидные гонки и как они закрыты: (а) пульс против публикации ингестера — CAS сервера по последней позиции стрима (10071), одна атомарная операция; (б) отсечка против чтения тем же процессом — горизонт ≤ первой незавершённой; (в) два процессора — аренда CAS + TTL, отсечка и пульс только при продлении моложе 10 s, потеря аренды сначала гасит отсечку и пульс; (г) отсечка против пересоздания стрима — проверка `Created` и диапазона позиций в том же цикле перед отсечкой; остаточное окно «пересоздали между проверкой и `Purge`» ≤ 5 s и требует удаления стрима оператором — записано в «Границах». Модель TLA+ для (в)+(г) — открытый вопрос 4 (не блокирует: аренда закрывает класс по построению).
 
 ### А.4 Изоляция и защита ред. 2
 
@@ -1837,7 +1868,7 @@ stateDiagram-v2
 | запрос без токена / с чужим токеном | отказ в тапе до декодирования | `auth.rejected_*`, Warn `otlp.auth.rejected` (дросселирован) |
 | подбор токена | 256 бит энтропии, константное сравнение | `auth.rejected_mismatch` |
 | утечка токена в логах / базы токенов | `[redacted]`; в KV только SHA-256 | тест-маркер |
-| повреждённая или чужая запись в стриме | CRC всей записи, вес, инварианты спана; одиночная → DLQ, серия → стоп; доступ к NATS — учётка (D-16) | `feed.poison_skipped`, `journal.systemic_corruption` |
+| повреждённая или чужая запись в стриме | CRC всей записи, вес, инварианты спана; одиночная → DLQ, серия → стоп; доступ к NATS — учётка (D-16) | `feed.dead_lettered`, `journal.systemic_corruption` |
 | пересоздание стрима | личность `Created` + диапазон позиций → стоп без отсечки | `journal.stream_identity_changed` |
 | два процессора | аренда KV | `feed.lease_*` |
 | часы лидера или писателя сбиты | `ReceivedAt = max(prev, min(лидер, писатель))` | `journal.clock_skew` |
@@ -1871,7 +1902,8 @@ stateDiagram-v2
 | `journal.puback_slow` | p99 PubAck (таймауты — в корзине под-дедлайна) > 200 ms **два** отчёта подряд (ред. 1 — три, до 120 s; ревью osmani) | два отчёта подряд ≤ 200 ms |
 | `ingest.slots_saturated` | занятость слотов ≥ 8 из 10 весь интервал два отчёта подряд | два отчёта подряд < 6 |
 | `journal.sequence_gap` | Δ`feed.sequence_gap_records` > 0 | два отчёта подряд без новых |
-| `journal.poison_records` | Δ`feed.poison_skipped` > 0 | два отчёта подряд без новых |
+| `journal.poison_records` | Δ`feed.dead_lettered` > 0 | два отчёта подряд без новых |
+| `journal.heartbeat_conflict_unread` | Δ`feed.heartbeat_conflicts_unread` > 0 (Warn с дросселем: пульса не будет, простой не закроется) | два отчёта подряд без новых |
 | `journal.dlq_stalled` | DLQ не принимает > 30 s | DLQ принял |
 | `journal.systemic_corruption` / `journal.unknown_record_version` | насос в «стопе» | только перезапуском |
 | `journal.stream_identity_changed` | смена `Created` / позиция вне диапазона | (процесс выходит; событие пишет старт следующего) |
@@ -2102,7 +2134,7 @@ func (a *Admin) List(ctx context.Context) ([]credential.Grant, error)
 
 Тесты среза 2 (`test/natsjs`): `TestAppendWaitsForThePubAck`, `TestRetryOfAnAcknowledgedRequestIsADuplicate`, `TestTwoOfThreeReplicasDownGivesRetryableErrorNotOK`, `TestLeaderWithoutReplicasTimesOutUnavailable`, `TestLeaderChangeKeepsAcknowledgedRecords`, `TestAFullStreamRejectsNewRecordsAndKeepsEveryAcknowledgedOne`, `TestPublishDuringDisconnectFailsFastAndNeverLate`, `TestIngesterExitsWhenNATSIsUnreachableAtStart`, `TestConcurrentStartsConvergeOrFailWithADiff`, `TestStopWhileNATSIsDownAnswersEveryHandlerWithoutOK`, `TestHeldRequestDuringPublishStaysWithinTheBudget`, `TestEveryNATSErrorMapsToOneIngestSentinel` (ответы живого R3); unit: `TestNoPathAnswersOKWithoutAPubAck`, `TestTimeoutAfterApplyIsUnavailableAndTheRetryIsADuplicate`, `TestClientCancelDuringPublishIsCancelledNotOK`, `TestHiddenRetriesStayWithinTheRemainingDeadline`, `TestADoomedPublishIsNotStarted`, `TestSlowPubAckBeyondTheSubDeadlineIsUnavailable`, `TestTimeoutsLandInTheTopBucket`.
 
-Тесты среза 3–3b: `journaltest.RunFeedContract` (оба адаптера), `TestAFastLeaderClockDoesNotMoveReceivedAt`, `TestAClockStepBackIsClampedToTheLastReceivedAt`, `TestAHeartbeatIsWrittenOnlyAfterTheFirstDataRecord`, `TestALaggingFeedWritesNoHeartbeat`, `TestAStalledFeedWritesNoHeartbeat`, `TestAHeartbeatNeverLandsBeforeAnUnreadRecord`, `TestStarvedHeartbeatNeedsReadRecordsBetweenConflicts`, `TestPurgeNeverPassesTheFirstUnfinishedPosition` (property), `TestPurgeKeepsTheReplayTailBoundedByBytes`, `TestPurgeIsChunked`, `TestARecreatedStreamStopsTheFeedWithoutPurging`, `TestOnlyTheLeaseHolderReadsWritesHeartbeatsAndPurges`, `TestALostLeaseStopsPurgeBeforeAnythingElse`, `TestProcessorRestartReplaysTheTailAndLosesNoUnprocessedRecord`, `TestCorruptRecordGoesToTheDLQAndIsSkipped`, `TestSystemicCorruptionHaltsInsteadOfDraining`, `TestDLQOutageStallsVisibly`, `TestUnknownVersionHaltsTheFeedWithoutSkipping`, `TestASequenceGapIsCountedAndAlerted`, `TestRestartDoesNotReportAFalseGap`, `TestFeedResumesWithoutAGapAfterServerRestart`, `TestAStoppedPipelineBoundsTheRawBytesInTheClient`, `TestASlowProcessorTurnsIntoBackpressureNotLoss`, `TestProcessorStopLeavesUnpublishedRecordsInTheStream`, `TestTailReplayTime`, `TestReleaseIsIdempotentAndReturnsTheCredit`, `TestAWeightAboveTheCreditIsCorrupt`; **КТ-2**: `TestTwoReadsOfOneStreamGiveTheSameFinals`.
+Тесты среза 3–3b: `journaltest.RunFeedContract` (оба адаптера), `TestAFastLeaderClockDoesNotMoveReceivedAt`, `TestAClockStepBackIsClampedToTheLastReceivedAt`, `TestAHeartbeatIsWrittenOnlyAfterTheFirstDataRecord`, `TestALaggingFeedWritesNoHeartbeat`, `TestAStalledFeedWritesNoHeartbeat`, `TestAHeartbeatNeverLandsBeforeAnUnreadRecord`, `TestStarvationCountsOnlyConflictsInARow`, `TestPurgeNeverPassesTheFirstUnfinishedPosition` (property), `TestPurgeKeepsTheReplayTailBoundedByBytes`, `TestPurgeIsChunked`, `TestARecreatedStreamStopsTheFeedWithoutPurging`, `TestOnlyTheLeaseHolderReadsWritesHeartbeatsAndPurges`, `TestALostLeaseStopsPurgeBeforeAnythingElse`, `TestProcessorRestartReplaysTheTailAndLosesNoUnprocessedRecord`, `TestCorruptRecordGoesToTheDLQAndIsSkipped`, `TestSystemicCorruptionHaltsInsteadOfDraining`, `TestDLQOutageStallsVisibly`, `TestUnknownVersionHaltsTheFeedWithoutSkipping`, `TestASequenceGapIsCountedAndAlerted`, `TestRestartDoesNotReportAFalseGap`, `TestFeedResumesWithoutAGapAfterServerRestart`, `TestAStoppedPipelineBoundsTheRawBytesInTheClient`, `TestASlowProcessorTurnsIntoBackpressureNotLoss`, `TestProcessorStopLeavesUnpublishedRecordsInTheStream`, `TestTailReplayTime`, `TestReleaseIsIdempotentAndReturnsTheCredit`, `TestAWeightAboveTheCreditIsCorrupt`; **КТ-2**: `TestTwoReadsOfOneStreamGiveTheSameFinals`.
 
 **`internal/domain/credential`** (срез 4)
 

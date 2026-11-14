@@ -72,6 +72,9 @@ var fields = []field{
 	{name: "max_age", value: func(c *jetstream.StreamConfig) string {
 		return c.MaxAge.String()
 	}},
+	{name: "allow_direct", mutable: true, value: func(c *jetstream.StreamConfig) string {
+		return strconv.FormatBool(c.AllowDirect)
+	}},
 	{name: "max_msg_size", value: func(c *jetstream.StreamConfig) string {
 		return strconv.Itoa(int(c.MaxMsgSize))
 	}},
@@ -123,14 +126,33 @@ func (c *Conn) EnsureTopology(ctx context.Context, topology Topology, lease hold
 	if err != nil {
 		return err
 	}
-	plans, drifts, err := planStreams(ctx, js, topology)
+	streams := writer{
+		js:    js,
+		lease: lease,
+	}
+	if err := streams.ensurePartitions(ctx, topology); err != nil {
+		return err
+	}
+	return streams.ensureDeadLetters(ctx, topology)
+}
+
+func (w writer) ensurePartitions(ctx context.Context, topology Topology) error {
+	plans, drifts, err := planStreams(ctx, w.js, topology)
 	if err != nil || len(drifts) > 0 {
 		return errors.Join(err, driftError(drifts))
 	}
-	return writer{
-		js:    js,
-		lease: lease,
-	}.applyAll(ctx, plans)
+	return w.applyAll(ctx, plans)
+}
+
+func (w writer) ensureDeadLetters(ctx context.Context, topology Topology) error {
+	next, drifts, err := planStream(ctx, w.js, new(topology.deadLetterConfig()))
+	if err == nil && len(drifts) == 0 {
+		err = w.apply(ctx, next)
+	}
+	if err = errors.Join(err, driftError(drifts)); err != nil {
+		return fmt.Errorf("%w: %w", ErrDeadLetterTopology, err)
+	}
+	return nil
 }
 
 func (w writer) applyAll(ctx context.Context, plans []plan) error {
@@ -394,7 +416,7 @@ func Temporary(err error) bool {
 	if err == nil {
 		return false
 	}
-	failure := classify(err)
+	failure := Classify(err)
 	return failure.Reason.retryable() ||
 		failure.Code == uint16(codeNoSuitablePeers)
 }

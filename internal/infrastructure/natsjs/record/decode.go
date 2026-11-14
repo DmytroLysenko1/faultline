@@ -2,6 +2,7 @@ package record
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 
@@ -25,6 +26,21 @@ func Decode(data []byte, header Header) ([]span.Span, error) {
 	if header.Kind == KindHeartbeat {
 		return nil, nil
 	}
+	spans, err := decodeBody(data, header)
+	if err != nil {
+		return nil, bodyFailure(err)
+	}
+	return spans, nil
+}
+
+func bodyFailure(err error) error {
+	if errors.Is(err, ErrUnknownVersion) {
+		return err
+	}
+	return corruptBy(CorruptBody, err)
+}
+
+func decodeBody(data []byte, header Header) ([]span.Span, error) {
 	body, err := bodyOf(data, header)
 	if err != nil {
 		return nil, err

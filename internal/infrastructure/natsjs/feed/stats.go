@@ -15,7 +15,9 @@ const (
 	StopClosed
 	StopLeaseLost
 	StopIdentity
-	StopCorrupt
+	StopUnknownVersion
+	StopSystemicCorruption
+	StopDeadLetterRejected
 	StopConsumerLost
 	stopReasonCount
 )
@@ -23,12 +25,14 @@ const (
 const unknownStopReason = "unknown"
 
 var stopReasonNames = [stopReasonCount]string{
-	StopNone:         "none",
-	StopClosed:       "closed",
-	StopLeaseLost:    "lease_lost",
-	StopIdentity:     "identity",
-	StopCorrupt:      "corrupt",
-	StopConsumerLost: "consumer_lost",
+	StopNone:               "none",
+	StopClosed:             "closed",
+	StopLeaseLost:          "lease_lost",
+	StopIdentity:           "identity",
+	StopUnknownVersion:     "unknown_version",
+	StopSystemicCorruption: "systemic_corruption",
+	StopDeadLetterRejected: "dead_letter_rejected",
+	StopConsumerLost:       "consumer_lost",
 }
 
 func (r StopReason) String() string {
@@ -47,7 +51,9 @@ var stopRules = []stopRule{
 	{target: processing.ErrFeedClosed, reason: StopClosed},
 	{target: ErrLeaseLost, reason: StopLeaseLost},
 	{target: ErrStreamIdentity, reason: StopIdentity},
-	{target: ErrCorruptRecord, reason: StopCorrupt},
+	{target: ErrUnknownRecordVersion, reason: StopUnknownVersion},
+	{target: ErrSystemicCorruption, reason: StopSystemicCorruption},
+	{target: ErrDeadLetterRejected, reason: StopDeadLetterRejected},
 }
 
 func stopReasonOf(cause error) StopReason {
@@ -60,19 +66,29 @@ func stopReasonOf(cause error) StopReason {
 }
 
 type Stats struct {
-	Read                  uint64
-	DeliveredBatches      uint64
-	Heartbeats            uint64
-	Held                  uint64
-	Released              uint64
-	ConsumerResets        uint64
-	IdentityCheckFailures uint64
-	SequenceGapRecords    uint64
-	ReceivedAtClamped     uint64
-	ClockSkewMax          time.Duration
-	PendingRecords        uint64
-	Lag                   time.Duration
-	Stop                  StopReason
+	Read                     uint64
+	DeliveredBatches         uint64
+	Heartbeats               uint64
+	Held                     uint64
+	Released                 uint64
+	ConsumerResets           uint64
+	IdentityCheckFailures    uint64
+	SequenceGapRecords       uint64
+	ReceivedAtClamped        uint64
+	ClockSkewMax             time.Duration
+	PendingRecords           uint64
+	Lag                      time.Duration
+	Stop                     StopReason
+	DeadLettered             uint64
+	DeadLetterStalled        time.Time
+	DeadLetterLastError      DeadLetterClass
+	HeartbeatsWritten        uint64
+	HeartbeatConflicts       uint64
+	HeartbeatConflictsUnread uint64
+	HeartbeatFailures        uint64
+	HeartbeatsUnconditional  uint64
+	PurgedThrough            uint64
+	PurgeFailures            uint64
 }
 
 type counters struct {
@@ -89,6 +105,45 @@ type counters struct {
 	pending          atomic.Uint64
 	stamped          atomic.Int64
 	stop             atomic.Uint32
+	dead             atomic.Uint64
+	stalledSince     atomic.Int64
+	deadLetterError  atomic.Pointer[DeadLetterClass]
+
+	heartbeatsWritten        atomic.Uint64
+	heartbeatConflicts       atomic.Uint64
+	heartbeatConflictsUnread atomic.Uint64
+	heartbeatFailures        atomic.Uint64
+	heartbeatsUnconditional  atomic.Uint64
+
+	purged        atomic.Uint64
+	purgeFailures atomic.Uint64
+}
+
+func (c *counters) deadLettered() {
+	c.held.Store(0)
+	c.dead.Add(1)
+}
+
+func (c *counters) stalled(class DeadLetterClass) {
+	c.noteDeadLetterError(class)
+	c.stalledSince.CompareAndSwap(0, time.Now().UnixNano())
+}
+
+func (c *counters) unstalled() {
+	c.stalledSince.Store(0)
+}
+
+func (c *counters) noteDeadLetterError(class DeadLetterClass) {
+	c.deadLetterError.Store(&class)
+}
+
+func (c *counters) purgedThrough(target uint64) {
+	for {
+		purged := c.purged.Load()
+		if target <= purged || c.purged.CompareAndSwap(purged, target) {
+			return
+		}
+	}
 }
 
 func (c *counters) read(next *message) {
@@ -115,20 +170,45 @@ func (c *counters) skewed(skew time.Duration) {
 
 func (c *counters) snapshot() Stats {
 	return Stats{
-		Read:                  c.reads.Load(),
-		DeliveredBatches:      c.delivered.Load(),
-		Heartbeats:            c.heartbeats.Load(),
-		Held:                  c.held.Load(),
-		Released:              c.released.Load(),
-		ConsumerResets:        c.resets.Load(),
-		IdentityCheckFailures: c.identityFailures.Load(),
-		SequenceGapRecords:    c.gaps.Load(),
-		ReceivedAtClamped:     c.clamped.Load(),
-		ClockSkewMax:          time.Duration(c.skew.Load()),
-		PendingRecords:        c.pending.Load(),
-		Lag:                   c.lag(),
-		Stop:                  StopReason(c.stop.Load()),
+		Read:                     c.reads.Load(),
+		DeliveredBatches:         c.delivered.Load(),
+		Heartbeats:               c.heartbeats.Load(),
+		Held:                     c.held.Load(),
+		Released:                 c.released.Load(),
+		ConsumerResets:           c.resets.Load(),
+		IdentityCheckFailures:    c.identityFailures.Load(),
+		SequenceGapRecords:       c.gaps.Load(),
+		ReceivedAtClamped:        c.clamped.Load(),
+		ClockSkewMax:             time.Duration(c.skew.Load()),
+		PendingRecords:           c.pending.Load(),
+		Lag:                      c.lag(),
+		Stop:                     StopReason(c.stop.Load()),
+		DeadLettered:             c.dead.Load(),
+		DeadLetterStalled:        c.stalledAt(),
+		DeadLetterLastError:      c.lastDeadLetterError(),
+		HeartbeatsWritten:        c.heartbeatsWritten.Load(),
+		HeartbeatConflicts:       c.heartbeatConflicts.Load(),
+		HeartbeatConflictsUnread: c.heartbeatConflictsUnread.Load(),
+		HeartbeatFailures:        c.heartbeatFailures.Load(),
+		HeartbeatsUnconditional:  c.heartbeatsUnconditional.Load(),
+		PurgedThrough:            c.purged.Load(),
+		PurgeFailures:            c.purgeFailures.Load(),
 	}
+}
+
+func (c *counters) stalledAt() time.Time {
+	since := c.stalledSince.Load()
+	if since == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, since)
+}
+
+func (c *counters) lastDeadLetterError() DeadLetterClass {
+	if class := c.deadLetterError.Load(); class != nil {
+		return *class
+	}
+	return ""
 }
 
 func (c *counters) lag() time.Duration {

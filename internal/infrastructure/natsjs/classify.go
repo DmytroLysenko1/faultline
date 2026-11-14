@@ -144,7 +144,10 @@ func (e *PublishError) Unwrap() []error {
 	return []error{e.Reason.sentinel(), e.Cause}
 }
 
-func classify(err error) *PublishError {
+func Classify(err error) *PublishError {
+	if classified, found := errors.AsType[*PublishError](err); found {
+		return classified
+	}
 	apiErr, isAPI := errors.AsType[*jetstream.APIError](err)
 	if !isAPI {
 		return &PublishError{

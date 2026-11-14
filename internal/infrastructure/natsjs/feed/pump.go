@@ -26,8 +26,12 @@ const (
 
 type pump struct {
 	reader       reader
-	stream       describer
+	stream       partitionStream
+	letters      deadLetters
+	pulses       pulses
+	lease        partitionLease
 	created      time.Time
+	lastAtOpen   uint64
 	partition    uint16
 	maxFootprint int64
 	credit       *semaphore.Weighted
@@ -36,13 +40,20 @@ type pump struct {
 	checked      string
 	last         uint64
 	receivedAt   time.Time
+	window       window
+	seeded       bool
+	idle         idle
 }
 
 func newPump(source *source, start *Start, options *Options, feed *Feed) *pump {
 	return &pump{
 		reader:       source.reader,
 		stream:       source.stream,
+		letters:      source.letters,
+		pulses:       source.pulses,
+		lease:        feed.lease,
 		created:      source.identity.Created,
+		lastAtOpen:   source.identity.Last,
 		partition:    options.Partition,
 		maxFootprint: options.MaxFootprint,
 		credit:       semaphore.NewWeighted(options.MaxBytes),
@@ -51,6 +62,7 @@ func newPump(source *source, start *Start, options *Options, feed *Feed) *pump {
 		checked:      source.reader.Consumer(),
 		last:         start.After.Sequence,
 		receivedAt:   start.ReceivedAt,
+		idle:         newIdle(start, options.IdleAfter),
 	}
 }
 
@@ -70,10 +82,18 @@ func (p *pump) step(ctx context.Context) error {
 	if err := p.confirm(ctx); err != nil {
 		return err
 	}
+	if err := p.take(ctx, &next, found); err != nil {
+		return err
+	}
+	return p.beat(ctx)
+}
+
+func (p *pump) take(ctx context.Context, next *message, found bool) error {
+	p.idle.observed(found, next.pending)
 	if !found {
 		return nil
 	}
-	return p.deliver(ctx, &next)
+	return p.deliver(ctx, next)
 }
 
 func (p *pump) next(ctx context.Context) (message, bool, error) {
@@ -168,7 +188,7 @@ func (p *pump) deliver(ctx context.Context, next *message) error {
 	}
 	header, err := record.ReadHeader(next.data, p.partition, p.maxFootprint)
 	if err != nil {
-		return corrupt(next.sequence, err)
+		return p.reject(ctx, next, err)
 	}
 	if err := p.credit.Acquire(ctx, header.Weight); err != nil {
 		return err
@@ -176,8 +196,9 @@ func (p *pump) deliver(ctx context.Context, next *message) error {
 	made, err := p.decode(next, &header)
 	if err != nil {
 		p.credit.Release(header.Weight)
-		return corrupt(next.sequence, err)
+		return p.reject(ctx, next, err)
 	}
+	p.idle.delivered(made.batch)
 	return p.send(ctx, made)
 }
 
@@ -200,6 +221,7 @@ func (p *pump) decode(next *message, header *record.Header) (*delivery, error) {
 	if header.Kind == record.KindHeartbeat {
 		return p.delivery(batch.Heartbeat(p.stamp(next.stamped, header.WrittenAt)), position, 0), nil
 	}
+	p.counters.skewed(next.stamped.Sub(header.WrittenAt).Abs())
 	spans, err := record.Decode(next.data, *header)
 	if err != nil {
 		return nil, err
@@ -213,7 +235,6 @@ func (p *pump) decode(next *message, header *record.Header) (*delivery, error) {
 }
 
 func (p *pump) stamp(leader, writer time.Time) time.Time {
-	p.counters.skewed(leader.Sub(writer).Abs())
 	observed := leader
 	if writer.Before(leader) {
 		observed = writer
@@ -244,10 +265,6 @@ func (p *pump) send(ctx context.Context, made *delivery) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-}
-
-func corrupt(sequence uint64, err error) error {
-	return fmt.Errorf("%w: position %d: %w", ErrCorruptRecord, sequence, err)
 }
 
 func pause(ctx context.Context, wait time.Duration) error {

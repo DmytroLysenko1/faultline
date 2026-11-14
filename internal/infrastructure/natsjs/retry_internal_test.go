@@ -43,9 +43,9 @@ func TestAMessageOverTheStreamLimitIsTooLargeOnALiveServer(t *testing.T) {
 	_, publishErr := js.PublishMsg(ctx, &nats.Msg{Subject: "tiny", Data: make([]byte, tinyMessageLimit-headerOverhead/2)},
 		jetstream.WithMsgID("a"), jetstream.WithExpectStream("TINY"))
 
-	got := classify(publishErr)
+	got := Classify(publishErr)
 	if got.Reason != ReasonTooLarge || got.Code != uint16(codeMessageTooLarge) || !errors.Is(got, ingest.ErrBatchTooLarge) {
-		t.Errorf("classify(%v) = %+v, want too large with code %d", publishErr, got, codeMessageTooLarge)
+		t.Errorf("Classify(%v) = %+v, want too large with code %d", publishErr, got, codeMessageTooLarge)
 	}
 }
 

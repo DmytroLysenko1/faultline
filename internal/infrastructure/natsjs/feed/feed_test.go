@@ -57,6 +57,9 @@ func TestOpenRefusesOptionsItCannotKeep(t *testing.T) {
 		{name: "no largest batch", edit: func(o *feed.Options, _ *feed.Start) { o.MaxFootprint = 0 }},
 		{name: "a pull window below two records", edit: func(o *feed.Options, _ *feed.Start) { o.PullMaxBytes = 8 << 20 }},
 		{name: "a start of another partition", edit: func(_ *feed.Options, s *feed.Start) { s.After.Partition = 1 }},
+		{name: "no idle period", edit: func(o *feed.Options, _ *feed.Start) { o.IdleAfter = 0 }},
+		{name: "a checkpoint without its ReceivedAt",
+			edit: func(_ *feed.Options, s *feed.Start) { s.After.Sequence = 5 }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -64,7 +67,10 @@ func TestOpenRefusesOptionsItCannotKeep(t *testing.T) {
 			if tt.edit != nil {
 				tt.edit(&options, &start)
 			}
-			var lease interface{ Lost() <-chan struct{} } = newHeldLease()
+			var lease interface {
+				Valid() bool
+				Lost() <-chan struct{}
+			} = newHeldLease()
 			if tt.noLease {
 				lease = nil
 			}
@@ -92,10 +98,11 @@ func TestOpenRefusesACheckpointTheStreamDoesNotMatch(t *testing.T) {
 		missing bool
 		wantErr error
 	}{
-		{name: "a position past the last record", start: feed.Start{After: processing.Position{Sequence: firstWritten + 1}},
+		{name: "a position past the last record",
+			start:   feed.Start{ReceivedAt: time.Now(), After: processing.Position{Sequence: firstWritten + 1}},
 			wantErr: feed.ErrPositionRange},
 		{name: "a position the stream already removed",
-			start:   feed.Start{After: processing.Position{Sequence: truncatedBelow - 2}},
+			start:   feed.Start{ReceivedAt: time.Now(), After: processing.Position{Sequence: truncatedBelow - 2}},
 			wantErr: feed.ErrPositionRange},
 		{name: "a stream created after the checkpoint", start: feed.Start{Created: created.Add(-time.Hour)},
 			wantErr: feed.ErrStreamIdentity},
@@ -129,7 +136,8 @@ func TestOpenAcceptsACheckpointAtEitherEdgeOfTheStream(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			opened := l.open(t, feed.Start{After: processing.Position{Sequence: tt.after}}, optionsOf(l.topology))
+			start := feed.Start{ReceivedAt: time.Now(), After: processing.Position{Sequence: tt.after}}
+			opened := l.open(t, start, optionsOf(l.topology))
 
 			got := receive(t, opened, len(tt.want))
 
@@ -167,7 +175,7 @@ func TestOpenFailsWhenThePartitionHasNoStream(t *testing.T) {
 func TestRecordsComeAtTheirStreamPositionsAsTheJournalWroteThem(t *testing.T) {
 	l := startLive(t, singleNode, oneReplica)
 	written := l.publishMany(t, firstWritten, 0)
-	opened := l.open(t, feed.Start{After: processing.Position{Sequence: 2}, Created: l.info(t).Created},
+	opened := l.open(t, feed.Start{ReceivedAt: time.Now(), After: processing.Position{Sequence: 2}, Created: l.info(t).Created},
 		optionsOf(l.topology))
 
 	got := receive(t, opened, firstWritten-2)

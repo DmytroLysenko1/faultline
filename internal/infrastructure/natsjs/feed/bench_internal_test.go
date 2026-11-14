@@ -56,7 +56,8 @@ func BenchmarkDelivery(b *testing.B) {
 			reader := &endlessReader{data: data, stopped: make(chan struct{})}
 			options := testOptions()
 			options.MaxFootprint, options.MaxBytes = benchFootprint, benchCredit
-			feed := newFeed(b.Context(), newFakeLease(), &source{reader: reader, stream: answering()}, &Start{},
+			found := &source{reader: reader, stream: answering(), letters: newFakeLetters()}
+			feed := newFeed(b.Context(), newFakeLease(), found, &Start{},
 				options)
 			var before, after runtime.MemStats
 			records := 0
