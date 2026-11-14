@@ -267,7 +267,7 @@ linters:
           msg: only topology.Builder keeps the expire → match → apply → record order (I1, I3, I10)
         - pattern: ^batch\.(New|NewOwning|Heartbeat)$
           pkg: ^github\.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch$
-          msg: only memjournal stamps ReceivedAt and writes heartbeats — journal order is ReceivedAt order
+          msg: only the journals (memjournal, natsjs/feed) stamp ReceivedAt and make heartbeats — journal order is ReceivedAt order
         - pattern: ^fmt\.Print(|f|ln)$
           msg: no stdout printing — use slog/zap (observability doctrine)
         - pattern: ^log\.(Print|Fatal|Panic)(|f|ln)$
@@ -289,10 +289,10 @@ linters:
         linters:
           - forbidigo
         text: only topology.Builder keeps the expire
-      - path: (internal/infrastructure/memjournal/|internal/domain/telemetry/batch/|/[a-z]+test/|_test\.go$)
+      - path: (internal/infrastructure/memjournal/|internal/infrastructure/natsjs/feed/|internal/domain/telemetry/batch/|/[a-z]+test/|_test\.go$)
         linters:
           - forbidigo
-        text: only memjournal stamps ReceivedAt
+        text: only the journals \(memjournal, natsjs/feed\) stamp ReceivedAt
       - path-except: internal/(domain|application)/
         linters:
           - forbidigo
