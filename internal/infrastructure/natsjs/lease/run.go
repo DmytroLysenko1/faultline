@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
+
+	"github.com/DmytroLysenko1/faultline/pkg/retry"
 )
 
 const releaseTimeout = 500 * time.Millisecond
@@ -35,7 +37,7 @@ func (l *Lease) renew(ctx context.Context) error {
 }
 
 func (l *Lease) reached(ctx context.Context, at time.Duration) bool {
-	return waitUntil(ctx, at-l.now()) == nil
+	return retry.Sleep(ctx, at-l.now()) == nil
 }
 
 func (l *Lease) noteSuspension(ctx context.Context) {

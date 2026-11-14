@@ -137,15 +137,6 @@ func (c *counters) noteDeadLetterError(class DeadLetterClass) {
 	c.deadLetterError.Store(&class)
 }
 
-func (c *counters) purgedThrough(target uint64) {
-	for {
-		purged := c.purged.Load()
-		if target <= purged || c.purged.CompareAndSwap(purged, target) {
-			return
-		}
-	}
-}
-
 func (c *counters) read(next *message) {
 	c.reads.Add(1)
 	c.held.Store(1)
@@ -160,12 +151,6 @@ func (c *counters) handed(heartbeat bool) {
 		return
 	}
 	c.delivered.Add(1)
-}
-
-func (c *counters) skewed(skew time.Duration) {
-	if int64(skew) > c.skew.Load() {
-		c.skew.Store(int64(skew))
-	}
 }
 
 func (c *counters) snapshot() Stats {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/idlerule"
+	"github.com/DmytroLysenko1/faultline/pkg/retry"
 )
 
 const (
@@ -86,7 +87,7 @@ func (p *pump) beat(ctx context.Context) error {
 		writtenAt: p.idle.now(),
 	}
 	p.idle.attempted(p.counters.reads.Load())
-	err := within(ctx, pulseAttempt, func(attempt context.Context) error {
+	err := retry.Attempt(ctx, pulseAttempt, func(attempt context.Context) error {
 		return p.pulses.Pulse(attempt, beat)
 	})
 	if ctx.Err() != nil {
@@ -121,7 +122,7 @@ func (p *pump) conflicted(ctx context.Context, beat *pulse) error {
 }
 
 func (p *pump) pulseUnconditionally(ctx context.Context, beat *pulse) error {
-	err := within(ctx, pulseAttempt, func(attempt context.Context) error {
+	err := retry.Attempt(ctx, pulseAttempt, func(attempt context.Context) error {
 		return p.pulses.PulseUnconditionally(attempt, beat)
 	})
 	if ctx.Err() != nil {

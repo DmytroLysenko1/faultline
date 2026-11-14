@@ -14,6 +14,8 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/record"
+	"github.com/DmytroLysenko1/faultline/pkg/atomicmax"
+	"github.com/DmytroLysenko1/faultline/pkg/retry"
 )
 
 const (
@@ -146,7 +148,7 @@ func (p *pump) verifyOnce(ctx context.Context, giveUp time.Time) (bool, error) {
 	if time.Now().Add(identityRetryGap).After(giveUp) {
 		return false, fmt.Errorf("%w: the stream did not answer for %s: %w", ErrConsumerLost, identityBudget, err)
 	}
-	if err := pause(ctx, identityRetryGap); err != nil {
+	if err := retry.Sleep(ctx, identityRetryGap); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -221,7 +223,7 @@ func (p *pump) decode(next *message, header *record.Header) (*delivery, error) {
 	if header.Kind == record.KindHeartbeat {
 		return p.delivery(batch.Heartbeat(p.stamp(next.stamped, header.WrittenAt)), position, 0), nil
 	}
-	p.counters.skewed(next.stamped.Sub(header.WrittenAt).Abs())
+	atomicmax.Raise(&p.counters.skew, int64(next.stamped.Sub(header.WrittenAt).Abs()))
 	spans, err := record.Decode(next.data, *header)
 	if err != nil {
 		return nil, err
@@ -263,17 +265,6 @@ func (p *pump) send(ctx context.Context, made *delivery) error {
 		p.counters.handed(made.batch.Heartbeat)
 		return nil
 	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func pause(ctx context.Context, wait time.Duration) error {
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
 		return ctx.Err()
 	}
 }

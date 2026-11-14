@@ -10,12 +10,13 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/samber/lo"
+
+	"github.com/DmytroLysenko1/faultline/pkg/retry"
 )
 
 const (
 	firstRetryWait = 100 * time.Millisecond
 	lastRetryWait  = time.Second
-	retryBackoff   = 2
 	attemptTimeout = time.Second
 	missingStream  = "missing"
 	presentStream  = "present"
@@ -330,34 +331,12 @@ func streamConfig(ctx context.Context, js jetstream.JetStream, name string) (*je
 }
 
 func retrying(ctx context.Context, call func(attempt context.Context) error) error {
-	wait := firstRetryWait
-	err := attemptOnce(ctx, call)
-	for Temporary(err) {
-		if waitErr := pause(ctx, wait); waitErr != nil {
-			return errors.Join(err, waitErr)
-		}
-		wait = min(retryBackoff*wait, lastRetryWait)
-		err = attemptOnce(ctx, call)
-	}
-	return err
-}
-
-func attemptOnce(ctx context.Context, call func(attempt context.Context) error) error {
-	attempt, cancel := context.WithTimeout(ctx, attemptTimeout)
-	defer cancel()
-	return call(attempt)
-}
-
-func pause(ctx context.Context, wait time.Duration) error {
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-
-	}
+	return retry.Do(ctx, &retry.Policy{
+		Attempt:   attemptTimeout,
+		FirstWait: firstRetryWait,
+		MaxWait:   lastRetryWait,
+		Retryable: Temporary,
+	}, call)
 }
 
 func olderOrDrift(want, got *jetstream.StreamConfig) []Drift {

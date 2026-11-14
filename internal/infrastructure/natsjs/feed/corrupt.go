@@ -10,6 +10,7 @@ import (
 
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/record"
+	"github.com/DmytroLysenko1/faultline/pkg/retry"
 )
 
 type verdict func(err error) error
@@ -151,7 +152,7 @@ func (p *pump) hold(ctx context.Context, attempt func(context.Context) error, fi
 		if done {
 			return err
 		}
-		if err := pause(ctx, deadLetterRetryGap); err != nil {
+		if err := retry.Sleep(ctx, deadLetterRetryGap); err != nil {
 			return err
 		}
 	}
@@ -166,7 +167,7 @@ func (p *pump) holdOnce(
 		p.counters.stalled(stallLeaseInvalid)
 		return false, nil
 	}
-	err := within(ctx, deadLetterAttempt, attempt)
+	err := retry.Attempt(ctx, deadLetterAttempt, attempt)
 	if err == nil {
 		p.counters.unstalled()
 		return true, nil
@@ -193,10 +194,4 @@ func readVerdict(err error) error {
 		return fmt.Errorf("%w: the feed connection is closed: %w", ErrConsumerLost, err)
 	}
 	return nil
-}
-
-func within(ctx context.Context, budget time.Duration, call func(context.Context) error) error {
-	attempt, cancel := context.WithTimeout(ctx, budget)
-	defer cancel()
-	return call(attempt)
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/processing"
+	"github.com/DmytroLysenko1/faultline/pkg/atomicmax"
 )
 
 const (
@@ -73,7 +74,7 @@ func (f *Feed) purge(ctx context.Context, target uint64) error {
 		f.counters.purgeFailures.Add(1)
 		return fmt.Errorf("purge through %d: %w", target, err)
 	}
-	f.counters.purgedThrough(target)
+	atomicmax.Raise(&f.counters.purged, target)
 	return nil
 }
 

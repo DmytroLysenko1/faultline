@@ -9,6 +9,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs"
+	"github.com/DmytroLysenko1/faultline/pkg/retry"
 )
 
 const (
@@ -159,15 +160,10 @@ func grow(
 }
 
 func retrying(ctx context.Context, call func(attempt context.Context) error) error {
-	for {
-		attempt, cancel := context.WithTimeout(ctx, bucketAttempt)
-		err := call(attempt)
-		cancel()
-		if !natsjs.Temporary(err) {
-			return err
-		}
-		if waitErr := waitUntil(ctx, bucketRetryGap); waitErr != nil {
-			return errors.Join(err, waitErr)
-		}
-	}
+	return retry.Do(ctx, &retry.Policy{
+		Attempt:   bucketAttempt,
+		FirstWait: bucketRetryGap,
+		MaxWait:   bucketRetryGap,
+		Retryable: natsjs.Temporary,
+	}, call)
 }

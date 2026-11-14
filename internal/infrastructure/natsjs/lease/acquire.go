@@ -10,6 +10,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs"
+	"github.com/DmytroLysenko1/faultline/pkg/retry"
 )
 
 func Acquire(ctx context.Context, conn *natsjs.Conn, options *Options) (*Lease, error) {
@@ -57,7 +58,7 @@ func claim(ctx context.Context, store keyStore, maxAge time.Duration, options *O
 		if lease.claimOnce(ctx, started) {
 			return lease, nil
 		}
-		if err := waitUntil(ctx, started+options.RetryEvery-lease.now()); err != nil {
+		if err := retry.Sleep(ctx, started+options.RetryEvery-lease.now()); err != nil {
 			lease.abandon(ctx)
 			return nil, fmt.Errorf("acquire lease %s: %w", lease.key, err)
 		}

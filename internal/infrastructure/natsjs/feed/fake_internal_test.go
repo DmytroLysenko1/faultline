@@ -19,6 +19,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/record"
+	"github.com/DmytroLysenko1/faultline/pkg/retry"
 )
 
 const (
@@ -228,7 +229,7 @@ func (s *fakeStream) Describe(ctx context.Context) (identity, error) {
 		return live, nil
 	}
 	if reply.takes > 0 {
-		if err := pause(ctx, reply.takes); err != nil {
+		if err := retry.Sleep(ctx, reply.takes); err != nil {
 			return identity{}, err
 		}
 	}

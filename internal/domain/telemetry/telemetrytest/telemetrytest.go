@@ -15,6 +15,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/response"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
+	"github.com/DmytroLysenko1/faultline/pkg/atomicmax"
 )
 
 const (
@@ -204,13 +205,7 @@ func (s *PeakSampler) sample() {
 }
 
 func (s *PeakSampler) record() {
-	live := HeapInUse()
-	for {
-		seen := s.peak.Load()
-		if live <= seen || s.peak.CompareAndSwap(seen, live) {
-			return
-		}
-	}
+	atomicmax.Raise(&s.peak, HeapInUse())
 }
 
 func (s *PeakSampler) halt() {
