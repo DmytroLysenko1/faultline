@@ -58,7 +58,7 @@ func startJournal(tb testing.TB, topology natsjs.Topology) *liveJournal {
 	}
 	live := &liveJournal{cluster: cluster, conn: conn, topology: topology}
 	tb.Cleanup(func() { live.close(tb) })
-	if err := conn.EnsureTopology(tb.Context(), topology); err != nil {
+	if err := conn.EnsureTopology(tb.Context(), topology, natsjstest.Held{}); err != nil {
 		tb.Fatalf("EnsureTopology: %v", err)
 	}
 	publisher, err := conn.Publisher(topology)

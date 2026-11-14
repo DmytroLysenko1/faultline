@@ -89,7 +89,7 @@ func rawJetStream(t *testing.T, cluster *natsjstest.Cluster) jetstream.JetStream
 func ensured(t *testing.T, cluster *natsjstest.Cluster, topology natsjs.Topology) *natsjs.Conn {
 	t.Helper()
 	conn := dial(t, cluster)
-	if err := conn.EnsureTopology(t.Context(), topology); err != nil {
+	if err := conn.EnsureTopology(t.Context(), topology, natsjstest.Held{}); err != nil {
 		t.Fatalf("EnsureTopology: %v", err)
 	}
 	return conn

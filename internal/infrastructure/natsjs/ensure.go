@@ -106,7 +106,19 @@ type plan struct {
 	create bool
 }
 
-func (c *Conn) EnsureTopology(ctx context.Context, topology Topology) error {
+type holder interface {
+	Valid() bool
+}
+
+type writer struct {
+	js    jetstream.JetStream
+	lease holder
+}
+
+func (c *Conn) EnsureTopology(ctx context.Context, topology Topology, lease holder) error {
+	if lease == nil {
+		return fmt.Errorf("%w: no lease", ErrNotHolder)
+	}
 	js, err := c.control(topology)
 	if err != nil {
 		return err
@@ -115,14 +127,24 @@ func (c *Conn) EnsureTopology(ctx context.Context, topology Topology) error {
 	if err != nil || len(drifts) > 0 {
 		return errors.Join(err, driftError(drifts))
 	}
-	return applyAll(ctx, js, plans)
+	return writer{
+		js:    js,
+		lease: lease,
+	}.applyAll(ctx, plans)
 }
 
-func applyAll(ctx context.Context, js jetstream.JetStream, plans []plan) error {
+func (w writer) applyAll(ctx context.Context, plans []plan) error {
 	for _, next := range plans {
-		if err := apply(ctx, js, next); err != nil {
+		if err := w.apply(ctx, next); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (w writer) held() error {
+	if !w.lease.Valid() {
+		return ErrNotHolder
 	}
 	return nil
 }
@@ -189,29 +211,32 @@ func planStream(ctx context.Context, js jetstream.JetStream, want *jetstream.Str
 	}, olderOrDrift(want, got), nil
 }
 
-func apply(ctx context.Context, js jetstream.JetStream, next plan) error {
-	if err := createOrUpdate(ctx, js, next); err != nil {
+func (w writer) apply(ctx context.Context, next plan) error {
+	if err := w.createOrUpdate(ctx, next); err != nil {
 		return wrapStream("ensure", next.want.Name, err)
 	}
-	return readBack(ctx, js, next.want)
+	return readBack(ctx, w.js, next.want)
 }
 
-func createOrUpdate(ctx context.Context, js jetstream.JetStream, next plan) error {
+func (w writer) createOrUpdate(ctx context.Context, next plan) error {
 	if !next.create {
-		return update(ctx, js, next.want)
+		return w.update(ctx, next.want)
 	}
 	err := retrying(ctx, func(attempt context.Context) error {
-		_, err := js.CreateStream(attempt, *next.want)
+		if err := w.held(); err != nil {
+			return err
+		}
+		_, err := w.js.CreateStream(attempt, *next.want)
 		return err
 	})
 	if errors.Is(err, jetstream.ErrStreamNameAlreadyInUse) {
-		return update(ctx, js, next.want)
+		return w.update(ctx, next.want)
 	}
 	return err
 }
 
-func update(ctx context.Context, js jetstream.JetStream, want *jetstream.StreamConfig) error {
-	got, err := streamConfig(ctx, js, want.Name)
+func (w writer) update(ctx context.Context, want *jetstream.StreamConfig) error {
+	got, err := streamConfig(ctx, w.js, want.Name)
 	if err != nil {
 		return err
 	}
@@ -219,7 +244,10 @@ func update(ctx context.Context, js jetstream.JetStream, want *jetstream.StreamC
 		return driftError(drifts)
 	}
 	return retrying(ctx, func(attempt context.Context) error {
-		_, err := js.UpdateStream(attempt, *want)
+		if err := w.held(); err != nil {
+			return err
+		}
+		_, err := w.js.UpdateStream(attempt, *want)
 		return err
 	})
 }
@@ -282,7 +310,7 @@ func streamConfig(ctx context.Context, js jetstream.JetStream, name string) (*je
 func retrying(ctx context.Context, call func(attempt context.Context) error) error {
 	wait := firstRetryWait
 	err := attemptOnce(ctx, call)
-	for temporary(err) {
+	for Temporary(err) {
 		if waitErr := pause(ctx, wait); waitErr != nil {
 			return errors.Join(err, waitErr)
 		}
@@ -362,7 +390,7 @@ func wrapStream(action, name string, err error) error {
 	return fmt.Errorf("%s stream %s: %w", action, name, err)
 }
 
-func temporary(err error) bool {
+func Temporary(err error) bool {
 	if err == nil {
 		return false
 	}

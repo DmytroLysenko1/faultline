@@ -196,3 +196,10 @@ func (c *Cluster) stopAll() {
 func up(running *server.Server) bool {
 	return running != nil && running.Running()
 }
+
+// Held is a topology lease that is always held, for tests that are not about the lease.
+type Held struct{}
+
+func (Held) Valid() bool {
+	return true
+}

@@ -14,6 +14,7 @@ var (
 	ErrStreamDrift      = errors.New("journal stream configuration drifted")
 	ErrPayloadLimit     = errors.New("nats max_payload is below the journal record limit")
 	ErrUnknownPartition = errors.New("partition outside the journal topology")
+	ErrNotHolder        = errors.New("not the holder of the topology lease")
 )
 
 const (

@@ -73,8 +73,8 @@ func TestEnsureRetriesOnlyWhatPassesOnItsOwn(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := temporary(tt.args); got != tt.want {
-				t.Errorf("temporary(%v) = %t, want %t", tt.args, got, tt.want)
+			if got := Temporary(tt.args); got != tt.want {
+				t.Errorf("Temporary(%v) = %t, want %t", tt.args, got, tt.want)
 			}
 		})
 	}

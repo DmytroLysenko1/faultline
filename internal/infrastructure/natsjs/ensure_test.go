@@ -90,7 +90,7 @@ func TestTwoProcessorsEnsuringTheSameTopologyAgree(t *testing.T) {
 	var processors sync.WaitGroup
 
 	for index, conn := range conns {
-		processors.Go(func() { errs[index] = conn.EnsureTopology(t.Context(), topology) })
+		processors.Go(func() { errs[index] = conn.EnsureTopology(t.Context(), topology, natsjstest.Held{}) })
 	}
 	processors.Wait()
 
@@ -113,7 +113,7 @@ func TestAnOlderReleaseCannotRewriteANewerTopology(t *testing.T) {
 	ensured(t, cluster, newer)
 	older := topologyOf(onePartition, oneReplica)
 
-	err := dial(t, cluster).EnsureTopology(t.Context(), older)
+	err := dial(t, cluster).EnsureTopology(t.Context(), older, natsjstest.Held{})
 
 	assertDrift(t, err, "faultline.config_version")
 	if got := shapeOf(t, rawJetStream(t, cluster), older.Stream(firstPartition)).MaxBytes; got != grownMaxBytes {
@@ -128,7 +128,7 @@ func TestANewerReleaseUpdatesTheMutableFields(t *testing.T) {
 	newer.ConfigVersion, newer.MaxBytesPerPartition = secondVersion, grownMaxBytes
 	newer.Compression = natsjs.CompressionS2
 
-	err := dial(t, cluster).EnsureTopology(t.Context(), newer)
+	err := dial(t, cluster).EnsureTopology(t.Context(), newer, natsjstest.Held{})
 
 	if err != nil {
 		t.Fatalf("EnsureTopology: %v", err)
@@ -151,7 +151,7 @@ func TestAChangedImmutableFieldIsDriftNotAnUpdate(t *testing.T) {
 	}
 	topology.ConfigVersion = secondVersion
 
-	err := dial(t, cluster).EnsureTopology(t.Context(), topology)
+	err := dial(t, cluster).EnsureTopology(t.Context(), topology, natsjstest.Held{})
 
 	assertDrift(t, err, "discard")
 	if got := shapeOf(t, js, topology.Stream(firstPartition)).Discard; got != jetstream.DiscardOld {
@@ -302,7 +302,7 @@ func TestEnsureTopologyWaitsForTheClusterToElectALeader(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), electionWithin)
 	defer cancel()
 
-	go func() { ensuredErr <- conn.EnsureTopology(ctx, topology) }()
+	go func() { ensuredErr <- conn.EnsureTopology(ctx, topology, natsjstest.Held{}) }()
 	for _, node := range stopped {
 		cluster.Restart(node)
 	}
@@ -324,7 +324,7 @@ func TestEnsureTopologyGivesUpWhenItsContextEnds(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), publishBudget)
 	defer cancel()
 
-	err := conn.EnsureTopology(ctx, topologyOf(onePartition, threeReplicas))
+	err := conn.EnsureTopology(ctx, topologyOf(onePartition, threeReplicas), natsjstest.Held{})
 
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("err = %v, want the deadline", err)
@@ -366,7 +366,7 @@ func TestEnsureTopologyRidesOutAReconnect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), eventuallyWithin)
 	defer cancel()
 
-	err := conn.EnsureTopology(ctx, topologyOf(onePartition, oneReplica))
+	err := conn.EnsureTopology(ctx, topologyOf(onePartition, oneReplica), natsjstest.Held{})
 
 	if err != nil {
 		t.Errorf("EnsureTopology across a reconnect: %v", err)
@@ -393,7 +393,7 @@ func TestADriftOnOneStreamLeavesEveryStreamAsItWas(t *testing.T) {
 	next := current
 	next.ConfigVersion, next.MaxBytesPerPartition = secondVersion, grownMaxBytes
 
-	err = dial(t, cluster).EnsureTopology(t.Context(), next)
+	err = dial(t, cluster).EnsureTopology(t.Context(), next, natsjstest.Held{})
 
 	assertDrift(t, err, "max_age")
 	first := shapeOf(t, js, current.Stream(firstPartition))
@@ -410,11 +410,74 @@ func TestAWrongTopologyCreatesNothing(t *testing.T) {
 	ensured(t, cluster, topologyOf(onePartition, oneReplica))
 	wrong := topologyOf(twoPartitions, oneReplica)
 
-	err := dial(t, cluster).EnsureTopology(t.Context(), wrong)
+	err := dial(t, cluster).EnsureTopology(t.Context(), wrong, natsjstest.Held{})
 
 	assertDrift(t, err, "faultline.partitions")
 	_, err = rawJetStream(t, cluster).Stream(t.Context(), wrong.Stream(secondPartition))
 	if !errors.Is(err, jetstream.ErrStreamNotFound) {
 		t.Errorf("stream of partition 1 = %v: created before the drift was found", err)
+	}
+}
+
+type lostLease struct{}
+
+func (lostLease) Valid() bool {
+	return false
+}
+
+// TestEnsureTopologyWritesNothingWithoutTheLease: a stream configuration has no conditional update, so a
+// processor that no longer holds the topology lease must not create or update a stream — another
+// holder may be writing a different version.
+func TestEnsureTopologyWritesNothingWithoutTheLease(t *testing.T) {
+	cluster := natsjstest.Start(t, singleNode)
+	topology := topologyOf(onePartition, oneReplica)
+	js := rawJetStream(t, cluster)
+	conn := dial(t, cluster)
+
+	missing := conn.EnsureTopology(t.Context(), topology, lostLease{})
+	_, lookup := js.Stream(t.Context(), topology.Stream(firstPartition))
+	ensured(t, cluster, topology)
+	next := topology
+	next.ConfigVersion = secondVersion
+	stale := conn.EnsureTopology(t.Context(), next, lostLease{})
+	none := conn.EnsureTopology(t.Context(), next, nil)
+
+	for name, err := range map[string]error{"create": missing, "update": stale, "no lease": none} {
+		if !errors.Is(err, natsjs.ErrNotHolder) {
+			t.Errorf("%s = %v, want ErrNotHolder", name, err)
+		}
+	}
+	if !errors.Is(lookup, jetstream.ErrStreamNotFound) {
+		t.Errorf("stream after the refused create: %v, want not found", lookup)
+	}
+	if got := shapeOf(t, js, topology.Stream(firstPartition)).Version; got != "1" {
+		t.Errorf("config version %s after the refused update, want 1", got)
+	}
+}
+
+// expiringLease is held for its first checks only, like a lease that is lost while EnsureTopology works.
+type expiringLease struct {
+	left int
+}
+
+func (l *expiringLease) Valid() bool {
+	l.left--
+	return l.left >= 0
+}
+
+// TestEnsureTopologyChecksTheLeaseBeforeEveryWrite: a lease lost after the first stream was written stops
+// the second write — one check before the whole run would let a slow EnsureTopology write without it.
+func TestEnsureTopologyChecksTheLeaseBeforeEveryWrite(t *testing.T) {
+	cluster := natsjstest.Start(t, singleNode)
+	topology := topologyOf(twoPartitions, oneReplica)
+	js := rawJetStream(t, cluster)
+
+	err := dial(t, cluster).EnsureTopology(t.Context(), topology, &expiringLease{left: 1})
+
+	_, first := js.Stream(t.Context(), topology.Stream(firstPartition))
+	_, second := js.Stream(t.Context(), topology.Stream(firstPartition+1))
+	if !errors.Is(err, natsjs.ErrNotHolder) || first != nil || !errors.Is(second, jetstream.ErrStreamNotFound) {
+		t.Errorf("EnsureTopology = %v, first stream %v, second stream %v; want ErrNotHolder after the first",
+			err, first, second)
 	}
 }

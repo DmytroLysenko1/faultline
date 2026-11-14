@@ -282,7 +282,7 @@ OK на `Export` отдаётся **только** после того, как `
 
 **Сделано в 2a/2b — конфигурация стримов.**
 - `EnsureTopology` (процессор): первый проход только читает; создаёт и обновляет только когда расхождений нет (неизменяемое поле не совпало — `ErrStreamDrift`, ничего не трогается); `config_version` в метаданных (`faultline.config_version`, рядом `faultline.partitions`) не даёт старому релизу откатить новую конфигурацию; после обновления конфигурация перечитывается; повторы с попыткой 1 s переживают переподключения и выборы. Расхождение, найденное уже при применении или перечитывании, может оставить часть партиций обновлёнными — повтор `EnsureTopology` доводит до конца. Durable-консьюмер (вариант (b) ADR-3) `EnsureTopology` пока не создаёт — срез 3.
-- **Окно без CAS.** У конфигурации стрима нет условного обновления по ревизии: два процессора с разными версиями могут обновить её почти одновременно, и «последний победил». Закрывает окно только единственный писатель конфигурации: при P = 1 — держатель аренды `processor.p0` (срез 3: `EnsureTopology` только после взятия аренды). При P > 1 аренда партиции не сериализует запись чужих стримов — владельца конфигурации (аренда `p0` или отдельный ключ) решает дизайн среза 3, до шага 11.
+- **Окно без CAS.** У конфигурации стрима нет условного обновления по ревизии: два процессора с разными версиями могут обновить её почти одновременно, и «последний победил». Закрывает окно только единственный писатель конфигурации: при P = 1 — держатель аренды `processor.p0` (срез 3: `EnsureTopology` только после взятия аренды). При P > 1 аренда партиции не сериализует запись чужих стримов — по дизайну среза 3 конфигурацию пишет только держатель аренды `p0` (`EnsureTopology` с портом `holder`, проверка перед каждой записью, срез 3.1), процессор разворачивается стратегией `Recreate`.
 - `VerifyTopology` (ингестер) блокирует старт по политике проекта: нет стрима, неизменяемые поля (`replicas`, `max_age` и пр. — NATS умеет менять replicas, но смена — ручная операция), окно дедупа короче своего. Любое отличие изменяемых полей (`max_bytes`, сжатие, `config_version`, окно дедупа — и короче, и длиннее) возвращается заметками и логируется при старте (срез 4).
 - **Один источник P.** `journal.Options.Topology` — то же значение `natsjs.Topology`, из которого построен публикатор; в wiring (срез 4) оба строятся из одного значения, иначе спаны трассы ушли бы не в ту партицию.
 
@@ -369,7 +369,16 @@ OK на `Export` отдаётся **только** после того, как `
 
 ### Аренда партиции (D-19, ADR-6)
 
-KV `faultline_leases` (TTL 15 s, история 1, R = R стрима), ключ `processor.p<n>`: старт — `kv.Create` (атомарно; занято → ожидание, readiness 503, повтор раз в 5 s); продление раз в 5 s `kv.Update(ревизия)`; провал или возраст продления ≥ 10 s → аренда потеряна: прекращаются пульс, загрузка чекпоинта и удержание, насос останавливается, процесс выходит с кодом 1; штатная остановка — `kv.Delete` (новый держатель не ждёт TTL). Остаточный вред «зомби»-держателя после паузы GC (проверил аренду, уснул, проснулся): устаревший держатель может отправить пульс (его гасит CAS по позиции, если новый держатель что-то записал) и загрузить объект чекпоинта (его отвергает CAS указателя по эпохе) — удержание идёт только после CAS указателя, поэтому записи, не покрытые чекпоинтом нового держателя, не удаляются (ред. 2 считала вред иначе — ревью pstack LOW).
+Ред. 3 спеки (TTL 15 s, продление 5 s, «провал или возраст ≥ 10 s → выход 1») заменена дизайном среза 3 (ред. 5, раздел «Срез 3: дизайн-контракт» ниже): выборы лидера KV (C5: до 14,7 s) при TTL 15 s роняли бы все P процессоров разом.
+
+**Сделано в 3.1** (`internal/infrastructure/natsjs/lease`, порт `holder` у `natsjs.EnsureTopology`):
+- `Acquire(ctx, conn, *Options)` ждёт до ctx процесса (readiness 503 — забота `cmd`): `Create` с токеном `instance/nonce` (nonce — `crypto/rand.Text`, один на вызов) не чаще раза в `RetryEvery`; `ErrKeyExists` → `Get`: свой токен (ответ прошлой попытки потерян) → `Update(R)`, эпоха — ревизия своей записи. Захват, прерванный ctx, удаляет ключ, который успел записать (оптимизация: запись, ещё летящая, доживёт до TTL).
+- Бакет — стандартный `CreateKeyValue` (File, история 1); сверка Storage и R (`ErrBucketDrift`); `MaxAge` только растёт до своего TTL (`UpdateKeyValue` из `Status().Config()`, перечитывание); после захвата `MaxAge` перечитывается ещё раз — упал (процессор другой версии) → ключ отдаётся, `ErrBucketDrift`. Уменьшать TTL — только по runbook при процессорах в 0: новый `MaxAge` действует на живые ключи задним числом.
+- `Valid() = !released ∧ since(отправка последнего успешного CAS) < LostAfter`; потеря (`Lost()`, `ErrLeaseLost` из `Run`) — когда прошёл фактический `MaxAge` бакета. Чтение ничего не продлевает: `Get` даёт лишь ревизию для следующего `Update`. Тайминги по умолчанию: TTL 25 s, `LostAfter` 20 s, продление раз в 2,5 s, попытка 1 s, повтор через 1 s от начала попытки; `validate` требует `TTL − LostAfter ≥ 5 s` и `LostAfter − RenewEvery − RetryEvery − AttemptTime ≥ MeasuredElection` (15 s; сократить можно только из тестов пакета).
+- `Run(ctx)` запускается один раз (`ErrAlreadyRunning`); отмена ctx → `released`, затем `Delete(LastRevision)` (несовпадение → свой токен → повтор), `Run` → nil, неудача — `Stats.ReleaseFailures` и TTL; отмена всегда побеждает одновременно наступивший срок. Warn `lease.suspended` / Info `lease.resumed` на переходах `Valid()`; Error `lease.lost` — у `cmd`, финального обработчика `ErrLeaseLost`.
+- `EnsureTopology(ctx, topology, holder)` проверяет `Valid()` перед каждым `CreateStream`/`UpdateStream`; без аренды — `ErrNotHolder` без повтора, чтения выполняются. Что аренда — именно `p0`, обеспечивает wiring `cmd` (срез 4).
+- Отличия от текста ред. 5: в `Options` нет `Clock` — время монотонное (`time.Since`), тесты на `testing/synctest`; `Options` берёт `natsjs.Topology` (R и границы партиции из одного источника); `natsjs.Temporary` экспортирован для повторов бакета.
+- Тесты: fake KV с настоящими ревизиями, истечением и сбоями (ответ потерян, нет ответа, медленный ответ, нет бакета, устаревшее чтение) на synctest; встроенный NATS R1/R3 — два держателя, SIGKILL без освобождения, поздний `Delete` зомби, обрыв продлений, удалённый бакет, форма и рост бакета, R бакета. Мутации: 25/25 убиты. Не покрыты (LOW): провал `UpdateKeyValue` при росте и падение `MaxAge` после захвата — на встроенном NATS их не вызвать.
 
 ---
 
@@ -984,6 +993,404 @@ FSM ингестера — как в ред. 2 (приложение А) с за
 3. Инкрементальный чекпоинт — только если проба 3c покажет паузу > 1 s.
 4. [3b] Агент-DaemonSet и тенант по namespace события (FR-SEC-002 «токен ↔ тенант» против FR-SEC-003) — дизайн шага 8/18; в шаге 3 тенант — константа установки.
 5. Нужны ли INTERNAL-спаны после шага 4 (фильтрация на приёме экономит до 15–50 % записи) — решение шага 4 о сырых событиях.
+
+---
+
+## Срез 3: дизайн-контракт (ред. 5, апрув пользователя 14.11)
+
+Ред. 1–4 разобраны шестью кругами ревью (pocock, osmani, pstack, эксперт по JetStream; пробы на встроенном nats-server v2.15.3). Ниже — принятая ред. 5; раздел «Сделано в 3.1» в «Аренде партиции» говорит, что из неё уже в коде.
+
+(Ред. 5 = ред. 4 + пятый круг: pocock, osmani, pstack, эксперт; пробы `pstack-s3/rev4/maxage`, `expert-s3/rev4`.
+Изменения — таблица «Ред. 4 → ред. 5» в конце.)
+
+История: ред. 1 → ред. 2 → ред. 3 (по эксперту по JetStream) → четвёртый круг (pocock, osmani, pstack, эксперт;
+пробы `scratchpad/pstack-s3/rev3/`, `scratchpad/expert-s3/rev3*/`, `scratchpad/review-probe/nobucket/`) → ред. 4.
+Изменения ред. 3 → ред. 4 — в конце. Сверено с nats.go v1.55.0 и nats-server v2.15.3.
+
+### Разбиение
+
+| Подсрез | Что | FMEA |
+|---|---|---|
+| **3.1** | `natsjs/lease`: захват с токеном, продление по CAS, `Valid()` и потеря — по времени; бакет аренд (стандартный KV, сверка); `EnsureTopology` у `p0` с портом `holder` | 24 |
+| **3.2** | `natsjs/feed`: `Open` (консьюмер → `Info`), насос, кредит, `ReceivedAt`, личность при каждой смене консьюмера (на сообщении и на таймауте), нештатный стоп → ошибка; `Close/Wait`; `journaltest.RunFeedContract` | 9, 10, 22, 23 |
+| **3.3** | пульс (CAS по позиции), `Commit` → `Purge`, DLQ и политика порчи, замер `Purge` 1 GiB | 8, 11, 25 |
+
+Затем `natsjs/checkpoint` (требования — в конце).
+
+### 1. Инварианты
+
+- **L1.** Побочные эффекты партиции (пульс, CAS указателя, запись конфигурации у `p0`) — только при `Valid()`.
+  `Valid() = !released ∧ clock.Since(renewedAt) < LostAfter` (`released` — atomic, `Run` ставит его **до**
+  `Delete` при освобождении и при любом своём выходе); `renewedAt` — момент **отправки** последнего **успешного** CAS
+  (`Create`/`Update`); вычисляется при каждом вызове по монотонным часам. Чтение ничего не продлевает и ничего не
+  решает. Допущение: расхождение настенных часов узлов NATS + пауза процесса < `TTL − LostAfter` = 5 s (истечение
+  по `MaxAge` — по часам каждой реплики, `filestore.go:7406`; метка — `time.Now()` лидера, `stream.go:7924`; шаг
+  `ats` 100 ms сдвигает истечение только позже). Проба pstack: метка сервера − отправка успешного CAS = 0 ms,
+  ключ исчез через 3310 ms при TTL 3000 — `Valid()` не переживает ключ.
+- **Потеря** — тоже по времени: `clock.Since(renewedAt) ≥ TTL` → `Lost()` закрыт, `Run` → `ErrLeaseLost`. К этому
+  моменту истекла последняя запись, о которой процесс знает (продление, легшее после таймаута, может прожить дольше —
+  на безопасность не влияет: `Valid()` уже ложно, а новый захват того же процесса после рестарта подождёт). Покрывает
+  и захват другим, и
+  удалённый бакет (`Update` на нём даёт `ErrNoStreamResponse`, не 10059 — пробы трёх ревьюеров), и любую
+  неклассифицированную ошибку.
+- **L2.** Эпоха = ревизия своей записи, полученной в `Acquire` (`Create`, а при потерянном ответе — следующего
+  `Update`); сквозной sequence стрима бакета, File — растёт через рестарт; больше любой ревизии прошлого держателя.
+  Регресс ловит `natsjs/checkpoint`.
+- **L3.** Пишет только `Update(rev)` и `Delete(LastRevision(rev))` по своей ревизии; `Get` даёт лишь кандидата
+  ревизии для следующего `Update`.
+- **I18 (3.2).** `прочитано = доставлено пакетов + пульсов + удерживается насосом` (+ DLQ в 3.3), пробел — отдельно;
+  позиции строго растут; `ReceivedAt` не убывает; декодированных байт в полёте ≤ `MaxBytes`; сырых в буфере
+  клиента ≤ `PullMaxBytes`; **ни сообщение, ни пульс после смены консьюмера не выдаются до сверки личности**.
+- **I15 (3.3).** `Purge(through + 1)` только если `through` ≤ позиции чекпоинта, выигравшего CAS указателя, и из
+  одного `Info` прямо перед вызовом: `through ≤ LastSeq` и `Created` совпал (`Purge(seq > LastSeq + 1)` вычищает
+  стрим и сдвигает нумерацию — `filestore.go:10824–10826`, проба E2).
+
+### 2. Владельцы состояния
+
+| Состояние | Единственный писатель | Как исключаются конкуренты |
+|---|---|---|
+| ключ `processor.p<n>` | `Acquire` до старта `Run`, затем горутина `Run` | `Create`; `Update(rev)`; `Delete(LastRevision)`; `MaxAge` бакета |
+| `renewedAt`, `released` (atomic), `rev`, канал `lost` | горутина `Run` | `Valid()` вычисляется; `lost` закрывает `Run` (`sync.OnceFunc`) |
+| бакет `faultline_leases` | `Acquire` любого процессора: создание и **только рост** `MaxAge` до своего `TTL` | одинаковые `UpdateKeyValue` идемпотентны; смешанных версий нет (`Recreate`); уменьшение — только runbook при процессорах в 0 (действует задним числом на живые ключи — проба `rev4/maxage`) |
+| конфигурация стримов | `EnsureTopology` держателя `p0`; `holder.Valid()` перед каждым `CreateStream`/`UpdateStream` | аренда `p0` + монотонный `config_version` |
+| позиция, `ReceivedAt`, `idlerule`, имя консьюмера | насос | single-writer |
+| кредит | `semaphore.Weighted` | насос до `Decode`; доставка — `Release` (`sync.OnceFunc`) |
+| канал доставок | насос (создаёт, пишет через `select` с `ctx.Done()`, закрывает) | `Receive` только читает |
+| причина остановки | насос (до `close`) или `Close` (канал `closing`) | `Receive` смотрит `closing` и причину сам, не ждёт насос |
+
+### 3. API
+
+```go
+// natsjs
+var ErrNotHolder = errors.New("not the holder of the topology lease")
+
+type holder interface{ Valid() bool }
+
+func (c *Conn) EnsureTopology(ctx context.Context, topology Topology, lease holder) error
+// проверка lease.Valid() в attemptOnce только перед CreateStream/UpdateStream (ensure.go:203, :221); !Valid() →
+// ErrNotHolder без повтора. VerifyTopology (ингестер) без изменений.
+```
+
+```go
+// natsjs/lease
+var (
+	ErrLeaseLost      = errors.New("partition lease lost")
+	ErrInvalidOptions = errors.New("invalid lease options")
+	ErrBucketDrift    = errors.New("lease bucket configuration drifted")
+)
+
+const ElectionBudget = 15 * time.Second // C5: выборы лидера KV до 14,7 s
+
+type Options struct {
+	Partition   uint16
+	Instance    string        // имя пода; значение ключа = instance/nonce, nonce из crypto/rand один на вызов Acquire
+	Replicas    int
+	TTL         time.Duration // 25 s — MaxAge при создании бакета
+	RenewEvery  time.Duration // 2,5 s
+	RetryEvery  time.Duration // 1 s — следующая попытка не раньше, чем через RetryEvery после начала предыдущей
+	AttemptTime time.Duration // 1 s
+	LostAfter   time.Duration // 20 s
+	Clock       Clock
+}
+// validate: TTL − LostAfter ≥ 5 s; LostAfter − RenewEvery − RetryEvery − AttemptTime ≥ ElectionBudget;
+// AttemptTime ≤ RetryEvery.
+
+type Lease struct {
+	Partition uint16
+	Epoch     uint64
+}
+
+func Acquire(ctx context.Context, conn *natsjs.Conn, options *Options) (*Lease, error) // до ctx процесса
+func (l *Lease) Run(ctx context.Context) error // отмена ctx → освобождение, nil; потеря → ErrLeaseLost
+func (l *Lease) Valid() bool
+func (l *Lease) Lost() <-chan struct{}
+func (l *Lease) Stats() Stats // Held, Epoch, Renewals, RenewFailures, RenewAge
+```
+
+**Бакет (в `Acquire`):** `CreateKeyValue{Bucket, TTL, History 1, Storage File, Replicas}`; `ErrBucketExists` →
+`KeyValue()` → `Status()` → сверка File и R (иначе `ErrBucketDrift`) → `MaxAge < TTL` →
+`UpdateKeyValue(Status().Config()` с `TTL` = своим`)` (только рост; nats.go собирает конфиг стрима тем же
+`prepareKeyValueConfig`, у процессоров одной версии меняются только `MaxAge` и `Duplicates = min(2 min, TTL)`,
+`kv.go:575–587`, `:648–653`; больший `MaxAge` безопасен — ключ живёт дольше `Valid()`) → перечитать `Status()`:
+`MaxAge < TTL` → `ErrBucketDrift`. Ошибка `UpdateKeyValue`: `retryable` → повтор раз в 1 s до ctx процесса, иначе
+ошибка `Acquire` (без продолжения со старым `MaxAge`). Порог потери — фактический `MaxAge` после этого шага;
+`MaxAge > TTL` — просто дольше ждать отказа. Бакетом управляет только `Acquire`: ручные правки полей вне
+`KeyValueConfig` не поддерживаются (runbook).
+`AllowDirect` не трогаем: решений по чтению нет, а `UpdateKeyValue`/`CreateOrUpdateKeyValue` его всё равно
+возвращают в `true` (проба R1, `kv.go:687`).
+
+**Продление (`Run`):** через `RenewEvery` от отправки последнего успешного CAS; после неудачи — следующая попытка
+через `RetryEvery` от начала предыдущей; дедлайн попытки — `min(начало + AttemptTime, renewedAt + MaxAge)`; `Get`
+ветки mismatch — в ctx той же попытки.
+
+| Ответ `Update(rev)` (nats.go) | Действие |
+|---|---|
+| успех | `rev` = новая ревизия, `renewedAt` = момент отправки этой попытки |
+| `errors.Is(err, jetstream.ErrKeyRevisionMismatch)` (10071; 10164 — «своя запись в полёте», `kv.go:1100–1116`) | `Get`: свой токен → следующая попытка `Update(entry.Revision())`; иначе следующая попытка `Update(rev)` |
+| всё остальное (таймаут, `ErrNoStreamResponse`, разрыв, прочее) | повтор |
+| `clock.Since(renewedAt) ≥ MaxAge` (проверка перед каждой попыткой) | **потеря** |
+
+Warn `lease.suspended` по спаду `Valid()`, Info по возврату; Error `lease.lost` по потере.
+Терпимость: `Valid()` без просадки переживает выборы KV до `LostAfter − RenewEvery − RetryEvery − AttemptTime =
+20 − 2,5 − 1 − 1 = 15,5 s` (ответ должен прийти до `LostAfter`), ключ — ещё на 5 s дольше; ≥ C5 14,7 s (максимум из
+5 замеров — превышение даёт только Warn о приостановке). Попытки 1 s хватает: `Update` на R3 File — p99 0,46 ms,
+сразу после смены лидера — 253 ms (проба эксперта P1, P2; fsync не на каждую запись). Нагрузка на KV — `P / 2,5`
+продлений/с + 2 запроса/с на каждого ожидающего (`Create` + `Get`).
+
+**Захват (`Acquire`):** `Create(instance/nonce)` не чаще раза в `RetryEvery` до ctx процесса (readiness 503); успех
+→ эпоха = ревизия, `renewedAt` = момент отправки; `ErrKeyExists` → `Get`: свой токен → `Update(entry.Revision())`,
+при успехе эпоха = ревизия этого `Update`, `renewedAt` = его отправка; иначе (чужой токен, любая другая ошибка, в
+т. ч. необёрнутое несовпадение из внутреннего `Update` `Create` поверх delete-маркера, `kv.go:1078–1079`) — ждать
+и повторять.
+
+**Освобождение (`Run` при отмене ctx):** сначала `released = true` (`Valid()` гаснет сразу), затем
+`context.WithoutCancel(ctx)` + 0,5 s; `Delete(LastRevision(rev))`;
+`ErrKeyRevisionMismatch` → `Get`, свой токен → `Delete(LastRevision(entry.Revision()))`; иначе ничего (TTL).
+
+```go
+// natsjs/feed
+var (
+	ErrStreamIdentity = errors.New("journal stream identity changed")
+	ErrPositionRange  = errors.New("checkpoint position is outside the stream")
+	ErrCorruptRecord  = errors.New("corrupt journal record") // 3.2: стоп; 3.3: DLQ
+	ErrConsumerLost   = errors.New("journal consumer could not be recreated")
+	ErrLeaseLost      = errors.New("partition lease lost") // свой sentinel; cmd проверяет и lease.ErrLeaseLost
+	ErrInvalidOptions = errors.New("invalid feed options")
+)
+
+type partitionLease interface {
+	Valid() bool
+	Lost() <-chan struct{}
+}
+
+type Options struct {
+	Topology     natsjs.Topology
+	Partition    uint16
+	MaxBytes     int64         // 64 MiB кредит декодированных байт, ≥ MaxBatchFootprint
+	PullMaxBytes int           // 16 MiB: дозапрос MaxBytes − pending ≥ 8 MiB ≥ MaxMsgSize стрима — без 409 (pull.go:463–472)
+	IdleAfter    time.Duration // > 0
+	Clock        Clock
+	Logger       *slog.Logger
+}
+
+type Start struct {
+	After      processing.Position // нулевая — первый старт или discard: DeliverAll, без проверки диапазона и пробела
+	ReceivedAt time.Time
+	Created    time.Time // нулевое — первый старт
+}
+
+func Open(ctx context.Context, conn *natsjs.Conn, lease partitionLease, start Start, options *Options) (*Feed, error)
+func (f *Feed) Created() time.Time
+func (f *Feed) Receive(ctx context.Context, limit int, maxWait time.Duration) ([]processing.Delivery, error)
+func (f *Feed) Close()
+func (f *Feed) Wait(ctx context.Context) error
+func (f *Feed) Stats() Stats
+func (f *Feed) Commit(ctx context.Context, through processing.Position) error // 3.3
+```
+
+- **`Open`:** `OrderedConsumer(ctx старта, DeliverByStartSequence After+1 | DeliverAll, префикс fl-p<n>-e<эпоха>)`
+  (создаётся сразу, `stream.go:399–404`) → `Stream.Info` (личность, `After ∈ [FirstSeq − 1, LastSeq]`) →
+  `Messages(PullMaxBytes)` → насос. ctx старта в консьюмере не сохраняется (`stream.go:387–407`).
+- **Насос:**
+  1. После **каждого** возврата `Next` (сообщение или таймаут) — `CachedInfo().Name`; сменилось → **сверка** до
+     выдачи сообщения или пульса. Сброс идёт синхронно внутри `Next` под мьютексом консьюмера (`ordered.go:285–306`,
+     `:532–584`), каждый сброс меняет имя (`serial++`, `:595–631`), `CachedInfo` берёт тот же мьютекс коротко
+     (`:697–704`), читает его одна горутина насоса — гонок нет. Проба R2: пересоздание без новых записей даёт только
+     таймауты, имя уже `_2`. Сообщения старого serial nats.go отбрасывает (`:313–317`).
+  2. **Сверка:** `Stream.Info` (попытка 2 s); временная ошибка (`natsjs` `retryable`) → следующая попытка через 1 s
+     после конца предыдущей, сообщение держится невыданным, всего до 35 s → `ErrConsumerLost` (проба P3: сразу после
+     смены лидера первая попытка — таймаут, вторая — 3 ms); `ErrStreamNotFound` или `Created` ≠ →
+     `ErrStreamIdentity`; прочие ошибки (не `retryable`, не «не найден») → `ErrConsumerLost`.
+  3. Позиция (пробел → счётчик) → заголовок → кредит → `Decode` (ссылается на `msg.Data()`, без копии) →
+     `ReceivedAt` → `select { ch <- d; <-ctx.Done() }`.
+  4. `MaxResetAttempts` = 7 — константа (сна 1+2+4+8+10+10 = 35 s); исчерпание (ошибка из `Next`,
+     `ordered.go:304–306`) → `ErrConsumerLost`. Худший сброс — 7 × 10 s + 35 s = 105 s.
+  5. Метрики без лишних RTT: `pending` = `Metadata().NumPending`, лаг = `now − Metadata().Timestamp`.
+- **`Receive` после остановки** (не ждёт насос — он может стоять в сбросе до ≈ 105 s):
+
+| Причина | `Receive` | Буфер | Исход |
+|---|---|---|---|
+| `Close` | лежащее в канале, затем `processing.ErrFeedClosed` | отдаётся | дренаж + финальный чекпоинт, код 0 |
+| `Lost()` | сразу ошибка с `feed.ErrLeaseLost` | нет | код 1 |
+| личность, диапазон, порча, `ErrConsumerLost` | сразу ошибка с причиной | нет | `cmd`: остановить `Store` (новых загрузок нет), `Store.Wait` ≤ 6 s (загрузка и CAS в полёте), затем освободить аренду и код 1; `Wait` не уложился — **не** освобождать (TTL), код 1 |
+
+  Один исход для всех нештатных стопов: процесс, не держащий партицию, не держит и аренду — но отдаёт её только
+  когда его побочные эффекты закончились (иначе зомби-CAS указателя и `Purge` после захвата новым держателем,
+  сценарий pstack M-B). После остановки фида `Commit` отклоняется (`ErrFeedClosed`). `Lost()` не отменяет ctx
+  `Pipeline` (иначе `canceledByCaller`, `pipeline.go:173–181`, дал бы код 0). В шаге 3 процессор держит одну
+  партицию (P = 1, спека :281) — код 1 не задевает соседей. Порча в 3.2 даёт CrashLoopBackOff (видимый стоп),
+  поэтому 3.2 не выкатывается без 3.3 (DLQ).
+- **`Close`:** закрыть `closing`, отменить ctx насоса, `iter.Stop()` в отдельной горутине. `Stop` ставит `closed`
+  до захвата мьютекса, а сброс проверяет `closed` перед каждой попыткой (`ordered.go:363–369`, `:563–566`,
+  `:773–785`), поэтому `Stop` ждёт не больше текущей попытки и текущего сна — ≤ 20 s (весь сброс ≈ 105 s — только
+  без `Close`). **`Wait(ctx)`** — в бюджете остановки 0,5 s → `ctx.Err()` + Warn `feed.stop_abandoned`. В тестах
+  (goleak): без сброса — `Wait` с обычным ctx; тесты со сбросом ждут `Stop` и фоновый `DeleteConsumer` до 30 s.
+- **`idlerule` после восстановления:** `Started = true`, `Candidate` нулевой, `Since = start.ReceivedAt`;
+  `now = последний ReceivedAt + (монотонное сейчас − монотонное в момент его доставки)`.
+
+### 4. Бюджеты
+
+| Вызов | Бюджет |
+|---|---|
+| `Acquire` | попытка 1 s, не чаще раза в 1 s, до ctx процесса; 30 s восстановления — после захвата |
+| продление | раз в 2,5 s; попытка 1 s; после неудачи — через 1 s от начала предыдущей; `LostAfter` 20 s; потеря — `MaxAge` 25 s |
+| освобождение | `WithoutCancel` + 0,5 s |
+| `Open` | ctx старта: `OrderedConsumer` ≤ 10 s, `Info` ≤ 2 s |
+| сверка личности | до 35 s повторов `Info` |
+| `Wait` | 0,5 s |
+| `Commit` (3.3) | 5 s: `Info` + `Purge` |
+
+**Остановка `processor`** (правка спеки :720): `Feed.Close` 0,5 → дренаж 3 → финальный чекпоинт (spool ≤ 1) →
+`Store.Wait` (загрузка + CAS, **без `Commit`/`Purge`** — следующий держатель удержит при первом `Commit`, это
+безопасно по монотонности указателя; ≤ 6, включая загрузку, начатую до SIGTERM) → освобождение 0,5 → `Wait` 0,5 →
+`Drain` 0,5 → HTTP 2 → 0,3 = **≤ 14,3 s** при grace 20 s. `Store.Wait` ждёт всю цепочку «загрузка → CAS»
+(`Commit` на остановке не вызывается). Ctx продления отменяется после `Store.Wait`; не уложился в 6 s — аренда не
+освобождается, ключ истекает по TTL (то же правило, что при нештатном стопе).
+**Остановка `all`** (правка :722): OTLP 3,5 → `Journal.Close` 2 → процессор без HTTP ≈ 12,3 → HTTP 2 → 0,3 ≈
+**20,1 s** при grace 25 s.
+
+**Восстановление после SIGKILL** (NFR-REL-002 — время до нулевого отставания ≤ 60 s):
+`T = S + L / (c − 1)`, где `S = TTL + опрос + восстановление` — простой до начала чтения (восстановление =
+загрузка объекта + `RestoreBuilder` + застолбление + `Open`, по `BenchmarkRestoreBuilder` и замеру загрузки ≈ 2,3 s
+на худшем состоянии, бюджет ≤ 30 s), `L = возраст чекпоинта + S` — накопленное отставание, возраст чекпоинта ≤
+интервал + загрузка ≈ 12,3 s (указатель сдвигается после загрузки и CAS), `c` — коэффициент догона (пропускная
+процессора с чтением из NATS и чекпоинтом / вход).
+
+| Случай | Числа | `T` |
+|---|---|---|
+| **приёмка NFR-REL-002** — профиль L, 20 000 событий/с (`requirements.md:675`), P = 1 (спека :281) | `S ≈ 28,3 s`, `L ≈ 40,6 s`, `c` порядка 19 (верхняя граница по H5) | ≈ 31 s |
+| цель шага 11 — 1 млн, горячая партиция 157 500/с | `c ≤ 2,4` (верхняя граница H5 без чтения и чекпоинта) | ≥ 57 s — риск, не обещание |
+
+31 s — нижняя оценка (`c` ≈ 19 — верхняя граница H5); NFR на профиле L держится при `c ≥ 1 + 40,6 / 31,7 ≈ 2,28`.
+Проверка — `TestRecoveryTime` и kill-тест среза 7: замеренный `c` на профиле L сравнивается с 2,28. Риск шага 11 записывается как
+открытый вопрос шага 11 (кандидат — быстрый перезахват при рестарте контейнера в том же поде); тайминги аренды из-за
+него не меняются: TTL 20 s нарушил бы `validate` (терпимость к выборам 10,5 s < 15 s).
+
+### 5. Ретраи
+
+| Вызов | Политика |
+|---|---|
+| `Create` | не чаще раза в 1 s; `ErrKeyExists` → `Get` → свой токен → `Update(R)` |
+| `Update` | таблица продления; потеря — только по времени |
+| `Delete(LastRevision)` | одна попытка (+ одна по `Get`); иначе TTL |
+| сброс ordered consumer | 7 попыток внутри nats.go; исчерпание → `ErrConsumerLost` |
+| `Stream.Info` при сверке | раз в 1 s до 35 s; исчерпание → `ErrConsumerLost` |
+| `Purge` | следующий `Commit` |
+
+### 6. Порядок
+
+1. Старт: `Acquire(p)` → `go Run(renewCtx)` → (p = 0) `EnsureTopology(ctx, topology, lease)` → `Restore` →
+   застолбление указателя (`natsjs/checkpoint`) → `feed.Open` → `Pipeline.Run`. ctx старта отменяется по `Lost()`.
+2. Потеря: `Lost()` → `Receive` — ошибка → код 1.
+3. Нештатный стоп фида: ошибка `Pipeline.Run` → остановка `Store` → `Store.Wait` ≤ 6 s → отмена `renewCtx`
+   (`released`, освобождение) → код 1; `Store.Wait` не уложился — `renewCtx` не отменяется до выхода, ключ истечёт по
+   TTL.
+4. Штатная остановка: как в §4.
+5. Зомби: пульс и `EnsureTopology` — под `Valid()` (запас 5 s) и CAS по позиции / `config_version`; CAS указателя —
+   эпоха + ревизия (застолбление); `Purge` — монотонность указателя + `through ≤ LastSeq`.
+
+### 7. Тесты
+
+| Что | Уровень |
+|---|---|
+| таблица продления: успех; таймаут; `ErrNoStreamResponse`; mismatch + свой токен (запись легла, ответ потерян) → `Update(R)`; 10164; mismatch + чужой токен → повтор и потеря по времени | unit, fake KV (возвращает настоящие sentinel'ы nats.go) + fake-часы |
+| `Valid()` гаснет ровно через `LostAfter` после **отправки** последнего успешного CAS, даже если `Run` заблокирован; потеря — через `MaxAge` с допуском ≤ `max(RetryEvery, AttemptTime)` (дедлайн попытки `min(…, renewedAt + MaxAge)`) | unit, fake-часы |
+| рост `MaxAge` не прошёл (ошибка `UpdateKeyValue`, перечитанный `MaxAge < TTL`) → `Acquire` не продолжает | встроенный |
+| после отмены ctx `Run` `Valid()` = false сразу, до `Delete` | unit |
+| устаревший `Get` со своим токеном не продлевает `Valid()` без успешного `Update` | unit, fake KV со stale-read |
+| `validate`: нарушенные неравенства → `ErrInvalidOptions` | unit |
+| `Create` легла, ответ потерян → своя аренда без ожидания TTL, эпоха = ревизия `Create` | unit + встроенный |
+| два держателя; освобождение; SIGKILL без освобождения → второй после TTL, эпоха растёт | встроенный R1/R3 |
+| перерыв < `LostAfter` → аренда жива; перерыв > TTL → потеря (A1) | встроенный |
+| бакет удалён → `Lost()` через `MaxAge` (через `Update`, не `Get`) | встроенный |
+| зомби `Delete(LastRevision)` не трогает ключ нового | встроенный |
+| бакет: нет → создан File; memory или другой R → `ErrBucketDrift`; `MaxAge` 25 при `TTL` 30 → `Acquire` успешен, `MaxAge` = 30; `MaxAge` 30 при `TTL` 25 → не трогается, порог потери 30; `AllowDirect` не сверяется | встроенный |
+| нештатный стоп с загрузкой чекпоинта в полёте → аренда освобождается только после `Store.Wait`; `Commit` после стопа фида → `ErrFeedClosed` | cmd + fake store (срез 4) |
+| продлённый ключ истекает через TTL после последнего продления | встроенный |
+| `EnsureTopology` с `holder.Valid() = false` → `ErrNotHolder`, стримы не тронуты; чтения выполняются | встроенный |
+| `RunFeedContract` (`memjournal`, `feed`): `maxWait`, `limit`, позиции, кредит, `Close` → буфер → `ErrFeedClosed` | оба |
+| потеря аренды → ошибка сразу; `Close` во время сброса — `ErrFeedClosed` без ожидания насоса | feed |
+| пересоздание стрима: с новыми записями (E4) → 0 выдано; **без новых записей (R2) → `ErrStreamIdentity`, 0 пульсов**; между `OrderedConsumer` и `Info` | встроенный |
+| `Info` падает во время сверки → сообщение не выдано, повтор, затем выдача; исчерпание → `ErrConsumerLost` | встроенный |
+| первый старт на усечённом стриме — `DeliverAll`, без пробела; пробел от внешнего `Purge` дальше окна pull | встроенный |
+| `Open` возвращает ошибку создания консьюмера | встроенный |
+| пауза насоса 40 s без сброса (E5); кредит: стоящий `Release` останавливает насос | встроенный |
+| `ReceivedAt`: быстрые часы лидера, шаг назад, продолжение после восстановления | unit + встроенный |
+| простаивающая партиция после восстановления получает пульс через `IdleAfter` | feed (3.3) |
+| `Purge` с `through > LastSeq` отклонён; пересоздание между чекпоинтом и `Purge` | 3.3 |
+| `BenchmarkFeedReceive/{R1,R3}/{64KiB,1MiB}`: MB/s, alloc/запись ≤ 10, 0 копий payload | 3.2 |
+| нагрузка: kill лидера стрима, затем KV — 0 пробелов, 0 дублей, эпоха та же, `Lost()` не закрыт, `lease_suspended` ≤ числа выборов | срез 7 |
+| замер `Purge` 1 GiB File R3: p99 `Purge` и p99 PubAck параллельной публикации в партицию | 3.3 |
+
+### Наблюдаемость
+
+Аренда (пакет `lease`): `lease.held`, `lease.renew_failures`, `lease.renew_age_seconds`, `lease.lost_writes`
+(таймаут, а в `Get` своя более новая ревизия — при продлении и в `Acquire`), Warn `lease.suspended` + self-alert (> 0 два отчёта подряд), Error
+`lease.lost`. Фид: `feed.stops{reason=identity|range|corrupt|consumer_lost|lease_lost}`, `feed.read`, `feed.delivered_batches`,
+`feed.heartbeats`, `feed.held`, `feed.released` (I18); `feed.consumer_resets`, `feed.identity_check_failures`,
+`feed.received_at_clamped`, `feed.clock_skew_max_ms`, `feed.pending_records` (из `NumPending`), `feed.lag_seconds`,
+`feed.sequence_gap_records`, Warn `feed.stop_abandoned`; Info `lifecycle.feed_resumed`, `lifecycle.feed_caught_up`.
+
+### Требования к срезу natsjs/checkpoint и cmd
+
+- Застолбить указатель до `feed.Open`: `Update(указатель, тот же объект + своя эпоха, ревизия из Latest)`; провал —
+  `Latest` заново, и если объект в указателе сменился — **повторный `Restore`** из нового объекта.
+- `Valid()` до загрузки объекта и до CAS; `!Valid()` → `skipped(reason=lease_suspended)`.
+- `Store` останавливаемый: после остановки новых загрузок нет; `Wait(ctx)` ждёт загрузку и CAS в полёте.
+- Эпоха в указателе больше своей: при восстановлении/застолблении — `ErrEpochRegressed` (runbook), при CAS в работе
+  — обёрнутый `ErrLeaseLost`.
+- На остановке — без `Commit`/`Purge`; `Store.Wait` ≤ 6 s.
+- `cmd` выбирает код по `errors.Is` с `lease.ErrLeaseLost` и `feed.ErrLeaseLost`.
+- Runbook сброса эпох: процессоры в 0 → бакет уже есть (его создаёт `Acquire`) → запрос API
+  `$JS.API.STREAM.PURGE.KV_faultline_leases {"seq": <max эпоха всех указателей + 1>}` (`nats req`; единственный
+  описанный способ) → процессоры вверх. Проба: `Purge(seq 1000)` → следующий `Create` получает ревизию 1000.
+- Runbook уменьшения TTL аренды: только при процессорах в 0 — `MaxAge` действует задним числом на живые ключи.
+
+### Правки спеки (step-03)
+
+:302 (idlerule после восстановления); :312, :401, :445, :480 и строка бюджета памяти после :819 (`PullMaxBytes`
+16 MiB, сырые ≈ 16 + запись в насосе ≈ 24 MiB; обоснование — дозапрос ≥ `MaxMsgSize`); :353 (лимит `Purge` — по
+замеру); :363 (время восстановления — формула §4); :366 (`MaxResetAttempts` 7); :368 (личность — при каждой смене
+консьюмера; нештатный стоп — освобождение аренды и код 1); :372 и :671 (TTL 25 s, `LostAfter` 20 s, продление
+2,5 s, потеря по времени, опрос 1 s, ожидание до ctx процесса); :718 (30 s — после захвата); :719 (`Info` ≤ 2 s);
+:720, :722 (остановка — §4, `all` 20,1 s); :731–733 (таблица продления); :745 (`Valid()` вычисляется, не флаг);
+:807 (FSM: «Стоп» и «Фатал» сливаются — освобождение аренды после `Store.Wait` и код 1); :862 (жизненный цикл:
+финальный чекпоинт → `Store.Wait` без `Commit`/`Purge` → освобождение); FMEA 24 и тесты :1688; Helm —
+`strategy: Recreate`; метрики аренды — префикс `lease.`.
+
+### Решения на апрув
+
+1. Разбиение 3.1 / 3.2 / 3.3.
+2. `p0` — владелец конфигурации стримов (`EnsureTopology` с портом `holder`, `ErrNotHolder`); процессор —
+   `strategy: Recreate`.
+3. TTL 25 s / `LostAfter` 20 s / продление 2,5 s / попытка 1 s: `Valid()` без просадки переживает выборы KV до
+   15,5 s; NFR-REL-002 на профиле L — ≈ 31 s, проверяется замером; 1 млн (шаг 11) — открытый риск.
+4. Бакет — стандартный `CreateKeyValue` (File); сверка Storage и R; `Acquire` сам растит `MaxAge` до своего TTL,
+   уменьшение — только runbook; `AllowDirect` не трогаем.
+5. `Valid()` и потеря — только по времени от отправки последнего успешного CAS, плюс `released` при освобождении;
+   чтение ничего не решает.
+6. Токен `instance/nonce`; `Acquire` — `Create` раз в 1 s; эпоха — ревизия своей записи из `Acquire`.
+7. Удалённый бакет и любые неклассифицированные ошибки — потеря через `MaxAge` (правило 5), отдельной ветки нет.
+8. Личность — в `Open` после консьюмера и при каждой смене имени консьюмера (`CachedInfo().Name` после каждого
+   возврата `Next`), до выдачи сообщения или пульса; ошибка `Info` — повтор до 35 s с удержанием; горутины `Info`
+   раз в 30 s нет.
+9. `PullMaxBytes` 16 MiB.
+10. `MaxResetAttempts` 7; исчерпание — `ErrConsumerLost`.
+11. Любой нештатный стоп фида → остановка `Store`, `Store.Wait` ≤ 6 s, освобождение аренды (не уложились — TTL) и
+    код 1; `Commit` после остановки фида отклоняется; `Receive` не ждёт насос; `Lost()` не отменяет ctx `Pipeline`;
+    `Wait` 0,5 s.
+12. Порча в 3.2 — стоп (по правилу 11); DLQ — в 3.3; 3.2 не выкатывается без 3.3.
+13. `idlerule` после восстановления — `Started`, `Candidate` нулевой, `Since` = `ReceivedAt` чекпоинта.
+14. Лимит `Purge` убрать, если на File R3 p99 `Purge` 1 GiB ≤ 1 s **и** p99 PubAck параллельной публикации ≤ 1 s;
+    иначе оставить 256 MiB.
+15. Остановка без `Commit`/`Purge`; `Store.Wait` ≤ 6 s; итого ≤ 14,3 s.
+
+### Шестой круг: итог
+
+pocock, osmani, pstack, эксперт — **«ИТОГ: всё APPROVE»** по решениям 1–15, HIGH и MEDIUM нет. Их LOW и NIT внесены в
+текст выше без смены решений: проверка `MaxAge` после роста и исход ошибки `UpdateKeyValue`; рост из
+`Status().Config()` и runbook о ручных правках; одно правило таймаута `Store.Wait` для штатной и нештатной остановки;
+`Stop` ≤ 20 s; допуск теста потери; `lease.lost_writes` и в `Acquire`; порог `c ≥ 2,28` для kill-теста.
 
 ---
 

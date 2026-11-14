@@ -159,7 +159,7 @@ func assertPublishError(t *testing.T, err, wantErr error, wantReason natsjs.Reas
 func fillTheStream(t *testing.T, _ *natsjstest.Cluster, conn *natsjs.Conn, topology natsjs.Topology) error {
 	t.Helper()
 	topology.MaxBytesPerPartition = natsjs.MaxMessageBytes
-	if err := conn.EnsureTopology(t.Context(), topology); err != nil {
+	if err := conn.EnsureTopology(t.Context(), topology, natsjstest.Held{}); err != nil {
 		t.Fatalf("EnsureTopology: %v", err)
 	}
 	publisher := publisherOf(t, conn, topology)
@@ -187,7 +187,7 @@ func subjectOfAnotherStream(t *testing.T, cluster *natsjstest.Cluster, conn *nat
 
 func sealTheStream(t *testing.T, cluster *natsjstest.Cluster, conn *natsjs.Conn, topology natsjs.Topology) error {
 	t.Helper()
-	if err := conn.EnsureTopology(t.Context(), topology); err != nil {
+	if err := conn.EnsureTopology(t.Context(), topology, natsjstest.Held{}); err != nil {
 		t.Fatalf("EnsureTopology: %v", err)
 	}
 	js := rawJetStream(t, cluster)
