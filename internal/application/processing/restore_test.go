@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"testing/iotest"
 
 	gocmp "github.com/google/go-cmp/cmp"
 
@@ -52,7 +53,7 @@ func TestRestoreContinuesFromTheCommittedCheckpoint(t *testing.T) {
 	committed := store.Committed()
 	last := committed[len(committed)-1]
 	want := processing.Restored{
-		Builder: restored.Builder, Through: last.Position, ReceivedAt: last.ReceivedAt, Found: true,
+		Builder: restored.Builder, Through: last.Position, ReceivedAt: last.ReceivedAt, Meta: last, Found: true,
 	}
 	if diff := gocmp.Diff(want, restored, gocmp.Comparer(sameBuilder)); diff != "" {
 		t.Errorf("restored (-want +got):\n%s", diff)
@@ -97,9 +98,10 @@ func rewrite(t *testing.T, store *processingtest.CheckpointStore,
 // error, never an empty start; cmd turns it into exit code 1 unless the operator discards it.
 func TestAnIncompatibleCheckpointFailsClosed(t *testing.T) {
 	tests := []struct {
-		name    string
-		args    func(t *testing.T, store *processingtest.CheckpointStore, limits *topology.Limits)
-		wantErr error
+		name        string
+		args        func(t *testing.T, store *processingtest.CheckpointStore, limits *topology.Limits)
+		wantErr     error
+		discardable bool
 	}{
 		{
 			name: "a damaged checkpoint",
@@ -109,21 +111,24 @@ func TestAnIncompatibleCheckpointFailsClosed(t *testing.T) {
 					return data
 				})
 			},
-			wantErr: topology.ErrCheckpointCorrupt,
+			wantErr:     topology.ErrCheckpointCorrupt,
+			discardable: true,
 		},
 		{
 			name: "a cut checkpoint",
 			args: func(t *testing.T, store *processingtest.CheckpointStore, _ *topology.Limits) {
 				rewrite(t, store, func(_ *processing.CheckpointMeta, data []byte) []byte { return data[:len(data)/2] })
 			},
-			wantErr: topology.ErrCheckpointCorrupt,
+			wantErr:     topology.ErrCheckpointCorrupt,
+			discardable: true,
 		},
 		{
 			name: "fewer nodes than the checkpoint holds",
 			args: func(_ *testing.T, _ *processingtest.CheckpointStore, limits *topology.Limits) {
 				limits.MaxNodes = 1
 			},
-			wantErr: topology.ErrCheckpointIncompatible,
+			wantErr:     topology.ErrCheckpointIncompatible,
+			discardable: true,
 		},
 		{
 			name: "the checkpoint of another partition",
@@ -160,6 +165,9 @@ func TestAnIncompatibleCheckpointFailsClosed(t *testing.T) {
 
 			if !errors.Is(err, tt.wantErr) {
 				t.Errorf("Restore = %v, want %v", err, tt.wantErr)
+			}
+			if got := processing.Discardable(err); got != tt.discardable {
+				t.Errorf("an operator may discard after %v: %t, want %t", err, got, tt.discardable)
 			}
 			if restored.Builder != nil || restored.Found {
 				t.Errorf("a refused checkpoint still gave %+v", restored)
@@ -226,9 +234,9 @@ func TestRestoreSurvivesAStoreThatBreaksItsContract(t *testing.T) {
 			want: want{closed: 1, err: errLatestBroken},
 		},
 		{
-			name: "a checkpoint without a reader",
+			name: "a checkpoint without a reader is the store's fault, not one an operator may discard",
 			args: func(*countingCloser) strayReader { return strayReader{} },
-			want: want{err: topology.ErrCheckpointCorrupt},
+			want: want{err: processing.ErrCheckpointRefused},
 		},
 	}
 	for _, tt := range tests {
@@ -245,5 +253,26 @@ func TestRestoreSurvivesAStoreThatBreaksItsContract(t *testing.T) {
 					tt.want.found, tt.want.closed)
 			}
 		})
+	}
+}
+
+type movedMidRead struct{}
+
+func (movedMidRead) Latest(context.Context, uint16) (processing.CheckpointMeta, io.ReadCloser, error) {
+	meta := processing.CheckpointMeta{Position: processing.Position{Partition: partition, Sequence: 7}}
+	return meta, io.NopCloser(iotest.ErrReader(processing.ErrCheckpointMoved)), nil
+}
+
+func TestACheckpointMovedWhileItWasReadIsRetriedNotDiscarded(t *testing.T) {
+	limits := processingtest.Limits()
+
+	_, err := processing.Restore(t.Context(), movedMidRead{}, partition, &limits, telemetrytest.Epoch())
+
+	relabelled := errors.Is(err, processing.ErrCheckpointUnusable) || errors.Is(err, processing.ErrCheckpointRefused)
+	if !errors.Is(err, processing.ErrCheckpointMoved) || relabelled {
+		t.Fatalf("Restore = %v, want only %v", err, processing.ErrCheckpointMoved)
+	}
+	if processing.Discardable(err) {
+		t.Fatalf("an operator may discard a checkpoint that only moved: %v", err)
 	}
 }

@@ -21,7 +21,7 @@ var (
 	ErrSystemicCorruption   = errors.New("journal records corrupt one after another")
 	ErrDeadLetterRejected   = errors.New("dead letter queue refused a corrupt record")
 	ErrConsumerLost         = errors.New("journal consumer could not be recreated")
-	ErrLeaseLost            = errors.New("partition lease lost")
+	ErrLeaseLost            = processing.ErrLeaseLost
 	ErrLeaseSuspended       = errors.New("partition lease not valid for retention")
 	ErrForeignPosition      = errors.New("position of another partition")
 	ErrInvalidOptions       = errors.New("invalid feed options")

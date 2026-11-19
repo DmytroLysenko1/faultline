@@ -268,6 +268,9 @@ linters:
         - pattern: ^batch\.(New|NewOwning|Heartbeat)$
           pkg: ^github\.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch$
           msg: only the journals (memjournal, natsjs/feed) stamp ReceivedAt and make heartbeats — journal order is ReceivedAt order
+        - pattern: ^checkpoint\.Err[A-Za-z]+$
+          pkg: ^github\.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/checkpoint$
+          msg: branch on processing.* — the checkpoint store translates its errors at its exit (slice 3.4 design §3.9)
         - pattern: ^fmt\.Print(|f|ln)$
           msg: no stdout printing — use slog/zap (observability doctrine)
         - pattern: ^log\.(Print|Fatal|Panic)(|f|ln)$
@@ -297,6 +300,10 @@ linters:
         linters:
           - forbidigo
         text: inject a clock port
+      - path: (_test\.go$|internal/infrastructure/natsjs/checkpoint/)
+        linters:
+          - forbidigo
+        text: the checkpoint store translates its errors
       # Tests build large table literals and helper closures; relax size/complexity/sec there.
       - path: _test\.go
         linters:

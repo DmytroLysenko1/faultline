@@ -75,6 +75,8 @@ const (
 	codeAccountLimits        jetstream.ErrorCode = 10002
 	codeNoSuitablePeers      jetstream.ErrorCode = 10005
 	codeClusterUnavailable   jetstream.ErrorCode = 10008
+	codeNotLeader            jetstream.ErrorCode = 10009
+	codeTooManyRequests      jetstream.ErrorCode = 10167
 	codeInsufficientResource jetstream.ErrorCode = 10023
 	codeStorageResources     jetstream.ErrorCode = 10047
 	codeMessageTooLarge      jetstream.ErrorCode = 10054
@@ -88,7 +90,10 @@ const (
 
 var codeReasons = map[jetstream.ErrorCode]Reason{
 	codeAccountLimits:        ReasonAccountLimits,
+	codeNoSuitablePeers:      ReasonInsufficientResources,
 	codeClusterUnavailable:   ReasonNoResponders,
+	codeNotLeader:            ReasonNoResponders,
+	codeTooManyRequests:      ReasonNoResponders,
 	codeInsufficientResource: ReasonInsufficientResources,
 	codeStorageResources:     ReasonInsufficientResources,
 	codeMessageTooLarge:      ReasonTooLarge,

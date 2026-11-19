@@ -63,6 +63,8 @@ func TestEnsureRetriesOnlyWhatPassesOnItsOwn(t *testing.T) {
 		{name: "no metadata leader", args: apiError(codeClusterUnavailable, "JetStream system temporarily unavailable"),
 			want: true},
 		{name: "peers still offline", args: apiError(codeNoSuitablePeers, "no suitable peers for placement"), want: true},
+		{name: "a stepped down leader", args: apiError(codeNotLeader, "not leader"), want: true},
+		{name: "a busy server", args: apiError(codeTooManyRequests, "too many requests"), want: true},
 		{name: "request timeout", args: nats.ErrTimeout, want: true},
 		{name: "the deadline", args: context.DeadlineExceeded, want: true},
 		{name: "the caller cancelled", args: context.Canceled, want: false},

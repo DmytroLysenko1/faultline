@@ -14,11 +14,12 @@ import (
 
 	"github.com/samber/lo"
 
+	"github.com/DmytroLysenko1/faultline/internal/application/processing"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs"
 )
 
 var (
-	ErrLeaseLost      = errors.New("partition lease lost")
+	ErrLeaseLost      = processing.ErrLeaseLost
 	ErrInvalidOptions = errors.New("invalid lease options")
 	ErrBucketDrift    = errors.New("lease bucket configuration drifted")
 	ErrAlreadyRunning = errors.New("lease already renewed by Run")
