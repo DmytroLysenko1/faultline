@@ -42,8 +42,9 @@ func normalizeAgain(normalizer *operation.Normalizer, once operation.Operation) 
 		return normalizer.Normalize(catalog, &operation.Facts{RPCSystem: "grpc", RPCMethod: once.Name})
 	case operation.ProtocolRPC:
 		return normalizer.Normalize(catalog, &operation.Facts{RPCMethod: once.Name})
+	default:
+		return once
 	}
-	return once
 }
 
 func FuzzRouteRules(f *testing.F) {

@@ -42,8 +42,9 @@ func pointerFree(typ reflect.Type) bool {
 	case reflect.Pointer, reflect.Slice, reflect.Map, reflect.String, reflect.Interface, reflect.Chan, reflect.Func,
 		reflect.UnsafePointer:
 		return false
+	default:
+		return true
 	}
-	return true
 }
 
 func TestRevisionSaturatesInsteadOfOverflowingIntoTheFlags(t *testing.T) {

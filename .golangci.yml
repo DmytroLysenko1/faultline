@@ -38,6 +38,7 @@ linters:
     - prealloc
     - unconvert
     - copyloopvar
+    - exhaustive      # a switch over an enum names every value or has a default
     - gocritic
 
     # --- function budgets: at most 30 lines, complexity at most 5, lines at most 128 characters ---
@@ -54,6 +55,8 @@ linters:
     - mnd             # no magic numbers in production code
 
   settings:
+    exhaustive:
+      default-signifies-exhaustive: true
     funlen:
       lines: 30
       statements: -1

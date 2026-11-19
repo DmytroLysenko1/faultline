@@ -20,8 +20,9 @@ func canonicalMethod(raw string) httpMethod {
 	case methodGet, methodHead, methodPost, methodPut, methodDelete, methodConnect, methodOptions, methodTrace,
 		methodPatch:
 		return method
+	default:
+		return methodOther
 	}
-	return methodOther
 }
 
 type rpcSystem string

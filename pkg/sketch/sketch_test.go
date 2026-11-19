@@ -295,10 +295,16 @@ func pointerField(typ reflect.Type) (reflect.Kind, bool) {
 	case reflect.Array:
 		return pointerField(typ.Elem())
 	case reflect.Struct:
-		for field := range typ.Fields() {
-			if kind, ok := pointerField(field.Type); ok {
-				return kind, true
-			}
+		return firstPointerField(typ)
+	default:
+		return reflect.Invalid, false
+	}
+}
+
+func firstPointerField(typ reflect.Type) (reflect.Kind, bool) {
+	for field := range typ.Fields() {
+		if kind, ok := pointerField(field.Type); ok {
+			return kind, true
 		}
 	}
 	return reflect.Invalid, false
