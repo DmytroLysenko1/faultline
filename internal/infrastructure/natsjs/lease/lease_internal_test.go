@@ -7,12 +7,14 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/DmytroLysenko1/faultline/internal/application/processing"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs"
 )
 
@@ -35,6 +37,9 @@ const (
 	renewalsInAMinute  = 25
 	renewalsAfterAdopt = 12
 	longerMaxAge       = 30 * time.Second
+	takenOverFor       = 10 * time.Second
+	oneDelete          = 1
+	oneRenewal         = 1
 )
 
 func productionOptions() *Options {
@@ -64,7 +69,7 @@ func claimed(t *testing.T, store *fakeStore) *Lease {
 
 func claimedWith(t *testing.T, store *fakeStore, options *Options) *Lease {
 	t.Helper()
-	lease, err := claim(t.Context(), store, store.maxAge, options)
+	lease, err := claim(t.Context(), store, store.Delete, store.maxAge, options)
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -155,8 +160,8 @@ func TestALeaseThatCannotRenewIsInvalidAfterLostAfterAndLostAfterTheTTL(t *testi
 				if diff := cmp.Diff([]bool{true, false, false, true}, got); diff != "" {
 					t.Errorf("valid before, valid at LostAfter, lost before, lost at the TTL (-want +got):\n%s", diff)
 				}
-				if err := <-returned; !errors.Is(err, ErrLeaseLost) {
-					t.Errorf("Run = %v, want ErrLeaseLost", err)
+				if err := <-returned; !errors.Is(err, processing.ErrLeaseLost) {
+					t.Errorf("Run = %v, want processing.ErrLeaseLost", err)
 				}
 				if renewals := lease.Stats().Renewals; renewals != 1 {
 					t.Errorf("renewals = %d, want only the claim", renewals)
@@ -273,7 +278,7 @@ func TestAClaimEndsWithItsContext(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), productionLost)
 		defer cancel()
 
-		_, err := claim(ctx, store, productionTTL, productionOptions())
+		_, err := claim(ctx, store, store.Delete, productionTTL, productionOptions())
 
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Errorf("claim = %v, want the context's deadline", err)
@@ -364,6 +369,51 @@ func TestAStaleReadOfAnOlderOwnWriteIsNotAdopted(t *testing.T) {
 	})
 }
 
+// countingDeletes is the store's delete at a revision that also counts its calls.
+func countingDeletes(store *fakeStore) (deleteAt, *atomic.Int32) {
+	calls := new(atomic.Int32)
+	return func(ctx context.Context, key string, revision uint64) error {
+		calls.Add(1)
+		return store.Delete(ctx, key, revision)
+	}, calls
+}
+
+func TestAStaleReadOfTheCurrentOwnWriteAfterATakeOverIsNotTakenForALostWrite(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store := newFakeStore(productionTTL)
+		deletes, calls := countingDeletes(store)
+		lease, err := claim(t.Context(), store, deletes, store.maxAge, productionOptions())
+		if err != nil {
+			t.Fatalf("claim: %v", err)
+		}
+		store.takeOver([]byte(foreignInstance))
+		store.readStale(entry{value: lease.token, revision: lease.revision})
+		stop, _ := running(t, lease)
+
+		time.Sleep(takenOverFor)
+		synctest.Wait()
+		if err := stop(); err != nil {
+			t.Errorf("Run: %v", err)
+		}
+
+		// the first renewal fails at RenewEvery, the rest are retried every RetryEvery until Run stops
+		failedRenewals := uint64(1 + (takenOverFor-productionRenew)/productionRetry)
+		want := Stats{
+			Epoch:           firstRevision,
+			Renewals:        oneRenewal,
+			RenewFailures:   failedRenewals,
+			ReleaseFailures: oneDelete,
+			RenewAge:        takenOverFor,
+		}
+		if diff := cmp.Diff(want, lease.Stats()); diff != "" {
+			t.Errorf("Stats mismatch (-want +got):\n%s", diff)
+		}
+		if got := calls.Load(); got != oneDelete {
+			t.Errorf("deletes = %d, want %d: the stale read is no newer own write to delete again", got, oneDelete)
+		}
+	})
+}
+
 func TestALeaseIsRunOnce(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		lease := claimed(t, newFakeStore(productionTTL))
@@ -390,7 +440,7 @@ func TestAClaimThatEndsAfterItsCreateLandedDeletesTheKey(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), justBefore)
 		defer cancel()
 
-		_, err := claim(ctx, store, productionTTL, productionOptions())
+		_, err := claim(ctx, store, store.Delete, productionTTL, productionOptions())
 
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Errorf("claim = %v, want the context's deadline", err)
@@ -495,7 +545,7 @@ func TestALongerBucketMaxAgeIsTheThresholdOfLoss(t *testing.T) {
 		lostBefore := lost(lease)
 		err := <-returned
 
-		if lostBefore || !errors.Is(err, ErrLeaseLost) {
+		if lostBefore || !errors.Is(err, processing.ErrLeaseLost) {
 			t.Errorf("lost before the bucket's max age %t, Run = %v; want lost only at %s", lostBefore, err,
 				longerMaxAge)
 		}

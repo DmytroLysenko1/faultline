@@ -132,7 +132,7 @@ func (v *validTimes) Valid() bool {
 
 // world is a real JetStream: the store talks to it through the proxy, the operator writes to it directly.
 type world struct {
-	proxy    *natsProxy
+	proxy    *natsjstest.Proxy
 	operator jetstream.JetStream
 	kv       jetstream.KeyValue
 	objects  jetstream.ObjectStore
@@ -144,13 +144,13 @@ type world struct {
 func startWorld(t *testing.T) *world {
 	t.Helper()
 	cluster := natsjstest.Start(t, 1)
-	proxy := startProxy(t, strings.TrimPrefix(cluster.URLs()[0], "nats://"))
+	proxy := natsjstest.StartProxy(t, cluster.URLs()[0])
 	options := testOptions()
 	operator := connect(t, cluster.URLs()[0])
 	createJournal(t, operator, options)
 	ctx, cancel := context.WithTimeout(t.Context(), worldTimeout)
 	defer cancel()
-	proxied := connect(t, proxy.url())
+	proxied := connect(t, proxy.URL())
 	bound, err := openBuckets(ctx, proxied, proxied, options)
 	if err != nil {
 		t.Fatalf("open buckets: %v", err)
@@ -268,16 +268,16 @@ func (w *world) restorable(t *testing.T) (*objectRef, processing.CheckpointMeta)
 	return ref, meta
 }
 
-func isPointerWrite(f *frame) bool {
-	return (f.op == "PUB" || f.op == "HPUB") && f.subject == kvSubjectPrefix+PointerBucket+"."+testOptions().pointerKey()
+func isPointerWrite(f *natsjstest.Frame) bool {
+	return (f.Op == "PUB" || f.Op == "HPUB") && f.Subject == kvSubjectPrefix+PointerBucket+"."+testOptions().pointerKey()
 }
 
-func isInfoLookup(f *frame) bool {
-	return strings.HasPrefix(f.subject, "$JS.API.STREAM.MSG.GET."+objStreamPrefix) &&
-		bytes.Contains(f.payload, []byte(`"last_by_subj":"`+objSubjectPrefix))
+func isInfoLookup(f *natsjstest.Frame) bool {
+	return strings.HasPrefix(f.Subject, "$JS.API.STREAM.MSG.GET."+objStreamPrefix) &&
+		bytes.Contains(f.Payload, []byte(`"last_by_subj":"`+objSubjectPrefix))
 }
 
-func isChunkRead(f *frame) bool {
-	return strings.HasPrefix(f.subject, "$JS.API.STREAM.MSG.GET."+objStreamPrefix) &&
-		bytes.Contains(f.payload, []byte(`"next_by_subj"`))
+func isChunkRead(f *natsjstest.Frame) bool {
+	return strings.HasPrefix(f.Subject, "$JS.API.STREAM.MSG.GET."+objStreamPrefix) &&
+		bytes.Contains(f.Payload, []byte(`"next_by_subj"`))
 }

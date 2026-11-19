@@ -9,6 +9,8 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/natsjstest"
 )
 
 const (
@@ -98,38 +100,38 @@ func (w *world) rawPointer(t *testing.T) ([]byte, bool) {
 	return entry.Value(), true
 }
 
-func (w *world) count(match func(f *frame) bool) *atomic.Int32 {
+func (w *world) count(match func(f *natsjstest.Frame) bool) *atomic.Int32 {
 	var seen atomic.Int32
-	w.proxy.intercept(func(f *frame) verdict {
+	w.proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
 		if match(f) {
 			seen.Add(1)
 		}
-		return forward
+		return natsjstest.Forward()
 	})
 	return &seen
 }
 
-func (w *world) dropAll(match func(f *frame) bool) {
-	w.proxy.intercept(func(f *frame) verdict {
+func (w *world) dropAll(match func(f *natsjstest.Frame) bool) {
+	w.proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
 		if match(f) {
-			return drop
+			return natsjstest.Drop()
 		}
-		return forward
+		return natsjstest.Forward()
 	})
 }
 
-func isPointerRead(f *frame) bool {
-	return strings.HasPrefix(f.subject, "$JS.API.STREAM.MSG.GET."+kvStreamPrefix+PointerBucket)
+func isPointerRead(f *natsjstest.Frame) bool {
+	return strings.HasPrefix(f.Subject, "$JS.API.STREAM.MSG.GET."+kvStreamPrefix+PointerBucket)
 }
 
-func isRequest(f *frame) bool {
-	return strings.HasPrefix(f.subject, "$JS.API.")
+func isRequest(f *natsjstest.Frame) bool {
+	return strings.HasPrefix(f.Subject, "$JS.API.")
 }
 
-func (w *world) isJournalInfo(f *frame) bool {
-	return f.subject == "$JS.API.STREAM.INFO."+w.options.Topology.Stream(w.options.Partition)
+func (w *world) isJournalInfo(f *natsjstest.Frame) bool {
+	return f.Subject == "$JS.API.STREAM.INFO."+w.options.Topology.Stream(w.options.Partition)
 }
 
-func (w *world) isBucketInfo(f *frame) bool {
-	return f.subject == "$JS.API.STREAM.INFO."+objStreamPrefix+w.options.objectBucket()
+func (w *world) isBucketInfo(f *natsjstest.Frame) bool {
+	return f.Subject == "$JS.API.STREAM.INFO."+objStreamPrefix+w.options.objectBucket()
 }

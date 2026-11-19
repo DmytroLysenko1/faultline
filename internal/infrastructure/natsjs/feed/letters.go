@@ -22,12 +22,12 @@ var (
 )
 
 const (
-	headerPartition = "Faultline-Partition"
-	headerSequence  = "Faultline-Sequence"
-	headerCreated   = "Faultline-Stream-Created"
-	headerReason    = "Faultline-Reason"
-	headerTruncated = "Faultline-Truncated"
-	headerWindow    = "Faultline-Window"
+	headerPartition = "Dead-Letter-Partition"
+	headerSequence  = "Dead-Letter-Sequence"
+	headerCreated   = "Dead-Letter-Stream-Created"
+	headerReason    = "Dead-Letter-Reason"
+	headerTruncated = "Dead-Letter-Truncated"
+	headerWindow    = "Dead-Letter-Window"
 	windowSeparator = ","
 	letterIDFormat  = "dlq-p%d-%d-%d"
 	decimal         = 10

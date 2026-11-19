@@ -26,6 +26,7 @@ const (
 
 type letterShape struct {
 	Subject   string
+	Partition string
 	Sequence  string
 	Reason    string
 	Window    string
@@ -38,9 +39,10 @@ func shapesOf(letters []*jetstream.RawStreamMsg) []letterShape {
 	shapes := make([]letterShape, 0, len(letters))
 	for _, letter := range letters {
 		shapes = append(shapes, letterShape{
-			Subject: letter.Subject, Sequence: letter.Header.Get("Faultline-Sequence"),
-			Reason: letter.Header.Get("Faultline-Reason"), Window: letter.Header.Get("Faultline-Window"),
-			Created: letter.Header.Get("Faultline-Stream-Created"), Truncated: letter.Header.Get("Faultline-Truncated"),
+			Subject: letter.Subject, Partition: letter.Header.Get("Dead-Letter-Partition"),
+			Sequence: letter.Header.Get("Dead-Letter-Sequence"),
+			Reason:   letter.Header.Get("Dead-Letter-Reason"), Window: letter.Header.Get("Dead-Letter-Window"),
+			Created: letter.Header.Get("Dead-Letter-Stream-Created"), Truncated: letter.Header.Get("Dead-Letter-Truncated"),
 			Bytes: len(letter.Data),
 		})
 	}
@@ -75,7 +77,7 @@ func TestACorruptRecordIsCopiedToTheDLQOnceAndSkipped(t *testing.T) {
 			if diff := cmp.Diff([]uint64{1, 3}, sequencesOf(got)); diff != "" {
 				t.Errorf("delivered positions mismatch (-want +got):\n%s", diff)
 			}
-			want := []letterShape{{Subject: "faultline.dlq.p0", Sequence: "2", Reason: "length", Window: "0,2",
+			want := []letterShape{{Subject: "faultline.dlq.p0", Partition: "0", Sequence: "2", Reason: "length", Window: "0,2",
 				Created: created, Truncated: tt.wantTruncated, Bytes: tt.wantBytes}}
 			if diff := cmp.Diff(want, shapesOf(l.deadLetters(t))); diff != "" {
 				t.Errorf("DLQ after a restart mismatch, one copy (-want +got):\n%s", diff)
@@ -232,7 +234,7 @@ func TestClosedFeedConnectionStopsTheDeadLetterHold(t *testing.T) {
 }
 
 // TestSystemicCorruptionHaltsInsteadOfDrainingOnNATS: the window survives a restart through the copy's
-// Faultline-Stream-Created, which must equal the stream's own Created as NATS reports it.
+// Dead-Letter-Stream-Created, which must equal the stream's own Created as NATS reports it.
 func TestSystemicCorruptionHaltsInsteadOfDrainingOnNATS(t *testing.T) {
 	l := startLive(t, singleNode, oneReplica)
 	for index, corrupt := range []bool{false, true, false, true, false} {

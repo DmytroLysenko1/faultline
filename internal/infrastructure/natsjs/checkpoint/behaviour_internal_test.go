@@ -15,17 +15,18 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/processing"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/natsjstest"
 )
 
 const failedLatestWithin = 3 * time.Second
 
-func (w *world) once(match func(f *frame) bool, then verdict) *atomic.Bool {
+func (w *world) once(match func(f *natsjstest.Frame) bool, then natsjstest.Verdict) *atomic.Bool {
 	var fired atomic.Bool
-	w.proxy.intercept(func(f *frame) verdict {
+	w.proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
 		if match(f) && fired.CompareAndSwap(false, true) {
 			return then
 		}
-		return forward
+		return natsjstest.Forward()
 	})
 	return &fired
 }
@@ -33,20 +34,20 @@ func (w *world) once(match func(f *frame) bool, then verdict) *atomic.Bool {
 func TestAStakeWhoseAnswerWasLostCountsAsDoneWhenThePointerIsOurs(t *testing.T) {
 	w := startWorld(t)
 	_, meta := w.restorable(t)
-	w.once(isPointerWrite, loseReply)
+	w.once(isPointerWrite, natsjstest.LoseReply())
 
 	_, err := w.store.Stake(t.Context(), &meta)
 
-	if got, _ := w.pointer(t); err != nil || got.Epoch != testEpoch || w.proxy.answersAltered() != 1 {
+	if got, _ := w.pointer(t); err != nil || got.Epoch != testEpoch || w.proxy.AnswersAltered() != 1 {
 		t.Fatalf("Stake: err = %v, pointer epoch %d, %d answers lost; want success at %d after one lost answer", err,
-			got.Epoch, w.proxy.answersAltered(), testEpoch)
+			got.Epoch, w.proxy.AnswersAltered(), testEpoch)
 	}
 }
 
 func TestAStakeThatNeverLandedIsAMovedPointer(t *testing.T) {
 	w := startWorld(t)
 	_, meta := w.restorable(t)
-	w.once(isPointerWrite, drop)
+	w.once(isPointerWrite, natsjstest.Drop())
 
 	_, err := w.store.Stake(t.Context(), &meta)
 
@@ -119,14 +120,14 @@ func TestLatestFollowsAPointerAZombieMovedDuringTheLookup(t *testing.T) {
 	next := w.putObject(t, olderEpoch, restoredAt, moved)
 	w.setPointer(t, &pointerValue{Version: pointerVersion, Epoch: olderEpoch, Current: first})
 	var zombie atomic.Bool
-	w.proxy.intercept(func(f *frame) verdict {
+	w.proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
 		if isInfoLookup(f) && zombie.CompareAndSwap(false, true) {
 			w.putPointer(t, &pointerValue{Version: pointerVersion, Epoch: olderEpoch, Current: next})
 			if err := w.objects.Delete(context.WithoutCancel(t.Context()), first.Name); err != nil {
 				t.Errorf("delete: %v", err)
 			}
 		}
-		return forward
+		return natsjstest.Forward()
 	})
 
 	meta, reader, err := w.store.Latest(t.Context(), testPartition)
@@ -157,12 +158,12 @@ func TestAPointerThatKeepsMovingDuringTheLookupIsAMovedPointerNotCorruption(t *t
 	value := &pointerValue{Version: pointerVersion, Epoch: testEpoch, Current: ref}
 	w.setPointer(t, value)
 	var lookups atomic.Int32
-	w.proxy.intercept(func(f *frame) verdict {
+	w.proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
 		if isInfoLookup(f) {
 			lookups.Add(1)
 			w.putPointer(t, value)
 		}
-		return forward
+		return natsjstest.Forward()
 	})
 
 	_, _, err := w.store.Latest(t.Context(), testPartition)
@@ -179,11 +180,11 @@ func TestAnObjectThatNeverMatchesItsPointerIsCorruptAfterThreeReads(t *testing.T
 	ref.Digest = digestPrefix + base64.URLEncoding.EncodeToString(make([]byte, digestBytes))
 	w.setPointer(t, &pointerValue{Version: pointerVersion, Epoch: testEpoch, Current: ref})
 	var lookups atomic.Int32
-	w.proxy.intercept(func(f *frame) verdict {
+	w.proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
 		if isInfoLookup(f) {
 			lookups.Add(1)
 		}
-		return forward
+		return natsjstest.Forward()
 	})
 
 	_, _, err := w.store.Latest(t.Context(), testPartition)
@@ -200,11 +201,11 @@ func TestALeaseLostWhileThePointerIsReadStopsTheWrite(t *testing.T) {
 	_, before := w.pointer(t)
 	w.store.lease = &validTimes{left: 1}
 	var writes atomic.Int32
-	w.proxy.intercept(func(f *frame) verdict {
+	w.proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
 		if isPointerWrite(f) {
 			writes.Add(1)
 		}
-		return forward
+		return natsjstest.Forward()
 	})
 
 	_, err := w.store.Stake(t.Context(), &meta)
@@ -220,7 +221,7 @@ func TestOneLostObjectLookupIsAskedAgainWithinTheStartBudget(t *testing.T) {
 	w.putObject(t, olderEpoch, restoredAt, imageOf(imageBytes))
 	ref := w.putObject(t, olderEpoch, restoredAt+1, imageOf(imageBytes))
 	w.setPointer(t, &pointerValue{Version: pointerVersion, Epoch: olderEpoch, Current: ref})
-	dropped := w.once(isInfoLookup, drop)
+	dropped := w.once(isInfoLookup, natsjstest.Drop())
 	ctx, cancel := context.WithTimeout(t.Context(), startCallBudget)
 	defer cancel()
 
@@ -239,18 +240,18 @@ func TestDiscardAfterAPassingFailureOfLatestIsRefused(t *testing.T) {
 	ref := w.putObject(t, olderEpoch, restoredAt, imageOf(9))
 	w.setPointer(t, &pointerValue{Version: pointerVersion, Epoch: olderEpoch, Current: ref})
 	_, before := w.pointer(t)
-	w.proxy.intercept(func(f *frame) verdict {
+	w.proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
 		if isInfoLookup(f) {
-			return drop
+			return natsjstest.Drop()
 		}
-		return forward
+		return natsjstest.Forward()
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), failedLatestWithin)
 	defer cancel()
 	if _, _, err := w.store.Latest(ctx, testPartition); !errors.Is(err, processing.ErrCheckpointUnavailable) {
 		t.Fatalf("Latest: %v, want %v", err, processing.ErrCheckpointUnavailable)
 	}
-	w.proxy.intercept(nil)
+	w.proxy.Intercept(nil)
 
 	_, err := w.store.Discard(t.Context(), processing.DiscardTarget{Partition: testPartition, Checkpoint: ref.NUID})
 
@@ -343,19 +344,19 @@ func TestLatestFollowsAPointerThatMovedOnAllButTheLastRead(t *testing.T) {
 	}
 	w.setPointer(t, &pointerValue{Version: pointerVersion, Epoch: olderEpoch, Current: refs[0]})
 	var lookups atomic.Int32
-	w.proxy.intercept(func(f *frame) verdict {
+	w.proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
 		if !isInfoLookup(f) {
-			return forward
+			return natsjstest.Forward()
 		}
 		moved := int(lookups.Add(1))
 		if moved >= len(refs) {
-			return forward
+			return natsjstest.Forward()
 		}
 		w.putPointer(t, &pointerValue{Version: pointerVersion, Epoch: olderEpoch, Current: refs[moved]})
 		if err := w.objects.Delete(context.WithoutCancel(t.Context()), refs[moved-1].Name); err != nil {
 			t.Errorf("delete: %v", err)
 		}
-		return forward
+		return natsjstest.Forward()
 	})
 
 	meta, reader, err := w.store.Latest(t.Context(), testPartition)

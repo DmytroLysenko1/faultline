@@ -6,6 +6,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/natsjstest"
 )
 
 const (
@@ -16,7 +18,7 @@ const (
 func TestAFailedSweepLeavesTheStakeStanding(t *testing.T) {
 	w := startWorld(t)
 	_, meta := w.restorable(t)
-	w.once(w.isBucketInfo, drop)
+	w.once(w.isBucketInfo, natsjstest.Drop())
 
 	_, err := w.store.Stake(t.Context(), &meta)
 

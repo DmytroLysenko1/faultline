@@ -18,31 +18,10 @@ const (
 	bucketRetryGap = time.Second
 )
 
-type bucket struct {
-	kv jetstream.KeyValue
-}
-
-func (b bucket) Create(ctx context.Context, key string, value []byte) (uint64, error) {
-	return b.kv.Create(ctx, key, value)
-}
-
-func (b bucket) Update(ctx context.Context, key string, value []byte, revision uint64) (uint64, error) {
-	return b.kv.Update(ctx, key, value, revision)
-}
-
-func (b bucket) Get(ctx context.Context, key string) (entry, error) {
-	found, err := b.kv.Get(ctx, key)
-	if err != nil {
-		return entry{}, err
+func deleterOf(kv jetstream.KeyValue) deleteAt {
+	return func(ctx context.Context, key string, revision uint64) error {
+		return kv.Delete(ctx, key, jetstream.LastRevision(revision))
 	}
-	return entry{
-		value:    found.Value(),
-		revision: found.Revision(),
-	}, nil
-}
-
-func (b bucket) Delete(ctx context.Context, key string, revision uint64) error {
-	return b.kv.Delete(ctx, key, jetstream.LastRevision(revision))
 }
 
 func openBucket(

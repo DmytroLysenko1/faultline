@@ -12,6 +12,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/processing"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/natsjstest"
 )
 
 const writeLeaseChecks = 2
@@ -22,11 +23,11 @@ func TestAnEmptyStakeRacedByAnotherCreateIsAMovedPointer(t *testing.T) {
 		t.Fatalf("Latest: %v", err)
 	}
 	var raced atomic.Bool
-	w.proxy.intercept(func(f *frame) verdict {
+	w.proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
 		if isPointerWrite(f) && raced.CompareAndSwap(false, true) {
 			w.putPointer(t, &pointerValue{Version: pointerVersion, Epoch: olderEpoch})
 		}
-		return forward
+		return natsjstest.Forward()
 	})
 
 	_, err := w.store.StakeEmpty(t.Context())
@@ -119,11 +120,11 @@ func TestAMetaGoneBeforeItWasReadDoesNotStopTheSweep(t *testing.T) {
 	_, meta := w.restorable(t)
 	subject := []byte(`"last_by_subj":"` + w.metaSubject(stale.Name) + `"`)
 	var gone atomic.Bool
-	w.proxy.intercept(func(f *frame) verdict {
-		if bytes.Contains(f.payload, subject) && gone.CompareAndSwap(false, true) {
+	w.proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
+		if bytes.Contains(f.Payload, subject) && gone.CompareAndSwap(false, true) {
 			w.purgeSubject(t, w.metaSubject(stale.Name))
 		}
-		return forward
+		return natsjstest.Forward()
 	})
 
 	if _, err := w.store.Stake(t.Context(), &meta); err != nil {

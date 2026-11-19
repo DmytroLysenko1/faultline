@@ -14,6 +14,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/processing"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/natsjstest"
 )
 
 const refusedWithin = 3 * time.Second
@@ -215,10 +216,10 @@ func TestTheReaderGivesTheImageOnlyWhenEveryCheckHolds(t *testing.T) {
 		wantErr error
 	}{
 		{name: "a chunk lost to an election is fetched again", arrange: func(t *testing.T, w *world, _ *objectRef) {
-			expectFired(t, w.once(isChunkRead, drop))
+			expectFired(t, w.once(isChunkRead, natsjstest.Drop()))
 		}},
 		{name: "a chunk from another subject is corruption", arrange: func(t *testing.T, w *world, _ *objectRef) {
-			expectFired(t, w.once(isChunkRead, foreignReply))
+			expectFired(t, w.once(isChunkRead, natsjstest.AlterReply("subject")))
 		}, wantErr: processing.ErrCheckpointUnusable},
 		{name: "a chunk past the declared count is corruption", arrange: func(t *testing.T, w *world, ref *objectRef) {
 			if _, err := w.operator.Publish(t.Context(), w.store.chunkSubject(ref.NUID), imageOf(9)); err != nil {
@@ -276,12 +277,12 @@ func TestClosingTheReaderStopsAReadWaitingOnAnElection(t *testing.T) {
 	}
 	waiting := make(chan struct{})
 	var signal sync.Once
-	w.proxy.intercept(func(f *frame) verdict {
+	w.proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
 		if !isChunkRead(f) {
-			return forward
+			return natsjstest.Forward()
 		}
 		signal.Do(func() { close(waiting) })
-		return drop
+		return natsjstest.Drop()
 	})
 	done := make(chan error, 1)
 	go func() {
@@ -329,11 +330,11 @@ func TestAFailedTailCheckIsNotTheEndOfTheObject(t *testing.T) {
 	w.restorable(t)
 	chunks := int32((imageBytes + testChunk - 1) / testChunk)
 	var reads atomic.Int32
-	w.proxy.intercept(func(f *frame) verdict {
+	w.proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
 		if !isChunkRead(f) || reads.Add(1) <= chunks {
-			return forward
+			return natsjstest.Forward()
 		}
-		return drop
+		return natsjstest.Drop()
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), refusedWithin)
 	defer cancel()

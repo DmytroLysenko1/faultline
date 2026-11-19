@@ -34,9 +34,7 @@ func claimConfirmed(
 	maxAge time.Duration,
 	options *Options,
 ) (*Lease, error) {
-	held, err := claim(ctx, bucket{
-		kv: kv,
-	}, maxAge, options)
+	held, err := claim(ctx, kv, deleterOf(kv), maxAge, options)
 	if err != nil {
 		return nil, err
 	}
@@ -51,8 +49,14 @@ func claimConfirmed(
 	return held, nil
 }
 
-func claim(ctx context.Context, store keyStore, maxAge time.Duration, options *Options) (*Lease, error) {
-	lease := newLease(store, maxAge, options, rand.Text())
+func claim(
+	ctx context.Context,
+	store keyValue,
+	deleteKey deleteAt,
+	maxAge time.Duration,
+	options *Options,
+) (*Lease, error) {
+	lease := newLease(store, deleteKey, maxAge, options, rand.Text())
 	for {
 		started := lease.now()
 		if lease.claimOnce(ctx, started) {
@@ -72,7 +76,7 @@ func (l *Lease) abandon(ctx context.Context) {
 	if !l.reclaimOwnWrite(releasing) {
 		return
 	}
-	if err := l.store.Delete(releasing, l.key, l.revision); err != nil {
+	if err := l.deleteAt(releasing, l.key, l.revision); err != nil {
 		l.counters.releaseFailures.Add(1)
 	}
 }

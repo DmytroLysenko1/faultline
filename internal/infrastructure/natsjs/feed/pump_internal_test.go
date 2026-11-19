@@ -467,8 +467,8 @@ func TestALostLeaseAnswersAtOnceEvenWithDeliveriesQueued(t *testing.T) {
 
 				got, err := h.feed.Receive(t.Context(), receiveLimit, tt.maxWait)
 
-				if !errors.Is(err, ErrLeaseLost) || len(got) != 0 {
-					t.Fatalf("Receive = %d deliveries, %v; want none and ErrLeaseLost", len(got), err)
+				if !errors.Is(err, processing.ErrLeaseLost) || len(got) != 0 {
+					t.Fatalf("Receive = %d deliveries, %v; want none and processing.ErrLeaseLost", len(got), err)
 				}
 				if stop := h.feed.Stats().Stop; stop != StopLeaseLost && !tt.closed {
 					t.Errorf("stop reason %s, want lease_lost", stop)
@@ -693,8 +693,8 @@ func TestALeaseLostWhileReceiveReadsWinsOverWhatItRead(t *testing.T) {
 
 		got, err := h.feed.Receive(t.Context(), receiveLimit, 0)
 
-		if !errors.Is(err, ErrLeaseLost) || len(got) != 0 {
-			t.Fatalf("Receive = %d deliveries, %v; want none and ErrLeaseLost", len(got), err)
+		if !errors.Is(err, processing.ErrLeaseLost) || len(got) != 0 {
+			t.Fatalf("Receive = %d deliveries, %v; want none and processing.ErrLeaseLost", len(got), err)
 		}
 		if released := h.feed.Stats().Released; released != 1 {
 			t.Errorf("%d deliveries released, want the one read and dropped", released)

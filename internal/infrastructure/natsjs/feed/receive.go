@@ -54,7 +54,7 @@ func (f *Feed) afterHalt() (*delivery, error) {
 func (f *Feed) failure() error {
 	lost := f.leaseLost()
 	if lost {
-		f.halt(ErrLeaseLost)
+		f.halt(processing.ErrLeaseLost)
 	}
 	if !f.isHalted() {
 		return nil
@@ -63,7 +63,7 @@ func (f *Feed) failure() error {
 		return f.cause
 	}
 	if lost {
-		return ErrLeaseLost
+		return processing.ErrLeaseLost
 	}
 	return nil
 }

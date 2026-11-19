@@ -8,17 +8,34 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/natsjstest"
 )
 
-const closeWithin = 5 * time.Second
+const (
+	closeWithin      = 5 * time.Second
+	streamField      = "stream"
+	secondPulseAfter = 1
+)
 
 // onNATS is a single-node server with the journal topology ensured, and the jetstream the feed's adapters use.
 func onNATS(t *testing.T) (jetstream.JetStream, *Options) {
+	t.Helper()
+	cluster, options := ensured(t)
+	return natsjstest.JetStream(t, strings.Join(cluster.URLs(), ",")), options
+}
+
+// onNATSBehind is onNATS with the adapters' jetstream going through a proxy that can alter what NATS answers.
+func onNATSBehind(t *testing.T) (jetstream.JetStream, *Options, *natsjstest.Proxy) {
+	t.Helper()
+	cluster, options := ensured(t)
+	proxy := natsjstest.StartProxy(t, cluster.URLs()[0])
+	return natsjstest.JetStream(t, proxy.URL()), options, proxy
+}
+
+func ensured(t *testing.T) (*natsjstest.Cluster, *Options) {
 	t.Helper()
 	cluster := natsjstest.Start(t, 1)
 	conn, err := natsjs.Dial(t.Context(), &natsjs.ConnOptions{URLs: cluster.URLs(), Name: t.Name(),
@@ -37,16 +54,7 @@ func onNATS(t *testing.T) (jetstream.JetStream, *Options) {
 	if err := conn.EnsureTopology(t.Context(), options.Topology, natsjstest.Held{}); err != nil {
 		t.Fatalf("EnsureTopology: %v", err)
 	}
-	nc, err := nats.Connect(strings.Join(cluster.URLs(), ","))
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	t.Cleanup(nc.Close)
-	js, err := jetstream.New(nc)
-	if err != nil {
-		t.Fatalf("jetstream: %v", err)
-	}
-	return js, options
+	return cluster, options
 }
 
 func TestAHeartbeatLandsOnlyRightAfterTheLastRecordOnNATS(t *testing.T) {
@@ -65,6 +73,90 @@ func TestAHeartbeatLandsOnlyRightAfterTheLastRecordOnNATS(t *testing.T) {
 	stream, err := js.Stream(t.Context(), options.Topology.Stream(0))
 	if err != nil || stream.CachedInfo().State.Msgs != 2 {
 		t.Errorf("stream = %v; want the conditional and the unconditional heartbeat", err)
+	}
+}
+
+func TestHeartbeatsAfterTwoPositionsBothLandWithinTheDuplicateWindow(t *testing.T) {
+	js, options := onNATS(t)
+	pulses := partitionPulses(js, options)
+
+	first := pulses.Pulse(t.Context(), &pulse{after: 0, writtenAt: at(0)})
+	second := pulses.Pulse(t.Context(), &pulse{after: secondPulseAfter, writtenAt: at(time.Second)})
+
+	if first != nil || second != nil {
+		t.Fatalf("Pulse after 0 = %v, after 1 = %v; want both written", first, second)
+	}
+	stream, err := js.Stream(t.Context(), options.Topology.Stream(0))
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if diff := cmp.Diff(uint64(2), stream.CachedInfo().State.Msgs); diff != "" {
+		t.Errorf("heartbeats in the stream mismatch (-want +got):\n%s; a second one taken for a duplicate", diff)
+	}
+}
+
+type foreignAckArgs struct {
+	subject func(options *Options) string
+	publish func(t *testing.T, js jetstream.JetStream, options *Options) error
+}
+
+// TestAnAnswerFromAnotherStreamIsRefused: WithExpectStream makes the server refuse a write to another stream, so
+// only a proxy that alters the answer reaches the adapters' own check of the acknowledging stream.
+func TestAnAnswerFromAnotherStreamIsRefused(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    foreignAckArgs
+		want    natsjs.Reason
+		wantErr error
+	}{
+		{
+			name: "a heartbeat",
+			args: foreignAckArgs{
+				subject: func(options *Options) string { return options.Topology.Subject(0) },
+				publish: func(t *testing.T, js jetstream.JetStream, options *Options) error {
+					return partitionPulses(js, options).Pulse(t.Context(), &pulse{after: 0, writtenAt: at(0)})
+				},
+			},
+			want:    natsjs.ReasonStreamMismatch,
+			wantErr: errForeignAck,
+		},
+		{
+			name: "a dead letter",
+			args: foreignAckArgs{
+				subject: func(options *Options) string { return options.Topology.DeadLetterSubject(0) },
+				publish: func(t *testing.T, js jetstream.JetStream, options *Options) error {
+					return letterQueue(js, options).Publish(t.Context(), &deadLetter{partition: 0, sequence: 1,
+						created: streamCreated(), reason: "crc", data: []byte(garbage), window: window{high: 1}})
+				},
+			},
+			want:    natsjs.ReasonStreamMismatch,
+			wantErr: errForeignAck,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			js, options, proxy := onNATSBehind(t)
+			subject := tt.args.subject(options)
+			proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
+				if f.Subject == subject {
+					return natsjstest.AlterReply(streamField)
+				}
+				return natsjstest.Forward()
+			})
+
+			err := tt.args.publish(t, js, options)
+
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tt.wantErr)
+			}
+			failure, ok := errors.AsType[*natsjs.PublishError](err)
+			if !ok {
+				t.Fatalf("err = %v, want a PublishError", err)
+			}
+			if diff := cmp.Diff(tt.want, failure.Reason); diff != "" {
+				t.Errorf("reason mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 
+	"github.com/DmytroLysenko1/faultline/internal/application/processing"
 	"github.com/DmytroLysenko1/faultline/pkg/retry"
 )
 
@@ -27,7 +28,7 @@ func (l *Lease) renew(ctx context.Context) error {
 	for l.reached(ctx, min(due, l.expiry())) {
 		if l.now() >= l.expiry() {
 			l.markLost()
-			return fmt.Errorf("lease %s: %w", l.key, ErrLeaseLost)
+			return fmt.Errorf("lease %s: %w", l.key, processing.ErrLeaseLost)
 		}
 		due = l.renewOnce(ctx)
 		l.noteSuspension(ctx)
@@ -77,9 +78,9 @@ func (l *Lease) release(ctx context.Context) {
 	l.released.Store(true)
 	releasing, cancel := context.WithTimeout(context.WithoutCancel(ctx), releaseTimeout)
 	defer cancel()
-	err := l.store.Delete(releasing, l.key, l.revision)
+	err := l.deleteAt(releasing, l.key, l.revision)
 	if errors.Is(err, jetstream.ErrKeyRevisionMismatch) && l.adoptOwnWrite(releasing) {
-		err = l.store.Delete(releasing, l.key, l.revision)
+		err = l.deleteAt(releasing, l.key, l.revision)
 	}
 	if err != nil {
 		l.counters.releaseFailures.Add(1)

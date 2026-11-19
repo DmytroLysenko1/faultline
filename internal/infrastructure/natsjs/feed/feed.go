@@ -21,7 +21,6 @@ var (
 	ErrSystemicCorruption   = errors.New("journal records corrupt one after another")
 	ErrDeadLetterRejected   = errors.New("dead letter queue refused a corrupt record")
 	ErrConsumerLost         = errors.New("journal consumer could not be recreated")
-	ErrLeaseLost            = processing.ErrLeaseLost
 	ErrLeaseSuspended       = errors.New("partition lease not valid for retention")
 	ErrForeignPosition      = errors.New("position of another partition")
 	ErrInvalidOptions       = errors.New("invalid feed options")
@@ -211,7 +210,7 @@ func (f *Feed) watch() {
 	defer close(f.watched)
 	select {
 	case <-f.lease.Lost():
-		f.halt(ErrLeaseLost)
+		f.halt(processing.ErrLeaseLost)
 	case <-f.halted:
 	}
 }

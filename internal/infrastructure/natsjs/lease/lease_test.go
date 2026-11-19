@@ -14,6 +14,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 	"go.uber.org/goleak"
 
+	"github.com/DmytroLysenko1/faultline/internal/application/processing"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/lease"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/natsjstest"
@@ -244,7 +245,7 @@ func TestARenewedKeyExpiresTheTTLAfterItsLastRenewal(t *testing.T) {
 		t.Errorf("taken over %s after renewals stopped with epoch %d over %d, want about the TTL %s", waited,
 			taken.Epoch, held.Epoch, fastTTL)
 	}
-	if err := <-returned; !errors.Is(err, lease.ErrLeaseLost) {
+	if err := <-returned; !errors.Is(err, processing.ErrLeaseLost) {
 		t.Errorf("Run of the cut holder = %v, want ErrLeaseLost", err)
 	}
 }
@@ -261,7 +262,7 @@ func TestADeletedBucketLosesTheLeaseAtTheTTL(t *testing.T) {
 	err := <-returned
 
 	lostAfter := time.Since(deletedAt)
-	if !errors.Is(err, lease.ErrLeaseLost) || lostAfter > fastTTL+expirySlack || lostAfter < fastTTL-fastStep-expirySlack {
+	if !errors.Is(err, processing.ErrLeaseLost) || lostAfter > fastTTL+expirySlack || lostAfter < fastTTL-fastStep-expirySlack {
 		t.Errorf("Run = %v after %s, want ErrLeaseLost within the TTL %s", err, lostAfter, fastTTL)
 	}
 	if held.Valid() {

@@ -2,6 +2,7 @@ package lease
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -19,6 +20,10 @@ const (
 )
 
 const slowAnswerDelay = 900 * time.Millisecond
+
+// errUnmodelledOption: the fake ignores what a create option would change, so an option the lease starts to pass
+// must be modelled here first.
+var errUnmodelledOption = errors.New("the fake does not model this create option")
 
 type stored struct {
 	value    []byte
@@ -44,7 +49,10 @@ func newFakeStore(maxAge time.Duration) *fakeStore {
 	return &fakeStore{maxAge: maxAge}
 }
 
-func (f *fakeStore) Create(ctx context.Context, _ string, value []byte) (uint64, error) {
+func (f *fakeStore) Create(ctx context.Context, _ string, value []byte, opts ...jetstream.KVCreateOpt) (uint64, error) {
+	if len(opts) != 0 {
+		return 0, errUnmodelledOption
+	}
 	return f.write(ctx, func() (uint64, error) {
 		if f.live() != nil {
 			return 0, jetstream.ErrKeyExists
@@ -74,27 +82,34 @@ func (f *fakeStore) Delete(ctx context.Context, _ string, revision uint64) error
 	return err
 }
 
-func (f *fakeStore) Get(_ context.Context, _ string) (entry, error) {
+func (f *fakeStore) Get(ctx context.Context, key string) (jetstream.KeyValueEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	f.lock.Lock()
 	defer f.lock.Unlock()
 	if f.steady == noStream {
-		return entry{}, jetstream.ErrBucketNotFound
+		return nil, jetstream.ErrBucketNotFound
 	}
 	if f.stale != nil {
 		shown := *f.stale
+		shown.key = key
 		if f.once {
 			f.stale = nil
 		}
-		return shown, nil
+		return &shown, nil
 	}
 	current := f.live()
 	if current == nil {
-		return entry{}, jetstream.ErrKeyNotFound
+		return nil, jetstream.ErrKeyNotFound
 	}
-	return entry{value: current.value, revision: current.revision}, nil
+	return &entry{key: key, value: current.value, revision: current.revision}, nil
 }
 
 func (f *fakeStore) write(ctx context.Context, apply func() (uint64, error)) (uint64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	f.lock.Lock()
 	next := f.nextFault()
 	if next == noStream {
@@ -185,3 +200,18 @@ func (f *fakeStore) held() (entry, bool) {
 	}
 	return entry{value: current.value, revision: current.revision}, true
 }
+
+// entry is what Get answers: a key's value at a revision, the rest of KeyValueEntry is not read by the lease.
+type entry struct {
+	key      string
+	value    []byte
+	revision uint64
+}
+
+func (e *entry) Bucket() string                  { return Bucket }
+func (e *entry) Key() string                     { return e.key }
+func (e *entry) Value() []byte                   { return e.value }
+func (e *entry) Revision() uint64                { return e.revision }
+func (e *entry) Created() time.Time              { return time.Time{} }
+func (e *entry) Delta() uint64                   { return 0 }
+func (e *entry) Operation() jetstream.KeyValueOp { return jetstream.KeyValuePut }

@@ -11,6 +11,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/processing"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/natsjstest"
 )
 
 func TestStakeTakesThePointerForTheNewEpochAndKeepsWhatTheOperatorWrote(t *testing.T) {
@@ -112,11 +113,11 @@ func TestAStakeRacedByAnotherWriterIsAMovedPointer(t *testing.T) {
 	ref, meta := w.restorable(t)
 	raced := &pointerValue{Version: pointerVersion, Epoch: olderEpoch, Current: ref, DiscardedAt: 3}
 	var once atomic.Bool
-	w.proxy.intercept(func(f *frame) verdict {
+	w.proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
 		if isPointerWrite(f) && once.CompareAndSwap(false, true) {
 			w.putPointer(t, raced)
 		}
-		return forward
+		return natsjstest.Forward()
 	})
 
 	_, err := w.store.Stake(t.Context(), &meta)
@@ -132,7 +133,7 @@ func TestAStakeRacedByAnotherWriterIsAMovedPointer(t *testing.T) {
 func TestAStakeRefusedIsNotStakedAndMayBeRetried(t *testing.T) {
 	w := startWorld(t)
 	_, meta := w.restorable(t)
-	w.once(isPointerWrite, drop)
+	w.once(isPointerWrite, natsjstest.Drop())
 	if _, err := w.store.Stake(t.Context(), &meta); err == nil {
 		t.Fatal("first Stake passed although its write never landed")
 	}
@@ -231,7 +232,7 @@ func TestACreateThatNeverLandedIsAMovedPointer(t *testing.T) {
 	if _, _, err := w.store.Latest(t.Context(), testPartition); !errors.Is(err, processing.ErrNoCheckpoint) {
 		t.Fatalf("Latest: %v", err)
 	}
-	w.once(isPointerWrite, drop)
+	w.once(isPointerWrite, natsjstest.Drop())
 
 	_, err := w.store.StakeEmpty(t.Context())
 
@@ -266,7 +267,7 @@ func TestAnEmptyStartNeedsLatestToHaveFoundNothing(t *testing.T) {
 			if _, _, err := w.store.Latest(ctx, testPartition); err == nil || errors.Is(err, processing.ErrNoCheckpoint) {
 				t.Fatalf("Latest: err = %v, want a refusal other than %v", err, processing.ErrNoCheckpoint)
 			}
-			w.proxy.intercept(nil)
+			w.proxy.Intercept(nil)
 			before, existed := w.rawPointer(t)
 
 			_, err := w.store.StakeEmpty(t.Context())

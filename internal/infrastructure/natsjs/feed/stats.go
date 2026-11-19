@@ -49,7 +49,7 @@ type stopRule struct {
 
 var stopRules = []stopRule{
 	{target: processing.ErrFeedClosed, reason: StopClosed},
-	{target: ErrLeaseLost, reason: StopLeaseLost},
+	{target: processing.ErrLeaseLost, reason: StopLeaseLost},
 	{target: ErrStreamIdentity, reason: StopIdentity},
 	{target: ErrUnknownRecordVersion, reason: StopUnknownVersion},
 	{target: ErrSystemicCorruption, reason: StopSystemicCorruption},

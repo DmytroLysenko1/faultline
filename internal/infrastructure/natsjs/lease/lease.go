@@ -12,14 +12,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/samber/lo"
 
-	"github.com/DmytroLysenko1/faultline/internal/application/processing"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs"
 )
 
 var (
-	ErrLeaseLost      = processing.ErrLeaseLost
 	ErrInvalidOptions = errors.New("invalid lease options")
 	ErrBucketDrift    = errors.New("lease bucket configuration drifted")
 	ErrAlreadyRunning = errors.New("lease already renewed by Run")
@@ -33,17 +32,13 @@ const (
 	tokenSeparator   = "/"
 )
 
-type keyStore interface {
-	Create(ctx context.Context, key string, value []byte) (uint64, error)
+type keyValue interface {
+	Create(ctx context.Context, key string, value []byte, opts ...jetstream.KVCreateOpt) (uint64, error)
 	Update(ctx context.Context, key string, value []byte, revision uint64) (uint64, error)
-	Get(ctx context.Context, key string) (entry, error)
-	Delete(ctx context.Context, key string, revision uint64) error
+	Get(ctx context.Context, key string) (jetstream.KeyValueEntry, error)
 }
 
-type entry struct {
-	value    []byte
-	revision uint64
-}
+type deleteAt func(ctx context.Context, key string, revision uint64) error
 
 type Options struct {
 	Partition      uint16
@@ -115,7 +110,8 @@ func (o *Options) election() time.Duration {
 type Lease struct {
 	Partition uint16
 	Epoch     uint64
-	store     keyStore
+	store     keyValue
+	deleteAt  deleteAt
 	key       string
 	token     []byte
 	options   Options
@@ -131,11 +127,12 @@ type Lease struct {
 	counters  counters
 }
 
-func newLease(store keyStore, maxAge time.Duration, options *Options, nonce string) *Lease {
+func newLease(store keyValue, deleteKey deleteAt, maxAge time.Duration, options *Options, nonce string) *Lease {
 	lost := make(chan struct{})
 	return &Lease{
 		Partition: options.Partition,
 		store:     store,
+		deleteAt:  deleteKey,
 		key:       keyPrefix + strconv.Itoa(int(options.Partition)),
 		token:     []byte(options.Instance + tokenSeparator + nonce),
 		options:   *options,
@@ -202,8 +199,8 @@ func (l *Lease) reclaimOwnWrite(ctx context.Context) bool {
 
 func (l *Lease) ownRevision(ctx context.Context) (uint64, bool) {
 	found, err := l.store.Get(ctx, l.key)
-	if err != nil || !bytes.Equal(found.value, l.token) {
+	if err != nil || !bytes.Equal(found.Value(), l.token) {
 		return 0, false
 	}
-	return found.revision, true
+	return found.Revision(), true
 }
