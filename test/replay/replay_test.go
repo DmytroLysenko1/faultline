@@ -128,7 +128,7 @@ func replayInto(t *testing.T, limits *topology.Limits, lines []ptrace.Traces, af
 	accept := ingest.NewAcceptBatch(journal, operation.NewNormalizer(nil))
 	for _, line := range lines {
 		clock.AdvanceTo(lastEnd(line))
-		if _, err := accept.Execute(t.Context(), spanmap.NewSource(line)); err != nil {
+		if _, err := accept.Execute(t.Context(), spanmap.AcceptCommand(line)); err != nil {
 			t.Fatalf("Execute: %v", err)
 		}
 		for _, received := range journal.Take() {

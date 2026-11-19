@@ -54,14 +54,14 @@ func failureRules() []failureRule {
 func journalRules() []failureRule {
 	return []failureRule{
 		{
-			target: ingest.ErrOverloaded,
-			status: overloadedStatus,
-			report: (*events).overloaded,
-		},
-		{
 			target: ingest.ErrBatchTooLarge,
 			status: tooLargeStatus,
 			report: (*events).tooLarge,
+		},
+		{
+			target: ingest.ErrOverloaded,
+			status: overloadedStatus,
+			report: (*events).overloaded,
 		},
 		{
 			target: ingest.ErrNotAttempted,

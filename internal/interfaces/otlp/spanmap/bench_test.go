@@ -55,20 +55,20 @@ func decorate(observed ptrace.Span, i int) {
 }
 
 func BenchmarkMapping512(b *testing.B) {
-	source := spanmap.NewSource(demoTraces())
+	command := spanmap.AcceptCommand(demoTraces())
 	b.ReportAllocs()
 	for b.Loop() {
-		for range source.All() {
+		for range command.Records {
 		}
 	}
 }
 
 func BenchmarkAcceptBatch512(b *testing.B) {
-	source := spanmap.NewSource(demoTraces())
+	traces := demoTraces()
 	accept := newAcceptBatch()
 	b.ReportAllocs()
 	for b.Loop() {
-		if _, err := accept.Execute(b.Context(), source); err != nil {
+		if _, err := accept.Execute(b.Context(), spanmap.AcceptCommand(traces)); err != nil {
 			b.Fatal(err)
 		}
 	}

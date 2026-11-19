@@ -92,10 +92,10 @@ func (l *logBuffer) Events(t *testing.T, name string) []map[string]any {
 	return matched
 }
 
-type acceptorFunc func(ctx context.Context, spans ingest.SpanSource) (ingest.AcceptResult, error)
+type acceptorFunc func(ctx context.Context, command ingest.AcceptCommand) (ingest.AcceptResult, error)
 
-func (f acceptorFunc) Execute(ctx context.Context, spans ingest.SpanSource) (ingest.AcceptResult, error) {
-	return f(ctx, spans)
+func (f acceptorFunc) Execute(ctx context.Context, command ingest.AcceptCommand) (ingest.AcceptResult, error) {
+	return f(ctx, command)
 }
 
 type harness struct {
@@ -163,7 +163,7 @@ func dial(t *testing.T, dialer func(context.Context, string) (net.Conn, error)) 
 }
 
 func returning(result ingest.AcceptResult, err error) acceptorFunc {
-	return func(context.Context, ingest.SpanSource) (ingest.AcceptResult, error) {
+	return func(context.Context, ingest.AcceptCommand) (ingest.AcceptResult, error) {
 		return result, err
 	}
 }

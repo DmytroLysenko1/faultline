@@ -57,6 +57,14 @@ func TestGetGraphPassesTheCallerContext(t *testing.T) {
 	}
 }
 
+func TestGetGraphWithoutASnapshotSaysThereIsNoGraph(t *testing.T) {
+	got, err := query.NewGetGraph(&fakeReader{}).Execute(t.Context())
+
+	if !errors.Is(err, query.ErrNoGraph) || got != nil {
+		t.Errorf("Execute = %v, %v; want no snapshot and %v", got, err, query.ErrNoGraph)
+	}
+}
+
 func TestGetGraphWrapsReaderError(t *testing.T) {
 	tests := []struct {
 		Name    string

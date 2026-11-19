@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
-	"github.com/DmytroLysenko1/faultline/internal/infrastructure/idlerule"
 	"github.com/DmytroLysenko1/faultline/pkg/retry"
 )
 
@@ -21,7 +20,7 @@ type pulses interface {
 }
 
 type idle struct {
-	rule      idlerule.Rule
+	rule      batch.IdleRule
 	stamped   time.Time
 	since     time.Time
 	pulsed    time.Time
@@ -32,17 +31,19 @@ type idle struct {
 }
 
 func newIdle(start *Start, after time.Duration) idle {
-	rule := idlerule.Rule{
-		After: after,
-	}
-	if start.After.Sequence > 0 {
-		rule.Started = true
-		rule.Since = start.ReceivedAt
-	}
 	return idle{
-		rule:    rule,
+		rule:    idleRuleOf(start, after),
 		stamped: start.ReceivedAt,
 		since:   time.Now(),
+	}
+}
+
+func idleRuleOf(start *Start, after time.Duration) batch.IdleRule {
+	if start.After.Sequence > 0 {
+		return batch.ResumedIdleRule(after, start.ReceivedAt)
+	}
+	return batch.IdleRule{
+		After: after,
 	}
 }
 

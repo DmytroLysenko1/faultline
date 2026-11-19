@@ -668,6 +668,8 @@ stateDiagram-v2
 
 **`internal/application/ingest`**
 
+> Рефактор слоёв, шаг 2: интерфейс `SpanSource` заменён командой `ingest.AcceptCommand{SpanCount, Records iter.Seq2}`, её строит `spanmap.AcceptCommand(traces)`; ниже — историческая форма.
+
 ```go
 var (
 	ErrOverloaded    = errors.New(…) // нет кредита байтов или места в очереди: повтор имеет смысл

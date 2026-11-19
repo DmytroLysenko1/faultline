@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/DmytroLysenko1/faultline/internal/application/query"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/graph"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memgraph"
@@ -96,8 +97,8 @@ func TestCanceledContext(t *testing.T) {
 
 func TestZeroStoreReportsNoSnapshot(t *testing.T) {
 	var store memgraph.Store
-	if _, err := store.Latest(t.Context()); !errors.Is(err, memgraph.ErrNoSnapshot) {
-		t.Errorf("err = %v, want %v", err, memgraph.ErrNoSnapshot)
+	if _, err := store.Latest(t.Context()); !errors.Is(err, query.ErrNoGraph) {
+		t.Errorf("err = %v, want %v", err, query.ErrNoGraph)
 	}
 }
 

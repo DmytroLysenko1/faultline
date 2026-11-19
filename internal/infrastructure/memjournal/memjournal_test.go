@@ -469,6 +469,9 @@ func TestClosedJournalRejectsAppendsAndDrainsTheRest(t *testing.T) {
 	if !errors.Is(err, ingest.ErrUnavailable) || !errors.Is(err, ingest.ErrNotAttempted) {
 		t.Fatalf("append after close: err = %v, want %v, not attempted", err, ingest.ErrUnavailable)
 	}
+	if diff := cmp.Diff("append: journal is closed", err.Error()); diff != "" {
+		t.Errorf("append after close, text (-want +got):\n%s", diff)
+	}
 	rest := mustReceive(t, journal, receiveAll)
 	releaseAll(rest)
 	if diff := cmp.Diff([][]span.Span{

@@ -139,6 +139,14 @@ type answer struct {
 	meaning   error
 }
 
+// failure is the publisher's own error: a classified one when the answer fails, a bare one otherwise.
+func (a answer) failure() error {
+	if !a.fails {
+		return errFake
+	}
+	return &natsjs.PublishError{Reason: a.reason, Cause: errFake}
+}
+
 type call struct {
 	partition uint16
 	msgID     string
@@ -172,10 +180,10 @@ func (f *fakePublisher) Publish(ctx context.Context, partition uint16, data []by
 		reply.then()
 	}
 	if reply.plain {
-		return false, errors.Join(reply.meaning, errFake)
+		return false, errors.Join(reply.meaning, reply.failure())
 	}
 	if reply.fails {
-		return false, &natsjs.PublishError{Reason: reply.reason, Cause: errFake}
+		return false, reply.failure()
 	}
 	return reply.duplicate, nil
 }

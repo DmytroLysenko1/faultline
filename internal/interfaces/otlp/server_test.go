@@ -55,14 +55,14 @@ type countingAcceptor struct {
 	calls atomic.Int64
 }
 
-func (c *countingAcceptor) accept(context.Context, ingest.SpanSource) (ingest.AcceptResult, error) {
+func (c *countingAcceptor) accept(context.Context, ingest.AcceptCommand) (ingest.AcceptResult, error) {
 	c.calls.Add(1)
 	return ingest.AcceptResult{}, nil
 }
 
 func TestPanicInAcceptorIsInternalAndTheServerKeepsServing(t *testing.T) {
 	var calls atomic.Int64
-	h := start(t, func(context.Context, ingest.SpanSource) (ingest.AcceptResult, error) {
+	h := start(t, func(context.Context, ingest.AcceptCommand) (ingest.AcceptResult, error) {
 		if calls.Add(1) == 1 {
 			panic(journalSecret)
 		}
@@ -82,8 +82,8 @@ func TestPanicInAcceptorIsInternalAndTheServerKeepsServing(t *testing.T) {
 
 func TestGzipRequestIsDecompressed(t *testing.T) {
 	var spans atomic.Int64
-	h := start(t, func(_ context.Context, source ingest.SpanSource) (ingest.AcceptResult, error) {
-		spans.Store(int64(source.Len()))
+	h := start(t, func(_ context.Context, command ingest.AcceptCommand) (ingest.AcceptResult, error) {
+		spans.Store(int64(command.SpanCount))
 		return ingest.AcceptResult{}, nil
 	})
 	const sent = 3
@@ -247,7 +247,7 @@ func TestSecondConnectionWaitsWhileTheOnlySlotIsBusy(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var calls atomic.Int64
-	address := startTCP(t, func(ctx context.Context, _ ingest.SpanSource) (ingest.AcceptResult, error) {
+	address := startTCP(t, func(ctx context.Context, _ ingest.AcceptCommand) (ingest.AcceptResult, error) {
 		if calls.Add(1) == 1 {
 			close(entered)
 			select {
@@ -279,7 +279,7 @@ func TestConnectionWithAStuckStreamIsRotatedByAge(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var calls atomic.Int64
-	address := startTCP(t, func(ctx context.Context, _ ingest.SpanSource) (ingest.AcceptResult, error) {
+	address := startTCP(t, func(ctx context.Context, _ ingest.AcceptCommand) (ingest.AcceptResult, error) {
 		if calls.Add(1) == 1 {
 			close(entered)
 			select {
@@ -310,29 +310,28 @@ func TestConnectionWithAStuckStreamIsRotatedByAge(t *testing.T) {
 	stuck.Wait()
 }
 
-type holdingSource struct {
-	inner   ingest.SpanSource
+type holdingCommand struct {
+	inner   ingest.AcceptCommand
 	arrived chan<- struct{}
 	release <-chan struct{}
 }
 
-func (h holdingSource) Len() int {
-	return h.inner.Len()
+func (h holdingCommand) Command() ingest.AcceptCommand {
+	return ingest.AcceptCommand{
+		SpanCount: h.inner.SpanCount,
+		Records:   h.records(),
+	}
 }
 
-func (h holdingSource) All() iter.Seq2[resource.Resource, *ingest.Record] {
+func (h holdingCommand) records() iter.Seq2[resource.Resource, *ingest.Record] {
 	return func(yield func(resource.Resource, *ingest.Record) bool) {
-		remaining := h.inner.Len()
-		for source, fields := range h.inner.All() {
-			remaining--
-			if remaining == 0 {
-				h.arrived <- struct{}{}
-				<-h.release
-			}
+		for source, fields := range h.inner.Records {
 			if !yield(source, fields) {
 				return
 			}
 		}
+		h.arrived <- struct{}{}
+		<-h.release
 	}
 }
 
@@ -418,12 +417,12 @@ func heldHeapPerRequest(t *testing.T, wire []byte) int64 {
 	arrived := make(chan struct{}, heldRequests)
 	release := make(chan struct{})
 	accept := ingest.NewAcceptBatch(discardJournal{}, operation.NewNormalizer(nil))
-	h := start(t, func(ctx context.Context, spans ingest.SpanSource) (ingest.AcceptResult, error) {
-		return accept.Execute(ctx, holdingSource{
-			inner:   spans,
+	h := start(t, func(ctx context.Context, command ingest.AcceptCommand) (ingest.AcceptResult, error) {
+		return accept.Execute(ctx, holdingCommand{
+			inner:   command,
 			arrived: arrived,
 			release: release,
-		})
+		}.Command())
 	})
 	before := otlptest.HeapInUse()
 	var senders sync.WaitGroup

@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -19,17 +20,39 @@ var (
 	ErrBatchTooLarge = errors.New("batch exceeds span journal capacity")
 	ErrUnavailable   = errors.New("span journal unavailable")
 	ErrNotAttempted  = errors.New("span journal did not attempt the write")
+	ErrNoRecords     = errors.New("accept command counts spans but carries no records")
 )
 
 const MaxReasons = 16
+
+type notAttempted struct {
+	cause error
+}
+
+func (n *notAttempted) Error() string {
+	return cmp.Or(n.cause, ErrNotAttempted).Error()
+}
+
+func (n *notAttempted) Unwrap() []error {
+	if n.cause == nil {
+		return []error{ErrUnavailable, ErrNotAttempted}
+	}
+	return []error{ErrUnavailable, ErrNotAttempted, n.cause}
+}
+
+func NotAttempted(cause error) error {
+	return &notAttempted{
+		cause: cause,
+	}
+}
 
 type spanJournal interface {
 	Append(ctx context.Context, spans []span.Span) error
 }
 
-type SpanSource interface {
-	Len() int
-	All() iter.Seq2[resource.Resource, *Record]
+type AcceptCommand struct {
+	SpanCount int
+	Records   iter.Seq2[resource.Resource, *Record]
 }
 
 type Record struct {
@@ -79,14 +102,24 @@ func NewAcceptBatch(journal spanJournal, normalizer *operation.Normalizer) *Acce
 	}
 }
 
-func (a *AcceptBatch) Execute(ctx context.Context, spans SpanSource) (AcceptResult, error) {
-	valid, result := a.partition(spans)
+func (a *AcceptBatch) Execute(ctx context.Context, command AcceptCommand) (AcceptResult, error) {
+	if command.Records == nil {
+		return AcceptResult{}, command.missingRecords()
+	}
+	valid, result := a.partition(command)
 	if err := a.enqueue(ctx, valid); err != nil {
 		return AcceptResult{}, err
 	}
 	a.accepted.Add(int64(result.Accepted))
 	a.rejected.Add(int64(result.Rejected))
 	return result, nil
+}
+
+func (c AcceptCommand) missingRecords() error {
+	if c.SpanCount != 0 {
+		return fmt.Errorf("%w: %d counted", ErrNoRecords, c.SpanCount)
+	}
+	return nil
 }
 
 func (a *AcceptBatch) enqueue(ctx context.Context, valid []span.Span) error {
@@ -102,10 +135,10 @@ func (a *AcceptBatch) enqueue(ctx context.Context, valid []span.Span) error {
 
 func (a *AcceptBatch) countFailure(err error) {
 	switch {
-	case errors.Is(err, ErrOverloaded):
-		a.overloaded.Add(1)
 	case errors.Is(err, ErrBatchTooLarge):
 		a.tooLarge.Add(1)
+	case errors.Is(err, ErrOverloaded):
+		a.overloaded.Add(1)
 	}
 }
 
@@ -118,11 +151,11 @@ func (a *AcceptBatch) Stats() Stats {
 	}
 }
 
-func (a *AcceptBatch) partition(spans SpanSource) ([]span.Span, AcceptResult) {
-	valid := make([]span.Span, 0, max(spans.Len(), 0))
+func (a *AcceptBatch) partition(command AcceptCommand) ([]span.Span, AcceptResult) {
+	valid := make([]span.Span, 0, max(command.SpanCount, 0))
 	names := make(operation.Names)
 	var result AcceptResult
-	for source, record := range spans.All() {
+	for source, record := range command.Records {
 		a.nameOperation(source, record, names)
 		accepted, err := span.New(source, &record.Fields)
 		if err != nil {

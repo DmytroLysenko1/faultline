@@ -21,24 +21,17 @@ const (
 	attrK8sPodName       = "k8s.pod.name"
 )
 
-type Source struct {
-	traces ptrace.Traces
-}
-
-func NewSource(traces ptrace.Traces) Source {
-	return Source{
-		traces: traces,
+func AcceptCommand(traces ptrace.Traces) ingest.AcceptCommand {
+	return ingest.AcceptCommand{
+		SpanCount: traces.SpanCount(),
+		Records:   records(traces),
 	}
 }
 
-func (s Source) Len() int {
-	return s.traces.SpanCount()
-}
-
-func (s Source) All() iter.Seq2[resource.Resource, *ingest.Record] {
+func records(traces ptrace.Traces) iter.Seq2[resource.Resource, *ingest.Record] {
 	return func(yield func(resource.Resource, *ingest.Record) bool) {
 		var record ingest.Record
-		for _, resourceSpans := range s.traces.ResourceSpans().All() {
+		for _, resourceSpans := range traces.ResourceSpans().All() {
 			if !yieldResource(resourceSpans, &record, yield) {
 				return
 			}

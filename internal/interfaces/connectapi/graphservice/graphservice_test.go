@@ -13,6 +13,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/protobuf/testing/protocmp"
 
+	"github.com/DmytroLysenko1/faultline/internal/application/query"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/graph"
@@ -136,9 +137,11 @@ func TestGetGraphHidesInternalFailures(t *testing.T) {
 			Want: "query broken",
 		},
 		{
-			Name: "nil snapshot without an error",
-			Args: fakeQuery{},
-			Want: "nil snapshot",
+			Name: "no graph yet",
+			Args: fakeQuery{
+				Err: query.ErrNoGraph,
+			},
+			Want: "no graph snapshot",
 		},
 		{
 			Name: "edge to a missing node",

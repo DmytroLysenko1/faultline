@@ -2,7 +2,6 @@ package otlp_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -172,7 +171,7 @@ func TestFailuresLogOnlyWhatAnOperatorMustSee(t *testing.T) {
 		},
 		{
 			Name: "shutdown is a debug note, not an incident",
-			Args: errors.Join(ingest.ErrUnavailable, ingest.ErrNotAttempted),
+			Args: ingest.NotAttempted(errJournalBroken),
 			Want: map[string]int{
 				"DEBUG otlp.export.interrupted": 2,
 			},
@@ -223,7 +222,7 @@ func exportAllowingOverload(t *testing.T, h harness) {
 
 func TestRejectedAndOverloadedAreThrottledIndependently(t *testing.T) {
 	var calls atomic.Int64
-	h := start(t, func(context.Context, ingest.SpanSource) (ingest.AcceptResult, error) {
+	h := start(t, func(context.Context, ingest.AcceptCommand) (ingest.AcceptResult, error) {
 		if calls.Add(1)%2 == 1 {
 			return ingest.AcceptResult{
 				Rejected: 1,

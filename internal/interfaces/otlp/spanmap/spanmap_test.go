@@ -23,6 +23,9 @@ const (
 	allocationRuns     = 100
 	stopAfter          = 2
 	hostileArrayValues = 10_000
+	manySpans          = 64
+	// the record, the range-over-func state and the iterator closures: paid once per request
+	walkSetupAllocations = 6
 )
 
 const (
@@ -35,9 +38,9 @@ type pair struct {
 	Record   ingest.Record
 }
 
-func collect(source spanmap.Source) []pair {
+func collect(command ingest.AcceptCommand) []pair {
 	var pairs []pair
-	for observed, record := range source.All() {
+	for observed, record := range command.Records {
 		pairs = append(pairs, pair{
 			Resource: observed,
 			Record:   *record,
@@ -55,6 +58,48 @@ func newSpan(scope ptrace.ScopeSpans, id byte) ptrace.Span {
 		id,
 	})
 	return created
+}
+
+// spansShaped is one request of count spans that all look the same, so two requests differ only in length.
+func spansShaped(count int, shape func(observed ptrace.Span)) ptrace.Traces {
+	traces := ptrace.NewTraces()
+	scope := newResource(traces, "cart")
+	for id := range count {
+		shape(newSpan(scope, byte(id+1)))
+	}
+	return traces
+}
+
+// walkAllocations is what a walk of one request costs: a fixed setup plus what each span adds.
+type walkAllocations struct {
+	setup   float64
+	perSpan float64
+}
+
+func allocationsOfWalk(shape func(observed ptrace.Span)) walkAllocations {
+	walk := func(traces ptrace.Traces) float64 {
+		command := spanmap.AcceptCommand(traces)
+		return testing.AllocsPerRun(allocationRuns, func() {
+			for range command.Records {
+			}
+		})
+	}
+	one := walk(spansShaped(1, shape))
+	return walkAllocations{
+		setup:   one,
+		perSpan: (walk(spansShaped(manySpans, shape)) - one) / (manySpans - 1),
+	}
+}
+
+func assertWalkAllocations(t *testing.T, shape func(observed ptrace.Span)) {
+	t.Helper()
+	got := allocationsOfWalk(shape)
+	if got.perSpan > 0 {
+		t.Errorf("each span costs %.2f allocations, want none", got.perSpan)
+	}
+	if got.setup > walkSetupAllocations {
+		t.Errorf("a walk costs %.0f allocations before its spans, want at most %d", got.setup, walkSetupAllocations)
+	}
 }
 
 func newResource(traces ptrace.Traces, service string) ptrace.ScopeSpans {
@@ -113,7 +158,7 @@ func TestSourceMapsResourceAndSpanFields(t *testing.T) {
 			},
 		},
 	}
-	if diff := cmp.Diff(want, collect(spanmap.NewSource(traces))); diff != "" {
+	if diff := cmp.Diff(want, collect(spanmap.AcceptCommand(traces))); diff != "" {
 		t.Errorf("mapped spans (-want +got):\n%s", diff)
 	}
 }
@@ -154,7 +199,7 @@ func TestKindsOutsideOTLPBecomeUnspecified(t *testing.T) {
 		t.Run(tt.Name, func(t *testing.T) {
 			traces := ptrace.NewTraces()
 			newSpan(newResource(traces, "cart"), 1).SetKind(tt.Args)
-			got := collect(spanmap.NewSource(traces))
+			got := collect(spanmap.AcceptCommand(traces))
 			if diff := cmp.Diff(tt.Want, got[0].Record.Fields.Kind); diff != "" {
 				t.Errorf("kind (-want +got):\n%s", diff)
 			}
@@ -167,28 +212,21 @@ func TestNonStringIdentityIsMissingNotStringified(t *testing.T) {
 	resourceSpans := traces.ResourceSpans().AppendEmpty()
 	resourceSpans.Resource().Attributes().PutInt("service.name", unavailableCode)
 	newSpan(resourceSpans.ScopeSpans().AppendEmpty(), 1)
-	got := collect(spanmap.NewSource(traces))
+	got := collect(spanmap.AcceptCommand(traces))
 	if got[0].Resource.ServiceName != "" {
 		t.Errorf("ServiceName = %q, want empty for a non-string attribute", got[0].Resource.ServiceName)
 	}
 }
 
 func TestSpanWithoutDecidingAttributesAllocatesNothing(t *testing.T) {
-	traces := ptrace.NewTraces()
-	observed := newSpan(newResource(traces, "cart"), 1)
-	observed.Attributes().PutStr("http.route", "/cart")
-	source := spanmap.NewSource(traces)
-	got := collect(source)
+	routeOnly := func(observed ptrace.Span) { observed.Attributes().PutStr("http.route", "/cart") }
+
+	got := collect(spanmap.AcceptCommand(spansShaped(1, routeOnly)))
+
 	if got[0].Record.Fields.Attributes != (response.Attributes{}) {
 		t.Errorf("Attributes = %+v, want zero when no attribute decides the outcome", got[0].Record.Fields.Attributes)
 	}
-	allocations := testing.AllocsPerRun(allocationRuns, func() {
-		for range source.All() {
-		}
-	})
-	if allocations > 1 {
-		t.Errorf("walking one span allocates %.0f times, want at most the iterator closure", allocations)
-	}
+	assertWalkAllocations(t, routeOnly)
 }
 
 func TestSourceWalksEveryResourceAndScopeInOrder(t *testing.T) {
@@ -200,8 +238,8 @@ func TestSourceWalksEveryResourceAndScopeInOrder(t *testing.T) {
 	secondResource.Resource().Attributes().PutStr("service.name", "payment")
 	newSpan(secondResource.ScopeSpans().AppendEmpty(), 3)
 	newSpan(secondResource.ScopeSpans().AppendEmpty(), 4)
-	source := spanmap.NewSource(traces)
-	got := collect(source)
+	command := spanmap.AcceptCommand(traces)
+	got := collect(command)
 	services := make([]string, 0, len(got))
 	for _, mapped := range got {
 		services = append(services, mapped.Resource.ServiceName)
@@ -209,8 +247,8 @@ func TestSourceWalksEveryResourceAndScopeInOrder(t *testing.T) {
 	if diff := cmp.Diff([]string{"cart", "cart", "payment", "payment"}, services); diff != "" {
 		t.Errorf("services in order (-want +got):\n%s", diff)
 	}
-	if source.Len() != len(got) {
-		t.Errorf("Len() = %d, want the %d spans the iterator yields", source.Len(), len(got))
+	if command.SpanCount != len(got) {
+		t.Errorf("SpanCount = %d, want the %d spans the iterator yields", command.SpanCount, len(got))
 	}
 }
 
@@ -221,7 +259,7 @@ func TestIteratorStopsWhenYieldReturnsFalse(t *testing.T) {
 		newSpan(scope, id+1)
 	}
 	seen := 0
-	for range spanmap.NewSource(traces).All() {
+	for range spanmap.AcceptCommand(traces).Records {
 		seen++
 		if seen == stopAfter {
 			break
@@ -233,35 +271,31 @@ func TestIteratorStopsWhenYieldReturnsFalse(t *testing.T) {
 }
 
 func TestEmptyRequestYieldsNothing(t *testing.T) {
-	source := spanmap.NewSource(ptrace.NewTraces())
-	if diff := cmp.Diff([]pair{}, collect(source), cmpopts.EquateEmpty()); diff != "" {
+	command := spanmap.AcceptCommand(ptrace.NewTraces())
+	if diff := cmp.Diff([]pair{}, collect(command), cmpopts.EquateEmpty()); diff != "" {
 		t.Errorf("empty request (-want +got):\n%s", diff)
 	}
-	if source.Len() != 0 {
-		t.Errorf("Len() = %d, want 0", source.Len())
+	if command.SpanCount != 0 {
+		t.Errorf("SpanCount = %d, want 0", command.SpanCount)
 	}
 }
 
 func TestNonScalarRelevantAttributeIsIgnoredWithoutAllocation(t *testing.T) {
-	traces := ptrace.NewTraces()
-	observed := newSpan(newResource(traces, "cart"), 1)
-	values := observed.Attributes().PutEmptySlice("error.type")
-	for range hostileArrayValues {
-		values.AppendEmpty()
+	nonScalar := func(observed ptrace.Span) {
+		values := observed.Attributes().PutEmptySlice("error.type")
+		for range hostileArrayValues {
+			values.AppendEmpty()
+		}
+		observed.Attributes().PutEmptyMap("http.status_code").PutStr("nested", "503")
+		observed.Attributes().PutEmptyBytes("rpc.response.status_code").FromRaw([]byte("UNAVAILABLE"))
 	}
-	observed.Attributes().PutEmptyMap("http.status_code").PutStr("nested", "503")
-	observed.Attributes().PutEmptyBytes("rpc.response.status_code").FromRaw([]byte("UNAVAILABLE"))
-	source := spanmap.NewSource(traces)
-	if got := collect(source)[0].Record.Fields.Attributes; got != (response.Attributes{}) {
+
+	got := collect(spanmap.AcceptCommand(spansShaped(1, nonScalar)))[0].Record.Fields.Attributes
+
+	if got != (response.Attributes{}) {
 		t.Errorf("Attributes = %+v, want zero: only scalar values decide the outcome", got)
 	}
-	allocations := testing.AllocsPerRun(allocationRuns, func() {
-		for range source.All() {
-		}
-	})
-	if allocations > 1 {
-		t.Errorf("non-scalar attributes cost %.0f allocations per span, want none beyond the iterator", allocations)
-	}
+	assertWalkAllocations(t, nonScalar)
 }
 
 func TestSourceReadsOperationFactsInBothSemanticConventionForms(t *testing.T) {
@@ -278,7 +312,7 @@ func TestSourceReadsOperationFactsInBothSemanticConventionForms(t *testing.T) {
 	deprecated.Attributes().PutInt("http.route", 7)
 
 	got := []operation.Facts{}
-	for _, mapped := range collect(spanmap.NewSource(traces)) {
+	for _, mapped := range collect(spanmap.AcceptCommand(traces)) {
 		got = append(got, mapped.Record.Facts)
 	}
 

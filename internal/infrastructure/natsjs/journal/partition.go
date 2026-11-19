@@ -8,7 +8,6 @@ import (
 
 	"github.com/samber/lo"
 
-	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/record"
@@ -101,24 +100,15 @@ func (j *Journal) publishRecord(ctx context.Context, partition uint16, data []by
 	started := j.options.Clock.Now()
 	duplicate, err := j.publisher.Publish(ctx, partition, data, msgID)
 	j.counters.record(j.options.Clock.Now().Sub(started), duplicate, err)
-	if err == nil || hasIngestMeaning(err) {
-		return err
+	if err == nil {
+		return nil
 	}
-	return errors.Join(ingest.ErrUnavailable, err)
-}
-
-func hasIngestMeaning(err error) bool {
-	return lo.SomeBy([]error{ingest.ErrBatchTooLarge, ingest.ErrOverloaded, ingest.ErrUnavailable},
-		func(sentinel error) bool {
-			return errors.Is(err, sentinel)
-		})
+	return toIngest(err)
 }
 
 func (j *Journal) encodeFailure(partition uint16, err error) error {
-	sentinel := ingest.ErrUnavailable
 	if errors.Is(err, record.ErrTooLarge) {
 		j.counters.encodeTooLarge.Add(1)
-		sentinel = ingest.ErrBatchTooLarge
 	}
-	return fmt.Errorf("encode partition %d: %w", partition, errors.Join(sentinel, err))
+	return fmt.Errorf("encode partition %d: %w", partition, toIngest(err))
 }

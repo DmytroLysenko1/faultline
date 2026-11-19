@@ -74,7 +74,7 @@ func TestExportMapsEveryAcceptorErrorToItsStatus(t *testing.T) {
 		},
 		{
 			Name: "closed journal is unavailable",
-			Args: errors.Join(ingest.ErrUnavailable, ingest.ErrNotAttempted),
+			Args: ingest.NotAttempted(errJournalBroken),
 			Want: statusWant{
 				Code:    codes.Unavailable,
 				Message: "span journal unavailable",
@@ -94,6 +94,22 @@ func TestExportMapsEveryAcceptorErrorToItsStatus(t *testing.T) {
 			Want: statusWant{
 				Code:    codes.DeadlineExceeded,
 				Message: "context deadline exceeded",
+			},
+		},
+		{
+			Name: "too large wins over overloaded: a retry cannot fix it",
+			Args: errors.Join(ingest.ErrOverloaded, ingest.ErrBatchTooLarge),
+			Want: statusWant{
+				Code:    codes.InvalidArgument,
+				Message: "request exceeds span journal capacity",
+			},
+		},
+		{
+			Name: "a command that lost its records is a broken adapter, internal",
+			Args: fmt.Errorf("%w: 1 counted", ingest.ErrNoRecords),
+			Want: statusWant{
+				Code:    codes.Internal,
+				Message: "internal error",
 			},
 		},
 		{

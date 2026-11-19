@@ -11,7 +11,6 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
-	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/natsjstest"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/record"
@@ -83,8 +82,9 @@ func TestAPartitionOutsideTheTopologyIsNeverPublished(t *testing.T) {
 
 	_, err := publishOnce(t, publisher, secondPartition, make([]byte, smallRecordBytes), msgID(1))
 
-	if !errors.Is(err, ingest.ErrUnavailable) || !errors.Is(err, natsjs.ErrUnknownPartition) {
-		t.Errorf("err = %v, want ErrUnavailable and ErrUnknownPartition", err)
+	assertPublishError(t, err, natsjs.ReasonUnexpected)
+	if !errors.Is(err, natsjs.ErrUnknownPartition) {
+		t.Errorf("err = %v, want ErrUnknownPartition", err)
 	}
 }
 
@@ -101,29 +101,21 @@ func TestPublisherRefusesAnInvalidTopology(t *testing.T) {
 type liveAnswer struct {
 	name       string
 	args       func(t *testing.T, cluster *natsjstest.Cluster, conn *natsjs.Conn, topology natsjs.Topology) error
-	wantErr    error
 	wantReason natsjs.Reason
 }
 
-// TestEveryNATSErrorMapsToOneIngestSentinel: the answers come from a live server, not from literals,
+// TestEveryLiveNATSAnswerHasItsReason: the answers come from a live server, not from literals,
 // so a server that changes a code or a description fails here instead of turning into "unexpected".
-func TestEveryNATSErrorMapsToOneIngestSentinel(t *testing.T) {
+func TestEveryLiveNATSAnswerHasItsReason(t *testing.T) {
 	tests := []liveAnswer{
-		{name: "a full stream", args: fillTheStream, wantErr: ingest.ErrOverloaded,
-			wantReason: natsjs.ReasonStreamFull},
-		{name: "a subject another stream owns", args: subjectOfAnotherStream, wantErr: ingest.ErrUnavailable,
-			wantReason: natsjs.ReasonStreamMismatch},
-		{name: "a sealed stream", args: sealTheStream, wantErr: ingest.ErrUnavailable,
-			wantReason: natsjs.ReasonSealed},
-		{name: "a closed connection", args: publishAfterClose, wantErr: ingest.ErrUnavailable,
-			wantReason: natsjs.ReasonClosed},
-		{name: "a record over max_payload", args: publishOverThePayload, wantErr: ingest.ErrBatchTooLarge,
-			wantReason: natsjs.ReasonTooLarge},
-		{name: "an expired deadline", args: publishWithAnExpiredDeadline, wantErr: context.DeadlineExceeded,
-			wantReason: natsjs.ReasonTimeout},
-		{name: "an answer that is no PubAck", args: answeredBySomeoneElse(notAnAck), wantErr: ingest.ErrUnavailable,
-			wantReason: natsjs.ReasonUnexpected},
-		{name: "a PubAck from another stream", args: answeredBySomeoneElse(foreignAck), wantErr: ingest.ErrUnavailable,
+		{name: "a full stream", args: fillTheStream, wantReason: natsjs.ReasonStreamFull},
+		{name: "a subject another stream owns", args: subjectOfAnotherStream, wantReason: natsjs.ReasonStreamMismatch},
+		{name: "a sealed stream", args: sealTheStream, wantReason: natsjs.ReasonSealed},
+		{name: "a closed connection", args: publishAfterClose, wantReason: natsjs.ReasonClosed},
+		{name: "a record over max_payload", args: publishOverThePayload, wantReason: natsjs.ReasonTooLarge},
+		{name: "an expired deadline", args: publishWithAnExpiredDeadline, wantReason: natsjs.ReasonTimeout},
+		{name: "an answer that is no PubAck", args: answeredBySomeoneElse(notAnAck), wantReason: natsjs.ReasonUnexpected},
+		{name: "a PubAck from another stream", args: answeredBySomeoneElse(foreignAck),
 			wantReason: natsjs.ReasonStreamMismatch},
 	}
 	for _, tt := range tests {
@@ -134,16 +126,13 @@ func TestEveryNATSErrorMapsToOneIngestSentinel(t *testing.T) {
 
 			err := tt.args(t, cluster, conn, topology)
 
-			assertPublishError(t, err, tt.wantErr, tt.wantReason)
+			assertPublishError(t, err, tt.wantReason)
 		})
 	}
 }
 
-func assertPublishError(t *testing.T, err, wantErr error, wantReason natsjs.Reason) {
+func assertPublishError(t *testing.T, err error, wantReason natsjs.Reason) {
 	t.Helper()
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("err = %v, want %v", err, wantErr)
-	}
 	failure, ok := errors.AsType[*natsjs.PublishError](err)
 	if !ok {
 		t.Fatalf("err = %v, want a *PublishError", err)
@@ -269,10 +258,10 @@ func TestTwoOfThreeReplicasDownGivesRetryableErrorNotOK(t *testing.T) {
 
 	_, err := publishOnce(t, publisher, firstPartition, make([]byte, smallRecordBytes), msgID(1))
 
-	if !errors.Is(err, ingest.ErrUnavailable) {
-		t.Fatalf("err = %v, want ErrUnavailable", err)
+	failure, classified := errors.AsType[*natsjs.PublishError](err)
+	if !classified {
+		t.Fatalf("err = %v, want a *PublishError", err)
 	}
-	failure, _ := errors.AsType[*natsjs.PublishError](err)
 	if reason := failure.Reason; reason != natsjs.ReasonNoResponders && reason != natsjs.ReasonTimeout {
 		t.Errorf("reason = %s (%v), want no responders or timeout", reason, failure.Cause)
 	}

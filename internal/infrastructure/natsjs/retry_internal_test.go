@@ -9,7 +9,6 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
-	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/natsjstest"
 )
 
@@ -44,7 +43,7 @@ func TestAMessageOverTheStreamLimitIsTooLargeOnALiveServer(t *testing.T) {
 		jetstream.WithMsgID("a"), jetstream.WithExpectStream("TINY"))
 
 	got := Classify(publishErr)
-	if got.Reason != ReasonTooLarge || got.Code != uint16(codeMessageTooLarge) || !errors.Is(got, ingest.ErrBatchTooLarge) {
+	if got.Reason != ReasonTooLarge || got.Code != uint16(codeMessageTooLarge) || !errors.Is(got, publishErr) {
 		t.Errorf("Classify(%v) = %+v, want too large with code %d", publishErr, got, codeMessageTooLarge)
 	}
 }

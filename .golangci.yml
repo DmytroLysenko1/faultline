@@ -169,7 +169,6 @@ linters:
             - "**/internal/infrastructure/memjournal/**"
             - "**/internal/infrastructure/memgraph/**"
             - "**/internal/infrastructure/natsjs/**"
-            - "**/internal/infrastructure/idlerule/**"
           deny:
             - pkg: go.opentelemetry.io/otel
               desc: the ingest and processing path is never traced
@@ -190,6 +189,14 @@ linters:
               desc: the record format depends only on domain telemetry types
             - pkg: github.com/DmytroLysenko1/faultline/internal/infrastructure
               desc: the record format is the leaf of natsjs; adapters import it, never the reverse
+        natsjs-speaks-no-ingest:
+          files:
+            - "**/internal/infrastructure/natsjs/**"
+            - "!**/internal/infrastructure/natsjs/journal/meaning.go"
+            - "!**/internal/infrastructure/natsjs/journal/*_test.go"
+          deny:
+            - pkg: github.com/DmytroLysenko1/faultline/internal/application/ingest
+              desc: only natsjs/journal/meaning.go gives a failure its ingest meaning (toIngest)
         # I16: NATS types stay behind natsjs; the core and the other adapters never see them.
         nats-stays-in-natsjs:
           files:

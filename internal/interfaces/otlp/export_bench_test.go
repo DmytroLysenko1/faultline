@@ -214,7 +214,7 @@ func (s *serverSide) accept(compressed []byte) error {
 	if err := s.codec.Unmarshal(mem.BufferSlice{mem.SliceBuffer(s.raw.Bytes())}, &request); err != nil {
 		return err
 	}
-	_, err := s.acceptor.Execute(context.Background(), spanmap.NewSource(request.Traces()))
+	_, err := s.acceptor.Execute(context.Background(), spanmap.AcceptCommand(request.Traces()))
 	return err
 }
 

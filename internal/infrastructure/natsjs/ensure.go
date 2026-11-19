@@ -18,6 +18,7 @@ const (
 	firstRetryWait = 100 * time.Millisecond
 	lastRetryWait  = time.Second
 	attemptTimeout = time.Second
+	appearWithin   = 5 * time.Second
 	missingStream  = "missing"
 	presentStream  = "present"
 	fieldStream    = "stream"
@@ -95,6 +96,11 @@ var fields = []field{
 		return c.Metadata[metaVersion]
 	}},
 }
+
+var (
+	errStreamNotVisible = errors.New("a just-created stream is not visible yet")
+	errNoAnswer         = errors.New("no answer from NATS")
+)
 
 var (
 	immutableFields = lo.Filter(fields, func(f field, _ int) bool {
@@ -234,16 +240,26 @@ func planStream(ctx context.Context, js jetstream.JetStream, want *jetstream.Str
 	}, olderOrDrift(want, got), nil
 }
 
+type configReader func(ctx context.Context, js jetstream.JetStream, name string) (*jetstream.StreamConfig, error)
+
 func (w writer) apply(ctx context.Context, next plan) error {
-	if err := w.createOrUpdate(ctx, next); err != nil {
+	read := next.reader()
+	if err := w.createOrUpdate(ctx, next, read); err != nil {
 		return wrapStream("ensure", next.want.Name, err)
 	}
-	return readBack(ctx, w.js, next.want)
+	return readBack(ctx, w.js, next.want, read)
 }
 
-func (w writer) createOrUpdate(ctx context.Context, next plan) error {
+func (p plan) reader() configReader {
+	if p.create {
+		return visibleStreamConfig
+	}
+	return streamConfig
+}
+
+func (w writer) createOrUpdate(ctx context.Context, next plan, read configReader) error {
 	if !next.create {
-		return w.update(ctx, next.want)
+		return w.update(ctx, next.want, read)
 	}
 	err := retrying(ctx, func(attempt context.Context) error {
 		if err := w.held(); err != nil {
@@ -253,13 +269,13 @@ func (w writer) createOrUpdate(ctx context.Context, next plan) error {
 		return err
 	})
 	if errors.Is(err, jetstream.ErrStreamNameAlreadyInUse) {
-		return w.update(ctx, next.want)
+		return w.update(ctx, next.want, read)
 	}
 	return err
 }
 
-func (w writer) update(ctx context.Context, want *jetstream.StreamConfig) error {
-	got, err := streamConfig(ctx, w.js, want.Name)
+func (w writer) update(ctx context.Context, want *jetstream.StreamConfig, read configReader) error {
+	got, err := read(ctx, w.js, want.Name)
 	if err != nil {
 		return err
 	}
@@ -275,8 +291,8 @@ func (w writer) update(ctx context.Context, want *jetstream.StreamConfig) error 
 	})
 }
 
-func readBack(ctx context.Context, js jetstream.JetStream, want *jetstream.StreamConfig) error {
-	got, err := streamConfig(ctx, js, want.Name)
+func readBack(ctx context.Context, js jetstream.JetStream, want *jetstream.StreamConfig, read configReader) error {
+	got, err := read(ctx, js, want.Name)
 	if err != nil {
 		return err
 	}
@@ -315,8 +331,41 @@ func verifyStream(ctx context.Context, js jetstream.JetStream, want *jetstream.S
 }
 
 func streamConfig(ctx context.Context, js jetstream.JetStream, name string) (*jetstream.StreamConfig, error) {
+	return readStreamConfig(ctx, js, name, Temporary)
+}
+
+func visibleStreamConfig(ctx context.Context, js jetstream.JetStream, name string) (*jetstream.StreamConfig, error) {
+	appearing, cancel := context.WithTimeout(ctx, appearWithin)
+	defer cancel()
+	answers := lastAnswer{
+		err: errNoAnswer,
+	}
+	config, err := readStreamConfig(appearing, js, name, answers.stillAppearing)
+	if err != nil && ctx.Err() == nil && appearing.Err() != nil {
+		return nil, fmt.Errorf("%w: %s within %s: %s", errStreamNotVisible, name, appearWithin, answers.err.Error())
+	}
+	return config, err
+}
+
+type lastAnswer struct {
+	err error
+}
+
+func (l *lastAnswer) stillAppearing(err error) bool {
+	if !errors.Is(err, context.DeadlineExceeded) {
+		l.err = err
+	}
+	return Temporary(err) || errors.Is(err, jetstream.ErrStreamNotFound)
+}
+
+func readStreamConfig(
+	ctx context.Context,
+	js jetstream.JetStream,
+	name string,
+	retryable func(err error) bool,
+) (*jetstream.StreamConfig, error) {
 	var config *jetstream.StreamConfig
-	err := retrying(ctx, func(attempt context.Context) error {
+	err := retry.Do(ctx, retryPolicy(retryable), func(attempt context.Context) error {
 		stream, err := js.Stream(attempt, name)
 		if err != nil {
 			return err
@@ -331,12 +380,16 @@ func streamConfig(ctx context.Context, js jetstream.JetStream, name string) (*je
 }
 
 func retrying(ctx context.Context, call func(attempt context.Context) error) error {
-	return retry.Do(ctx, &retry.Policy{
+	return retry.Do(ctx, retryPolicy(Temporary), call)
+}
+
+func retryPolicy(retryable func(err error) bool) *retry.Policy {
+	return &retry.Policy{
 		Attempt:   attemptTimeout,
 		FirstWait: firstRetryWait,
 		MaxWait:   lastRetryWait,
-		Retryable: Temporary,
-	}, call)
+		Retryable: retryable,
+	}
 }
 
 func olderOrDrift(want, got *jetstream.StreamConfig) []Drift {

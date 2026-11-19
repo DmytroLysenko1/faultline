@@ -7,8 +7,6 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
-
-	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
 )
 
 type Reason uint8
@@ -59,16 +57,6 @@ func (r Reason) String() string {
 
 func (r Reason) retryable() bool {
 	return r == ReasonNoResponders || r == ReasonDisconnected || r == ReasonTimeout
-}
-
-func (r Reason) sentinel() error {
-	if r == ReasonStreamFull {
-		return ingest.ErrOverloaded
-	}
-	if r == ReasonTooLarge {
-		return ingest.ErrBatchTooLarge
-	}
-	return ingest.ErrUnavailable
 }
 
 const (
@@ -145,8 +133,8 @@ func (e *PublishError) Error() string {
 	return fmt.Sprintf("journal publish: %s: %v", e.Reason, e.Cause)
 }
 
-func (e *PublishError) Unwrap() []error {
-	return []error{e.Reason.sentinel(), e.Cause}
+func (e *PublishError) Unwrap() error {
+	return e.Cause
 }
 
 func Classify(err error) *PublishError {

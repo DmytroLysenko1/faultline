@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"iter"
 	"os"
 	"path/filepath"
 	"strings"
@@ -197,13 +196,12 @@ type oneRecord struct {
 	record   ingest.Record
 }
 
-func (s *oneRecord) Len() int {
-	return 1
-}
-
-func (s *oneRecord) All() iter.Seq2[resource.Resource, *ingest.Record] {
-	return func(yield func(resource.Resource, *ingest.Record) bool) {
-		yield(s.resource, &s.record)
+func (s *oneRecord) Command() ingest.AcceptCommand {
+	return ingest.AcceptCommand{
+		SpanCount: 1,
+		Records: func(yield func(resource.Resource, *ingest.Record) bool) {
+			yield(s.resource, &s.record)
+		},
 	}
 }
 
@@ -234,7 +232,7 @@ func TestIngestNamesOperationsWithTheRouteRules(t *testing.T) {
 			},
 		},
 	}
-	if _, err := accept.Execute(t.Context(), source); err != nil {
+	if _, err := accept.Execute(t.Context(), source.Command()); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	deliveries, err := journal.Receive(t.Context(), 1, ingestWait)

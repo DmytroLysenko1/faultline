@@ -17,11 +17,14 @@ import (
 
 type recordSource []ingest.Record
 
-func (r recordSource) Len() int {
-	return len(r)
+func (r recordSource) Command() ingest.AcceptCommand {
+	return ingest.AcceptCommand{
+		SpanCount: len(r),
+		Records:   r.records(),
+	}
 }
 
-func (r recordSource) All() iter.Seq2[resource.Resource, *ingest.Record] {
+func (r recordSource) records() iter.Seq2[resource.Resource, *ingest.Record] {
 	return func(yield func(resource.Resource, *ingest.Record) bool) {
 		var record ingest.Record
 		for i := range r {
@@ -43,7 +46,7 @@ func cartRecord(id byte, spanKind kind.Kind) ingest.Record {
 func acceptedOperations(t *testing.T, records ...ingest.Record) []operation.Operation {
 	t.Helper()
 	h := newHarness(nil)
-	if _, err := h.Accept.Execute(t.Context(), recordSource(records)); err != nil {
+	if _, err := h.Accept.Execute(t.Context(), recordSource(records).Command()); err != nil {
 		t.Fatal(err)
 	}
 	var operations []operation.Operation
@@ -114,7 +117,7 @@ const allowedGrowth = 8
 
 func executeOrFail(t *testing.T, accept *ingest.AcceptBatch, records recordSource) {
 	t.Helper()
-	if _, err := accept.Execute(t.Context(), records); err != nil {
+	if _, err := accept.Execute(t.Context(), records.Command()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -129,7 +132,7 @@ func TestJournalDoesNotKeepTheCapacityOfRejectedSpans(t *testing.T) {
 	}
 	h := newHarness(nil)
 
-	if _, err := h.Accept.Execute(t.Context(), records); err != nil {
+	if _, err := h.Accept.Execute(t.Context(), records.Command()); err != nil {
 		t.Fatal(err)
 	}
 

@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/record"
@@ -17,7 +16,6 @@ var (
 	ErrInvalidOptions = errors.New("invalid journal options")
 	errClosing        = errors.New("journal is closing")
 	errDoomed         = errors.New("too little of the deadline left to publish")
-	errPublishTimeout = errors.New("publish ran out of its budget")
 )
 
 const (
@@ -159,7 +157,7 @@ func (j *Journal) enter() error {
 	defer j.lock.Unlock()
 	if j.closed {
 		j.counters.closing.Add(1)
-		return fmt.Errorf("append: %w", errors.Join(ingest.ErrUnavailable, ingest.ErrNotAttempted, errClosing))
+		return fmt.Errorf("append: %w", notAttempted(errClosing))
 	}
 	j.inflight.Add(1)
 	return nil
@@ -178,7 +176,7 @@ func (j *Journal) budget(ctx context.Context) (time.Duration, error) {
 	if remaining <= publishReserve+minAttempt {
 		j.counters.doomed.Add(1)
 		return 0, fmt.Errorf("append with %s left: %w", remaining,
-			errors.Join(ingest.ErrUnavailable, ingest.ErrNotAttempted, errDoomed))
+			notAttempted(errDoomed))
 	}
 	return min(j.options.PublishTimeout, remaining-publishReserve), nil
 }
@@ -192,35 +190,8 @@ func (j *Journal) outcome(ctx context.Context, errs []error) error {
 		j.counters.interrupted.Add(1)
 		return fmt.Errorf("append: %w", err)
 	}
-	for _, sentinel := range []error{ingest.ErrBatchTooLarge, ingest.ErrOverloaded} {
-		if err := firstMatching(errs, sentinel); err != nil {
-			return fmt.Errorf("append: %w", err)
-		}
+	if final := finalFailure(errs); final != nil {
+		return fmt.Errorf("append: %w", final)
 	}
 	return fmt.Errorf("append: %w", withoutDeadline(failure))
-}
-
-func withoutDeadline(failure error) error {
-	if !errors.Is(failure, context.DeadlineExceeded) {
-		return failure
-	}
-	return fmt.Errorf("%w: %s", errors.Join(ingest.ErrUnavailable, errPublishTimeout), failure.Error())
-}
-
-func firstMatching(errs []error, target error) error {
-	for _, err := range errs {
-		if errors.Is(err, target) {
-			return err
-		}
-	}
-	return nil
-}
-
-func firstFailure(errs []error) error {
-	for _, err := range errs {
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }

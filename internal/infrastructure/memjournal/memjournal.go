@@ -11,12 +11,12 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/clock"
-	"github.com/DmytroLysenko1/faultline/internal/infrastructure/idlerule"
 )
 
 var (
 	ErrInvalidLimits = errors.New("invalid journal limits")
 	ErrInvalidMax    = errors.New("receive limit must be positive")
+	errClosed        = errors.New("journal is closed")
 )
 
 type Limits struct {
@@ -38,7 +38,7 @@ type Journal struct {
 	source    Clock
 	lock      sync.Mutex
 	monotonic clock.Monotonic
-	idle      idlerule.Rule
+	idle      batch.IdleRule
 	queue     chan entry
 	closed    bool
 	held      Stats
@@ -55,7 +55,7 @@ func New(limits Limits, source Clock) (*Journal, error) {
 	return &Journal{
 		limits: limits,
 		source: source,
-		idle: idlerule.Rule{
+		idle: batch.IdleRule{
 			After: limits.IdleAfter,
 		},
 		queue: make(chan entry, limits.MaxBatches),
@@ -70,7 +70,7 @@ func (j *Journal) Append(ctx context.Context, spans []span.Span) error {
 	j.lock.Lock()
 	defer j.lock.Unlock()
 	if j.closed {
-		return errors.Join(ingest.ErrUnavailable, ingest.ErrNotAttempted)
+		return fmt.Errorf("append: %w", ingest.NotAttempted(errClosed))
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("append: %w", err)

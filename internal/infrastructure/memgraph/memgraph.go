@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/DmytroLysenko1/faultline/internal/application/query"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 )
 
 var (
 	ErrNilSnapshot = errors.New("nil snapshot")
-	ErrNoSnapshot  = errors.New("no snapshot published")
 )
 
 const HeldSnapshots = 1
@@ -46,7 +46,7 @@ func (s *Store) Latest(ctx context.Context) (*topology.Snapshot, error) {
 	}
 	latest := s.Current.Load()
 	if latest == nil {
-		return nil, ErrNoSnapshot
+		return nil, fmt.Errorf("latest snapshot: %w", query.ErrNoGraph)
 	}
 	return latest, nil
 }

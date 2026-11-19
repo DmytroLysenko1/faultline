@@ -112,6 +112,8 @@ topology.Builder ──► memgraph ──► connectapi GetGraph
 | `cmd/faultline` | роли, `tokens` (3b), env, бюджеты ролей, восстановление при старте, шов `drainSource` | всё |
 | `test/natsjs`, `test/natscluster` | встроенный NATS (`make verify`) / testcontainers R3 (тег `integration`) | `nats-server/v2` / `testcontainers-go` только здесь |
 
+> Рефактор слоёв, шаг 2: `idlerule.Rule` теперь `batch.IdleRule` (`internal/domain/telemetry/batch/idle.go`); ниже по тексту `idlerule` — историческое имя.
+
 **depguard:** `nats-in-adapter-only` (`nats-io` — только `natsjs/**`, `cmd/**`, `test/nats*`); `no-self-tracing-on-ingest` + `natsjs/**`, `idlerule`, `credential`, `otlphttp`; `natsjs-record-pure`; `credential` — лист. **forbidigo:** исключение «only a journal adapter stamps ReceivedAt» — на `natsjs/feed`; `nats.ReconnectBufSize` — только `natsjs/conn.go`.
 
 ---

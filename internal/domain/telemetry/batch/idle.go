@@ -1,28 +1,32 @@
-package idlerule
+package batch
 
-import (
-	"time"
+import "time"
 
-	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
-)
-
-type Rule struct {
+type IdleRule struct {
 	After     time.Duration
 	Started   bool
 	Candidate time.Time
 	Since     time.Time
 }
 
-func (r *Rule) Due(now time.Time) bool {
+func ResumedIdleRule(after time.Duration, since time.Time) IdleRule {
+	return IdleRule{
+		After:   after,
+		Started: true,
+		Since:   since,
+	}
+}
+
+func (r *IdleRule) Due(now time.Time) bool {
 	return r.Started && now.Sub(r.Since) >= r.After
 }
 
-func (r *Rule) DueBefore(next batch.Batch) bool {
+func (r *IdleRule) DueBefore(next Batch) bool {
 	_, grows := r.growth(next)
 	return r.Due(next.ReceivedAt) && !grows
 }
 
-func (r *Rule) Record(recorded batch.Batch) {
+func (r *IdleRule) Record(recorded Batch) {
 	if !r.Started && recorded.Heartbeat {
 		return
 	}
@@ -36,7 +40,7 @@ func (r *Rule) Record(recorded batch.Batch) {
 	}
 }
 
-func (r *Rule) growth(next batch.Batch) (time.Time, bool) {
+func (r *IdleRule) growth(next Batch) (time.Time, bool) {
 	candidate, known := next.Candidate()
 	return candidate, known && candidate.After(r.Candidate)
 }

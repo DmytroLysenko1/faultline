@@ -170,6 +170,11 @@ func TestNoPathAnswersOKWithoutAPubAck(t *testing.T) {
 				if diff := cmp.Diff(sentinelsOf(reason), matchedSentinels(err)); diff != "" {
 					t.Errorf("partition %d failing: Append = %v, sentinels (-want +got):\n%s", failing, err, diff)
 				}
+				failure, classified := errors.AsType[*natsjs.PublishError](err)
+				if !classified || failure.Reason != reason || !errors.Is(err, errFake) {
+					t.Errorf("partition %d failing: Append = %v, want the *PublishError of %s with its cause",
+						failing, err, reason)
+				}
 				if errors.Is(err, ingest.ErrNotAttempted) {
 					t.Errorf("partition %d failing: Append = %v says not attempted, but the write was tried", failing, err)
 				}
@@ -183,15 +188,51 @@ func TestNoPathAnswersOKWithoutAPubAck(t *testing.T) {
 
 var ingestSentinels = []error{ingest.ErrOverloaded, ingest.ErrBatchTooLarge, ingest.ErrUnavailable}
 
-// sentinelsOf is the one ingest meaning a failure may carry: the OTLP handler maps the first it finds.
+// meaningOfReason is the one ingest meaning each reason must carry: the OTLP handler maps the first it
+// finds. Every reason is listed, so a new one fails here until someone decides what the client hears.
+func meaningOfReason() map[natsjs.Reason]error {
+	return map[natsjs.Reason]error{
+		natsjs.ReasonUnexpected:            ingest.ErrUnavailable,
+		natsjs.ReasonNoResponders:          ingest.ErrUnavailable,
+		natsjs.ReasonTimeout:               ingest.ErrUnavailable,
+		natsjs.ReasonDisconnected:          ingest.ErrUnavailable,
+		natsjs.ReasonStoreFailed:           ingest.ErrUnavailable,
+		natsjs.ReasonInProcess:             ingest.ErrUnavailable,
+		natsjs.ReasonInsufficientResources: ingest.ErrUnavailable,
+		natsjs.ReasonStreamMismatch:        ingest.ErrUnavailable,
+		natsjs.ReasonSealed:                ingest.ErrUnavailable,
+		natsjs.ReasonAccountLimits:         ingest.ErrUnavailable,
+		natsjs.ReasonStreamFull:            ingest.ErrOverloaded,
+		natsjs.ReasonTooLarge:              ingest.ErrBatchTooLarge,
+		natsjs.ReasonCanceled:              ingest.ErrUnavailable,
+		natsjs.ReasonClosed:                ingest.ErrUnavailable,
+	}
+}
+
 func sentinelsOf(reason natsjs.Reason) []string {
-	if reason == natsjs.ReasonStreamFull {
-		return []string{ingest.ErrOverloaded.Error()}
+	meaning, listed := meaningOfReason()[reason]
+	if !listed {
+		return []string{"reason " + reason.String() + " has no ingest meaning in this test"}
 	}
-	if reason == natsjs.ReasonTooLarge {
-		return []string{ingest.ErrBatchTooLarge.Error()}
+	return []string{meaning.Error()}
+}
+
+// TestAFailedPublishReadsInTheLogAsThePublisherSaidIt: the ingest meaning rides along without changing
+// the text, so the error field of otlp.export.* stays one line that names the reason.
+func TestAFailedPublishReadsInTheLogAsThePublisherSaidIt(t *testing.T) {
+	for reason := range natsjs.Reason(natsjs.ReasonCount) {
+		t.Run(reason.String(), func(t *testing.T) {
+			publisher := answering(map[uint16]answer{0: {fails: true, reason: reason}})
+			said := (&natsjs.PublishError{Reason: reason, Cause: errFake}).Error()
+
+			err := appendWithin(t, newJournal(t, publisher, onePartition), callerBudget, spansAcross(1, 1))
+
+			got := err.Error()
+			if !strings.HasSuffix(got, said) || strings.Contains(got, "\n") || strings.Contains(got, sentinelsOf(reason)[0]) {
+				t.Errorf("Append = %q, want one line ending in %q, without the ingest meaning", got, said)
+			}
+		})
 	}
-	return []string{ingest.ErrUnavailable.Error()}
 }
 
 func matchedSentinels(err error) []string {
@@ -367,6 +408,9 @@ func TestAPublishThatRunsOutOfItsBudgetIsUnavailableBeforeTheCallersDeadline(t *
 		if errors.Is(err, context.DeadlineExceeded) {
 			t.Errorf("Append = %v also matches the caller's own deadline, which has not passed", err)
 		}
+		if strings.Contains(err.Error(), "\n") {
+			t.Errorf("Append = %q, want one line in the log", err)
+		}
 		if took := time.Since(started); took != time.Second-reserve {
 			t.Errorf("answered after %s, want %s of a 1s deadline", took, time.Second-reserve)
 		}
@@ -422,9 +466,9 @@ func TestTooLittleTimeLeftIsRefusedBeforeAnythingIsPublished(t *testing.T) {
 		err := appendWithin(t, journalOf, doomedAt, spansAcross(1, 1))
 
 		if !errors.Is(err, ingest.ErrUnavailable) || !errors.Is(err, ingest.ErrNotAttempted) ||
-			len(publisher.published()) != 0 {
-			t.Errorf("Append = %v after %d publishes, want ErrUnavailable, not attempted, after none", err,
-				len(publisher.published()))
+			len(publisher.published()) != 0 || strings.Contains(err.Error(), "\n") {
+			t.Errorf("Append = %q after %d publishes, want ErrUnavailable, not attempted, one line, after none",
+				err, len(publisher.published()))
 		}
 		if stats := journalOf.Stats(); stats.Doomed != 1 || stats.Append != (journal.Histogram{}) {
 			t.Errorf("doomed %d, append latencies %v; want 1 and none: a refused request is not a fast one",
@@ -463,8 +507,8 @@ func TestABatchTooLargeForOneRecordIsRefusedWithoutItsPublish(t *testing.T) {
 
 	err := appendWithin(t, journalOf, callerBudget, spans)
 
-	if !errors.Is(err, ingest.ErrBatchTooLarge) || !errors.Is(err, record.ErrTooLarge) {
-		t.Errorf("Append = %v, want ErrBatchTooLarge", err)
+	if !errors.Is(err, ingest.ErrBatchTooLarge) || !errors.Is(err, record.ErrTooLarge) || strings.Contains(err.Error(), "\n") {
+		t.Errorf("Append = %q, want ErrBatchTooLarge in one line", err)
 	}
 	if diff := cmp.Diff([]uint16{0}, publisher.partitions()); diff != "" {
 		t.Errorf("published partitions (-want +got):\n%s", diff)
@@ -582,6 +626,41 @@ func TestAFailureThePublisherDidNotClassifyIsCountedAsUnexpected(t *testing.T) {
 			stats := journalOf.Stats()
 			if stats.Published != 0 || stats.Failed[natsjs.ReasonUnexpected] != 1 {
 				t.Errorf("published %d, unexpected %d; want 0 and 1", stats.Published, stats.Failed[natsjs.ReasonUnexpected])
+			}
+		})
+	}
+}
+
+// TestADecoratedPublisherKeepsTheFinalMeaningOfItsReason: a decorator that adds its own meaning around a
+// full or too large publish must not hide what the client has to do: back off, or stop retrying.
+func TestADecoratedPublisherKeepsTheFinalMeaningOfItsReason(t *testing.T) {
+	type args struct {
+		reason natsjs.Reason
+		added  error
+	}
+	tests := []struct {
+		name string
+		args args
+		want []string
+	}{
+		{name: "unavailable around a full stream", args: args{reason: natsjs.ReasonStreamFull, added: ingest.ErrUnavailable},
+			want: []string{ingest.ErrOverloaded.Error(), ingest.ErrUnavailable.Error()}},
+		{name: "unavailable around a record too large", args: args{reason: natsjs.ReasonTooLarge, added: ingest.ErrUnavailable},
+			want: []string{ingest.ErrBatchTooLarge.Error(), ingest.ErrUnavailable.Error()}},
+		{name: "overloaded around a record too large", args: args{reason: natsjs.ReasonTooLarge, added: ingest.ErrOverloaded},
+			want: []string{ingest.ErrOverloaded.Error(), ingest.ErrBatchTooLarge.Error()}},
+		{name: "unavailable around a lost quorum", args: args{reason: natsjs.ReasonNoResponders, added: ingest.ErrUnavailable},
+			want: []string{ingest.ErrUnavailable.Error()}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			decorated := answer{plain: true, fails: true, reason: tt.args.reason, meaning: tt.args.added}
+
+			err := appendWithin(t, newJournal(t, answering(map[uint16]answer{0: decorated}), onePartition),
+				callerBudget, spansAcross(1, 1))
+
+			if diff := cmp.Diff(tt.want, matchedSentinels(err)); diff != "" {
+				t.Errorf("Append = %v, sentinels (-want +got):\n%s", err, diff)
 			}
 		})
 	}

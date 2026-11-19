@@ -10,7 +10,7 @@ import (
 )
 
 type spanAcceptor interface {
-	Execute(ctx context.Context, spans ingest.SpanSource) (ingest.AcceptResult, error)
+	Execute(ctx context.Context, command ingest.AcceptCommand) (ingest.AcceptResult, error)
 }
 
 type traceReceiver struct {
@@ -23,7 +23,7 @@ func (r *traceReceiver) Export(
 	ctx context.Context,
 	request ptraceotlp.ExportRequest,
 ) (ptraceotlp.ExportResponse, error) {
-	result, err := r.acceptor.Execute(ctx, spanmap.NewSource(request.Traces()))
+	result, err := r.acceptor.Execute(ctx, spanmap.AcceptCommand(request.Traces()))
 	if err != nil {
 		return ptraceotlp.NewExportResponse(), r.fail(ctx, err)
 	}

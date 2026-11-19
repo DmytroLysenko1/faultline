@@ -60,11 +60,14 @@ func sourceOf(inputs []spanInput) *sliceSource {
 	}
 }
 
-func (s *sliceSource) Len() int {
-	return s.Reported
+func (s *sliceSource) Command() ingest.AcceptCommand {
+	return ingest.AcceptCommand{
+		SpanCount: s.Reported,
+		Records:   s.records(),
+	}
 }
 
-func (s *sliceSource) All() iter.Seq2[resource.Resource, *ingest.Record] {
+func (s *sliceSource) records() iter.Seq2[resource.Resource, *ingest.Record] {
 	return func(yield func(resource.Resource, *ingest.Record) bool) {
 		s.Passes++
 		for i := range s.Inputs {
@@ -155,11 +158,40 @@ func rejection(t *testing.T, input *spanInput) string {
 
 func execute(t *testing.T, h harness, inputs ...spanInput) (ingest.AcceptResult, error) {
 	t.Helper()
-	return h.Accept.Execute(t.Context(), sourceOf(inputs))
+	return h.Accept.Execute(t.Context(), sourceOf(inputs).Command())
 }
 
 func diffResult(want, got ingest.AcceptResult) string {
 	return cmp.Diff(want, got, cmpopts.EquateEmpty())
+}
+
+// TestNotAttemptedIsUnavailableInOneLineAndKeepsItsCause: the OTLP handler answers it as retryable
+// with a Debug note, and the note reads as the journal's own reason.
+func TestNotAttemptedIsUnavailableInOneLineAndKeepsItsCause(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    error
+		want    string
+		wantErr error
+	}{
+		{name: "a journal that broke before the write", args: errJournalBroken,
+			want: errJournalBroken.Error(), wantErr: errJournalBroken},
+		{name: "no cause given", args: nil, want: ingest.ErrNotAttempted.Error(), wantErr: ingest.ErrNotAttempted},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ingest.NotAttempted(tt.args)
+
+			for _, meaning := range []error{ingest.ErrUnavailable, ingest.ErrNotAttempted, tt.wantErr} {
+				if !errors.Is(err, meaning) {
+					t.Errorf("NotAttempted(%v) = %v, want it to be %v", tt.args, err, meaning)
+				}
+			}
+			if diff := cmp.Diff(tt.want, err.Error()); diff != "" {
+				t.Errorf("text (-want +got):\n%s", diff)
+			}
+		})
+	}
 }
 
 func TestExecuteAppendsValidSpansAsOneBatchInInputOrder(t *testing.T) {
@@ -532,7 +564,7 @@ func TestExecuteNeverReusesASliceItGaveTheJournal(t *testing.T) {
 	first, second := validInput(firstSpanID), validInput(secondSpanID)
 
 	for _, input := range []spanInput{first, second} {
-		if _, err := h.Accept.Execute(t.Context(), sourceOf([]spanInput{input})); err != nil {
+		if _, err := h.Accept.Execute(t.Context(), sourceOf([]spanInput{input}).Command()); err != nil {
 			t.Fatalf("Execute: %v", err)
 		}
 	}
@@ -549,7 +581,7 @@ func TestExecutePassesTheCallerContext(t *testing.T) {
 	h := newHarness(nil)
 	if _, err := h.Accept.Execute(ctx, sourceOf([]spanInput{
 		validInput(firstSpanID),
-	})); err != nil {
+	}).Command()); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if len(h.Journal.Contexts) != 1 {
@@ -574,7 +606,7 @@ func (j *sizeGatedJournal) Append(ctx context.Context, received []span.Span) err
 func executeConcurrently(t *testing.T, accept *ingest.AcceptBatch, inputs []spanInput, wantErr error) {
 	t.Helper()
 	for range requestsPerWorker {
-		if _, err := accept.Execute(t.Context(), sourceOf(inputs)); !errors.Is(err, wantErr) {
+		if _, err := accept.Execute(t.Context(), sourceOf(inputs).Command()); !errors.Is(err, wantErr) {
 			t.Errorf("err = %v, want %v", err, wantErr)
 		}
 	}
@@ -617,11 +649,42 @@ func TestExecuteWalksTheSourceExactlyOnce(t *testing.T) {
 		serviceNameOfLength(0),
 		validInput(secondSpanID),
 	})
-	if _, err := newHarness(nil).Accept.Execute(t.Context(), source); err != nil {
+	if _, err := newHarness(nil).Accept.Execute(t.Context(), source.Command()); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if source.Passes != 1 {
-		t.Errorf("All() walked %d times, want exactly one synchronous pass", source.Passes)
+		t.Errorf("Records walked %d times, want exactly one synchronous pass", source.Passes)
+	}
+}
+
+// TestACommandWithoutRecordsLeavesTheJournalAlone: an empty command is an empty request, but one that
+// counts spans it does not carry is a broken adapter, and the client must not hear OK for lost spans.
+func TestACommandWithoutRecordsLeavesTheJournalAlone(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    ingest.AcceptCommand
+		want    ingest.AcceptResult
+		wantErr error
+	}{
+		{name: "the zero command is an empty request", args: ingest.AcceptCommand{}},
+		{name: "spans counted but not carried", args: ingest.AcceptCommand{SpanCount: 1}, wantErr: ingest.ErrNoRecords},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(nil)
+
+			got, err := h.Accept.Execute(t.Context(), tt.args)
+
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Execute = %v, want %v", err, tt.wantErr)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("result (-want +got):\n%s", diff)
+			}
+			if len(h.Journal.Batches) != 0 {
+				t.Errorf("the journal got %d batches, want none", len(h.Journal.Batches))
+			}
+		})
 	}
 }
 
@@ -644,15 +707,15 @@ func TestExecuteResultDoesNotDependOnTheLengthHint(t *testing.T) {
 		h := newHarness(nil)
 		source := sourceOf(inputs)
 		source.Reported = hint
-		got, err := h.Accept.Execute(t.Context(), source)
+		got, err := h.Accept.Execute(t.Context(), source.Command())
 		if err != nil {
-			t.Fatalf("Execute with Len() = %d: %v", hint, err)
+			t.Fatalf("Execute with SpanCount = %d: %v", hint, err)
 		}
 		if diff := diffResult(want, got); diff != "" {
-			t.Errorf("Len() = %d changed the result (-want +got):\n%s", hint, diff)
+			t.Errorf("SpanCount = %d changed the result (-want +got):\n%s", hint, diff)
 		}
 		if diff := cmp.Diff(want.Accepted, journalSpans(h.Journal)); diff != "" {
-			t.Errorf("Len() = %d changed the journal (-want +got):\n%s", hint, diff)
+			t.Errorf("SpanCount = %d changed the journal (-want +got):\n%s", hint, diff)
 		}
 	}
 }
