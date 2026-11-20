@@ -171,7 +171,7 @@ func TestLatestOfAnotherPartitionIsRefusedWithoutAskingNATS(t *testing.T) {
 
 func TestLatestOfAClosedStoreIsRefused(t *testing.T) {
 	w := startWorld(t)
-	w.store.Close()
+	w.store.Close(t.Context())
 
 	_, _, err := w.store.Latest(t.Context(), testPartition)
 

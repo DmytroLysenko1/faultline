@@ -25,6 +25,9 @@ var (
 	errStoreState        = errors.New("checkpoint store used out of order")
 	errDiscardTarget     = errors.New("discard target does not match the refused checkpoint")
 	errLeaseLost         = errors.New("partition lease not valid")
+	errPointerForeign    = errors.New("checkpoint pointer was written by another holder")
+	errCASUnknown        = errors.New("checkpoint pointer write has no known outcome")
+	errPurgeLeft         = errors.New("checkpoint object could not be purged")
 )
 
 const (
@@ -48,6 +51,9 @@ type Options struct {
 	VerifyRate int64
 	WorstImage int64
 	MaxBytes   int64
+	SpoolDir   string
+	LimitsHash uint64
+	RulesHash  uint32
 }
 
 func (o *Options) Validate() error {
@@ -66,9 +72,9 @@ func (o *Options) Validate() error {
 }
 
 func (o *Options) validateOwner() error {
-	if int(o.Partition) >= o.Topology.Partitions || o.Epoch == 0 || o.LeaseTTL <= 0 {
-		return fmt.Errorf("%w: partition %d of %d, epoch %d, lease ttl %s",
-			ErrInvalidOptions, o.Partition, o.Topology.Partitions, o.Epoch, o.LeaseTTL)
+	if int(o.Partition) >= o.Topology.Partitions || o.Epoch == 0 || o.LeaseTTL <= 0 || o.SpoolDir == "" {
+		return fmt.Errorf("%w: partition %d of %d, epoch %d, lease ttl %s, spool dir %q",
+			ErrInvalidOptions, o.Partition, o.Topology.Partitions, o.Epoch, o.LeaseTTL, o.SpoolDir)
 	}
 	return nil
 }

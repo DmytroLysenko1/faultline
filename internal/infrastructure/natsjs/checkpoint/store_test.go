@@ -74,7 +74,9 @@ func startLive(t *testing.T, nodes int) *live {
 	if err != nil {
 		t.Fatalf("jetstream: %v", err)
 	}
-	return &live{cluster: cluster, conn: conn, raw: raw, js: js, options: liveOptions(nodes)}
+	options := liveOptions(nodes)
+	options.SpoolDir = t.TempDir()
+	return &live{cluster: cluster, conn: conn, raw: raw, js: js, options: options}
 }
 
 func liveOptions(replicas int) *checkpoint.Options {

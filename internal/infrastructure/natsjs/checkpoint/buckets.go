@@ -34,8 +34,10 @@ type buckets struct {
 	read     jetstream.Stream
 	bucket   jetstream.Stream
 	control  jetstream.JetStream
+	data     jetstream.JetStream
 	stream   string
 	prefix   string
+	object   string
 }
 
 func openBuckets(ctx context.Context, control, data jetstream.JetStream, options *Options) (buckets, error) {
@@ -80,8 +82,10 @@ func bindOnce(ctx context.Context, control, data jetstream.JetStream, options *O
 		read:     read,
 		bucket:   written,
 		control:  control,
+		data:     data,
 		stream:   options.Topology.Stream(options.Partition),
 		prefix:   objSubjectPrefix + options.objectBucket(),
+		object:   objStreamPrefix + options.objectBucket(),
 	}, nil
 }
 

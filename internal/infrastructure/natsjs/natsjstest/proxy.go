@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ const (
 	drop
 	loseReply
 	alterReply
+	answerReply
 )
 
 const (
@@ -38,11 +40,14 @@ const (
 	messageReplyAt = 3
 	plainSizes     = 1
 	headerSizes    = 2
+	sidAt          = 2
+	space          = " "
 )
 
 type Verdict struct {
-	kind  verdictKind
-	field string
+	kind    verdictKind
+	field   string
+	payload []byte
 }
 
 func Forward() Verdict {
@@ -70,11 +75,40 @@ func AlterReply(field string) Verdict {
 	}
 }
 
+func Answer(payload []byte) Verdict {
+	return Verdict{
+		kind:    answerReply,
+		payload: slices.Clone(payload),
+	}
+}
+
 type Frame struct {
 	Op      string
 	Subject string
 	Reply   string
 	Payload []byte
+}
+
+type relay struct {
+	pass        bool
+	replaced    bool
+	replacement []byte
+}
+
+func passed() relay {
+	return relay{pass: true}
+}
+
+func (r relay) wire(line string, payload []byte, f *Frame) []byte {
+	if !r.replaced {
+		return append([]byte(line), payload...)
+	}
+	fields := []string{opMsg, f.Subject, strings.Fields(line)[sidAt]}
+	if f.Reply != "" {
+		fields = append(fields, f.Reply)
+	}
+	fields = append(fields, strconv.Itoa(len(r.replacement)))
+	return slices.Concat([]byte(strings.Join(fields, space)+crlf), r.replacement, []byte(crlf))
 }
 
 type Proxy struct {
@@ -150,7 +184,7 @@ func (p *Proxy) relay(ctx context.Context, client net.Conn) bool {
 		return false
 	}
 	p.wg.Go(func() {
-		p.pump(client, server, p.toServer)
+		p.pump(client, server, p.passToServer)
 	})
 	p.wg.Go(func() {
 		p.pump(server, client, p.toClient)
@@ -185,7 +219,7 @@ func (p *Proxy) closeQuietly(closer io.Closer) {
 	}
 }
 
-func (p *Proxy) pump(from, to net.Conn, judge func(f *Frame) bool) {
+func (p *Proxy) pump(from, to net.Conn, judge func(f *Frame) relay) {
 	defer p.closeQuietly(to)
 	reader := bufio.NewReader(from)
 	for {
@@ -195,15 +229,19 @@ func (p *Proxy) pump(from, to net.Conn, judge func(f *Frame) bool) {
 	}
 }
 
-func relayFrame(reader *bufio.Reader, to io.Writer, judge func(f *Frame) bool) error {
+func relayFrame(reader *bufio.Reader, to io.Writer, judge func(f *Frame) relay) error {
 	line, payload, f, err := readFrame(reader)
 	if err != nil {
 		return err
 	}
-	if f != nil && !judge(f) {
+	decided := passed()
+	if f != nil {
+		decided = judge(f)
+	}
+	if !decided.pass {
 		return nil
 	}
-	_, err = to.Write(append([]byte(line), payload...))
+	_, err = to.Write(decided.wire(line, payload, f))
 	return err
 }
 
@@ -271,6 +309,12 @@ func shapeOf(op string) (replyAt, sizes int) {
 	}
 }
 
+func (p *Proxy) passToServer(f *Frame) relay {
+	return relay{
+		pass: p.toServer(f),
+	}
+}
+
 func (p *Proxy) toServer(f *Frame) bool {
 	p.mu.Lock()
 	inspect := p.inspect
@@ -295,24 +339,32 @@ func (p *Proxy) toServer(f *Frame) bool {
 	return true
 }
 
-func (p *Proxy) toClient(f *Frame) bool {
+func (p *Proxy) toClient(f *Frame) relay {
 	p.mu.Lock()
 	judged, pending := p.answers[f.Subject]
 	delete(p.answers, f.Subject)
 	p.mu.Unlock()
 	if !pending {
-		return true
+		return passed()
 	}
 	if judged.kind == loseReply {
 		p.altered.Add(1)
-		return false
+		return relay{}
+	}
+	if judged.kind == answerReply {
+		p.altered.Add(1)
+		return relay{
+			pass:        true,
+			replaced:    true,
+			replacement: judged.payload,
+		}
 	}
 	if !alterField(f.Payload, judged.field) {
 		p.tb.Errorf("proxy: the answer on %s has no string field %q: %s", f.Subject, judged.field, f.Payload)
-		return true
+		return passed()
 	}
 	p.altered.Add(1)
-	return true
+	return passed()
 }
 
 func alterField(payload []byte, field string) bool {

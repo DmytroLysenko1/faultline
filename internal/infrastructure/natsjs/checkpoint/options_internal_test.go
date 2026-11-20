@@ -206,7 +206,8 @@ func TestEveryFailureLeavesTheStoreInTheVocabularyOfProcessing(t *testing.T) {
 
 func TestEveryCauseOfTheStoreHasAProcessingMeaning(t *testing.T) {
 	causes := []error{errEpochRegressed, errPointerMoved, errObjectChanged, errCheckpointMissing, errStreamRecreated,
-		errCorrupt, errStoreClosed, errStoreState, errDiscardTarget, errLeaseLost}
+		errCorrupt, errStoreClosed, errStoreState, errDiscardTarget, errLeaseLost, errPointerForeign, errCASUnknown,
+		errPurgeLeft}
 	for _, cause := range causes {
 		if !slices.ContainsFunc(translations(), func(t translation) bool { return errors.Is(t.cause, cause) }) {
 			t.Errorf("cause %v has no row in translations", cause)

@@ -21,6 +21,7 @@ const (
 	serviceSubject = "svc"
 	streamAnswer   = `{"stream":"ABC"}`
 	alteredAnswer  = `{"stream":"ABB"}`
+	replacedAnswer = `{"error":{"code":503,"err_code":10077,"description":"maximum bytes exceeded"}}`
 	requestWait    = 300 * time.Millisecond
 	oneNode        = 1
 )
@@ -76,9 +77,9 @@ func TestAFrameArrivingByteByByteIsParsedAndRelayedUnchanged(t *testing.T) {
 			var written bytes.Buffer
 			var seen *Frame
 
-			err := relayFrame(reader, &written, func(f *Frame) bool {
+			err := relayFrame(reader, &written, func(f *Frame) relay {
 				seen = f
-				return true
+				return passed()
 			})
 
 			if !errors.Is(err, tt.wantErr) {
@@ -141,6 +142,11 @@ func TestEachVerdictDoesWhatItSays(t *testing.T) {
 			name: "alter the reply",
 			args: AlterReply("stream"),
 			want: outcome{Answer: alteredAnswer, Served: 1, Altered: 1},
+		},
+		{
+			name: "answer instead of the server",
+			args: Answer([]byte(replacedAnswer)),
+			want: outcome{Answer: replacedAnswer, Served: 1, Altered: 1},
 		},
 	}
 	cluster := Start(t, oneNode)

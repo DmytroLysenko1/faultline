@@ -23,6 +23,7 @@ type lifecycle uint8
 const (
 	stateOpened lifecycle = iota
 	stateStaked
+	stateStarted
 	stateClosed
 )
 
@@ -46,28 +47,31 @@ type address struct {
 }
 
 type Store struct {
-	options Options
-	lease   partitionLease
-	buckets buckets
-	now     func() time.Time
-	reading chan struct{}
-	mu      sync.Mutex
-	state   lifecycle
-	latest  address
-	stats   counters
+	options    Options
+	lease      partitionLease
+	buckets    buckets
+	now        func() time.Time
+	reading    chan struct{}
+	mu         sync.Mutex
+	state      lifecycle
+	latest     address
+	stats      counters
+	up         *uploader
+	done       chan struct{}
+	failed     error
+	chunkBytes uint32
 }
 
 func Open(ctx context.Context, conn *natsjs.Conn, lease partitionLease, options *Options) (*Store, error) {
 	if err := options.Validate(); err != nil {
 		return nil, err
 	}
-	control, err := jetstream.New(conn.Control.NATS)
+	control, data, err := jetStreams(conn)
 	if err != nil {
-		return nil, fmt.Errorf("checkpoint control jetstream: %w", err)
+		return nil, err
 	}
-	data, err := jetstream.New(conn.Publish.NATS)
-	if err != nil {
-		return nil, fmt.Errorf("checkpoint data jetstream: %w", err)
+	if err := removeSpools(options.SpoolDir); err != nil {
+		return nil, err
 	}
 	bound, err := openBuckets(ctx, control, data, options)
 	if err != nil {
@@ -76,13 +80,27 @@ func Open(ctx context.Context, conn *natsjs.Conn, lease partitionLease, options 
 	return newStore(options, lease, &bound, time.Now), nil
 }
 
+func jetStreams(conn *natsjs.Conn) (jetstream.JetStream, jetstream.JetStream, error) {
+	control, err := jetstream.New(conn.Control.NATS)
+	if err != nil {
+		return nil, nil, fmt.Errorf("checkpoint control jetstream: %w", err)
+	}
+	data, err := jetstream.New(conn.Publish.NATS)
+	if err != nil {
+		return nil, nil, fmt.Errorf("checkpoint data jetstream: %w", err)
+	}
+	return control, data, nil
+}
+
 func newStore(options *Options, lease partitionLease, bound *buckets, now func() time.Time) *Store {
 	return &Store{
-		options: *options,
-		lease:   lease,
-		buckets: *bound,
-		now:     now,
-		reading: make(chan struct{}, 1),
+		options:    *options,
+		lease:      lease,
+		buckets:    *bound,
+		now:        now,
+		reading:    make(chan struct{}, 1),
+		done:       make(chan struct{}),
+		chunkBytes: chunkSize,
 	}
 }
 
@@ -102,14 +120,57 @@ func (s *Store) release() {
 	<-s.reading
 }
 
-func (s *Store) Close() {
+func (s *Store) Close(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.state == stateClosed {
+		return
+	}
 	s.state = stateClosed
+	if s.up != nil {
+		s.up.stop(stopDeadline(ctx, time.Now()))
+	}
+}
+
+func (s *Store) Wait(ctx context.Context) error {
+	up := s.uploader()
+	if up == nil {
+		return nil
+	}
+	select {
+	case <-up.exited:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("wait for the checkpoint upload to stop: %w", ctx.Err())
+	}
+}
+
+func (s *Store) Done() <-chan struct{} {
+	return s.done
+}
+
+func (s *Store) Err() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return translate(s.failed)
 }
 
 func (s *Store) Stats() Stats {
-	return s.stats.snapshot(s.options.Epoch)
+	return s.stats.snapshot(s.options.Epoch, s.options.MaxBytes)
+}
+
+func (s *Store) uploader() *uploader {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.up
+}
+
+func stopDeadline(ctx context.Context, now time.Time) time.Time {
+	deadline, bounded := ctx.Deadline()
+	if !bounded {
+		deadline = now.Add(defaultStop)
+	}
+	return deadline.Add(-stopMargin)
 }
 
 func (s *Store) open() error {
@@ -168,7 +229,7 @@ func (s *Store) staked() error {
 	switch s.state {
 	case stateClosed:
 		return errStoreClosed
-	case stateStaked:
+	case stateStaked, stateStarted:
 		return fmt.Errorf("%w: partition %d is already staked", errStoreState, s.options.Partition)
 	case stateOpened:
 		s.state = stateStaked

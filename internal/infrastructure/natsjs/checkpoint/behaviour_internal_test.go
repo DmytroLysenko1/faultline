@@ -314,7 +314,9 @@ func TestStakingSweepsOnlyWhatNoHolderCanStillNeed(t *testing.T) {
 			if diff := cmp.Diff(want, w.subjects(t)); diff != "" {
 				t.Errorf("subjects after the sweep, %s swept (-want +got):\n%s", stale.Name, diff)
 			}
-			wantStats := Stats{Epoch: testEpoch, SweptObjects: 1, SweptOrphans: tt.sweptOrphan}
+			wantStats := idleStats()
+			wantStats.SweptObjects = 1
+			wantStats.SweptOrphans = tt.sweptOrphan
 			if diff := cmp.Diff(wantStats, w.store.Stats()); diff != "" {
 				t.Errorf("stats (-want +got):\n%s", diff)
 			}

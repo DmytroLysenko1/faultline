@@ -39,14 +39,28 @@ type objectReader struct {
 
 func (s *Store) reader(ctx context.Context, info *jetstream.ObjectInfo) *objectReader {
 	readCtx, cancel := readContext(ctx, info.Size)
+	return s.readerFor(readCtx, cancel, info, func() error {
+		return s.stillCurrent(readCtx, info.NUID)
+	})
+}
+
+func (s *Store) readerWith(ctx context.Context, info *jetstream.ObjectInfo, still func() error) *objectReader {
+	readCtx, cancel := readContext(ctx, info.Size)
+	return s.readerFor(readCtx, cancel, info, still)
+}
+
+func (s *Store) readerFor(
+	readCtx context.Context,
+	cancel context.CancelFunc,
+	info *jetstream.ObjectInfo,
+	still func() error,
+) *objectReader {
 	subject := s.chunkSubject(info.NUID)
 	return &objectReader{
 		fetch: func(sequence uint64) (*jetstream.RawStreamMsg, error) {
 			return s.chunk(readCtx, subject, sequence)
 		},
-		still: func() error {
-			return s.stillCurrent(readCtx, info.NUID)
-		},
+		still:   still,
 		cancel:  cancel,
 		info:    info,
 		subject: subject,

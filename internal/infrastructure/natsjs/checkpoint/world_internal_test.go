@@ -38,6 +38,7 @@ const (
 	worldTimeout   = 20 * time.Second
 	imageBytes     = 3*testChunk + 17
 	restoredAt     = 42
+	testSpool      = "spool"
 )
 
 var (
@@ -90,6 +91,20 @@ func testOptions() *Options {
 		UploadRate: testUploadRate,
 		WorstImage: testWorst,
 		MaxBytes:   testMaxBytes,
+		SpoolDir:   testSpool,
+	}
+}
+
+// idleStats are the stats of a store of testOptions that has not uploaded anything.
+func idleStats() Stats {
+	return Stats{
+		Epoch:          testEpoch,
+		BucketMaxBytes: testMaxBytes,
+		Skipped:        map[string]uint64{"busy": 0, "lease_suspended": 0, "bucket_full": 0},
+		Failed: map[string]uint64{"upload": 0, "chunk_count": 0, "verify": 0, "cas": 0, "position_regressed": 0,
+			"name_collision": 0, "commit": 0, "bucket_read": 0},
+		UploadFailed: map[string]uint64{"other": 0, "bucket_full": 0, "sealed": 0, "too_large": 0, "timeout": 0,
+			"foreign_stream": 0},
 	}
 }
 
@@ -143,9 +158,17 @@ type world struct {
 
 func startWorld(t *testing.T) *world {
 	t.Helper()
-	cluster := natsjstest.Start(t, 1)
+	return startWorldOn(t, testReplicas)
+}
+
+// startWorldOn is a world on a cluster of nodes, with the buckets replicated on all of them.
+func startWorldOn(t *testing.T, nodes int) *world {
+	t.Helper()
+	cluster := natsjstest.Start(t, nodes)
 	proxy := natsjstest.StartProxy(t, cluster.URLs()[0])
 	options := testOptions()
+	options.Topology.Replicas = nodes
+	options.SpoolDir = t.TempDir()
 	operator := connect(t, cluster.URLs()[0])
 	createJournal(t, operator, options)
 	ctx, cancel := context.WithTimeout(t.Context(), worldTimeout)
