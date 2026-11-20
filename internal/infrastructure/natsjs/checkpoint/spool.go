@@ -34,7 +34,10 @@ type spoolWriter struct {
 func (w *spoolWriter) Write(data []byte) (int, error) {
 	written, err := w.buffer.Write(data)
 	w.spool.size += int64(written)
-	return written, err
+	if err != nil {
+		return written, translate(fmt.Errorf("write spool %s: %w", w.spool.name, err))
+	}
+	return written, nil
 }
 
 func (w *spoolWriter) Close() error {
@@ -42,7 +45,6 @@ func (w *spoolWriter) Close() error {
 		return translate(fmt.Errorf("%w: checkpoint writer closed twice", errStoreState))
 	}
 	w.closed = true
-	// No Sync: a spool does not outlive the process, and an fsync would cost a pause of up to 1 s.
 	if err := errors.Join(w.buffer.Flush(), w.file.Close()); err != nil {
 		w.up.release(&w.spool)
 		return translate(fmt.Errorf("finish spool %s: %w", w.spool.name, err))
@@ -57,7 +59,10 @@ func (w *spoolWriter) Abort() error {
 	w.closed = true
 	err := w.file.Close()
 	w.up.release(&w.spool)
-	return err
+	if err != nil {
+		return translate(fmt.Errorf("abort spool %s: %w", w.spool.name, err))
+	}
+	return nil
 }
 
 func (s *Store) createSpool(meta *processing.CheckpointMeta) (*os.File, spool, error) {

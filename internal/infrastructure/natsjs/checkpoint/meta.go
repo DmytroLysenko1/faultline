@@ -21,6 +21,8 @@ const (
 	headerRecordVersion     = "Checkpoint-Record-Version"
 	headerLimitsHash        = "Checkpoint-Limits-Hash"
 	headerRulesHash         = "Checkpoint-Rules-Hash"
+	headerPartition         = "Checkpoint-Partition"
+	uint16Bits              = 16
 	uint32Bits              = 32
 	uint8Bits               = 8
 )
@@ -35,6 +37,16 @@ type headerField struct {
 }
 
 var headerFields = []headerField{
+	{
+		name: headerPartition,
+		bits: uint16Bits,
+		load: func(m *processing.CheckpointMeta) uint64 {
+			return uint64(m.Position.Partition)
+		},
+		store: func(m *processing.CheckpointMeta, v uint64) {
+			m.Position.Partition = uint16(v)
+		},
+	},
 	{
 		name: headerPosition,
 		bits: uintBits,
@@ -125,12 +137,8 @@ func encodeMeta(meta *processing.CheckpointMeta) nats.Header {
 	return headers
 }
 
-func decodeMeta(headers nats.Header, partition uint16) (processing.CheckpointMeta, error) {
-	meta := processing.CheckpointMeta{
-		Position: processing.Position{
-			Partition: partition,
-		},
-	}
+func decodeMeta(headers nats.Header) (processing.CheckpointMeta, error) {
+	var meta processing.CheckpointMeta
 	for _, field := range headerFields {
 		value, err := strconv.ParseUint(headers.Get(field.name), decimal, field.bits)
 		if err != nil {

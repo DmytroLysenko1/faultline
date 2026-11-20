@@ -263,7 +263,7 @@ func (w *spoolWriter) Close() error {
 
 func (w *spoolWriter) Abort() error {
 	if w.finished {
-		return errWriterFinished
+		return nil
 	}
 	w.finished = true
 	return w.store.abort()

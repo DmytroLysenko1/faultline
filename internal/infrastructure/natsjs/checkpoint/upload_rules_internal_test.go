@@ -20,6 +20,7 @@ const (
 	paceBurst  = 500
 	paceChunk  = 500
 	stepPeriod = 250 * time.Millisecond
+	sentAt     = 40
 )
 
 var created = time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
@@ -75,30 +76,92 @@ func TestJudgeBeforeDecidesWhetherThisHolderMayWriteThePointer(t *testing.T) {
 	}
 }
 
-func TestJudgeAfterDecidesWhatAnUpdateWithoutASuccessDid(t *testing.T) {
+type afterArgs struct {
+	found *pointer
+	step  casStep
+}
+
+func TestJudgeAfterDecidesWhatFollowsAWriteWithoutASuccess(t *testing.T) {
+	old := &objectRef{Name: "7-10", NUID: "OLD"}
 	tests := []struct {
 		name string
-		args judgeArgs
+		args afterArgs
 		want verdict
 	}{
-		{name: "the update landed", args: judgeArgs{found: pointerAt(ownEpoch, ownNext(), created)}, want: verdictAccepted},
+		{name: "the update landed", args: afterArgs{found: pointerAt(ownEpoch, ownNext(), created)}, want: verdictAccepted},
+		{
+			name: "the fence lost to the update that landed",
+			args: afterArgs{found: pointerAt(ownEpoch, ownNext(), created), step: stepFence},
+			want: verdictAccepted,
+		},
 		{
 			name: "a later epoch took the object over",
-			args: judgeArgs{found: pointerAt(ownEpoch+1, ownNext(), created)},
+			args: afterArgs{found: pointerAt(ownEpoch+1, ownNext(), created)},
 			want: verdictLeaseLost,
 		},
+		{name: "after the update, the old current", args: afterArgs{found: pointerAt(ownEpoch, old, created)},
+			want: verdictRetry},
 		{
-			name: "the pointer still names the old current",
-			args: judgeArgs{found: pointerAt(ownEpoch, &objectRef{Name: "7-10", NUID: "OLD"}, created)},
-			want: verdictUnknown,
+			name: "after the retry, the old current",
+			args: afterArgs{found: pointerAt(ownEpoch, old, created), step: stepRetry},
+			want: verdictFence,
 		},
-		{name: "no key", args: judgeArgs{}, want: verdictUnknown},
-		{name: "a pointer that does not parse", args: judgeArgs{found: &pointer{corrupt: true}}, want: verdictUnknown},
+		{
+			name: "after the fence, the old current",
+			args: afterArgs{found: pointerAt(ownEpoch, old, created), step: stepFence},
+			want: verdictPending,
+		},
+		{name: "no key", args: afterArgs{}, want: verdictForeign},
+		{name: "a pointer that does not parse", args: afterArgs{found: &pointer{corrupt: true}}, want: verdictForeign},
+		{name: "an earlier epoch", args: afterArgs{found: pointerAt(ownEpoch-1, nil, created)}, want: verdictForeign},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := judgeAfter(tt.args.found, ownEpoch, ownNext()); got != tt.want {
+			if got := judgeAfter(tt.args.found, ownEpoch, ownNext(), tt.args.step); got != tt.want {
 				t.Errorf("judgeAfter = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+type pendingArgs struct {
+	found *pointer
+	item  pendingObject
+}
+
+func pointerAtRevision(revision uint64, current, previous *objectRef) *pointer {
+	found := pointerAt(ownEpoch, current, created)
+	found.value.Previous = previous
+	found.revision = revision
+	return found
+}
+
+func TestJudgePendingDecidesEachWaitingObject(t *testing.T) {
+	other := &objectRef{Name: "7-10", NUID: "OLD"}
+	sent := pendingObject{ref: *ownNext(), updated: true, revision: sentAt}
+	tests := []struct {
+		name string
+		args pendingArgs
+		want verdict
+	}{
+		{name: "named as current", args: pendingArgs{found: pointerAtRevision(sentAt+1, ownNext(), other), item: sent},
+			want: verdictAccepted},
+		{name: "named as previous", args: pendingArgs{found: pointerAtRevision(sentAt+2, other, ownNext()), item: sent},
+			want: verdictReferenced},
+		{name: "no update was sent", args: pendingArgs{found: pointerAtRevision(sentAt, other, nil),
+			item: pendingObject{ref: *ownNext()}}, want: verdictPurge},
+		{name: "the revision is past the update", args: pendingArgs{found: pointerAtRevision(sentAt+1, other, nil),
+			item: sent}, want: verdictPurge},
+		{name: "the update may still land", args: pendingArgs{found: pointerAtRevision(sentAt, other, nil), item: sent},
+			want: verdictFence},
+		{name: "a later epoch", args: pendingArgs{found: pointerAt(ownEpoch+1, other, created), item: sent},
+			want: verdictLeaseLost},
+		{name: "no key", args: pendingArgs{item: sent}, want: verdictForeign},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := judgePending(tt.args.found, ownEpoch, &tt.args.item); got != tt.want {
+				t.Errorf("judgePending = %d, want %d", got, tt.want)
 			}
 		})
 	}
@@ -109,7 +172,6 @@ type paceArgs struct {
 	bytes int64
 }
 
-// A burst goes at once; past it every byte waits its share of a second at the rate.
 func TestPaceHoldsBytesPastTheBurstToTheRate(t *testing.T) {
 	tests := []struct {
 		name string
@@ -184,7 +246,7 @@ func TestChunkRetryableKeepsOnlyWhatTheBucketRecoversFrom(t *testing.T) {
 
 func TestAMetaWrittenToHeadersReadsBackTheSame(t *testing.T) {
 	want := processing.CheckpointMeta{
-		Position:          processing.Position{Partition: testPartition, Sequence: 1<<63 + 5},
+		Position:          processing.Position{Partition: 1<<16 - 1, Sequence: 1<<63 + 5},
 		ReceivedAt:        created.Add(time.Nanosecond),
 		StreamCreated:     created.Add(-time.Hour),
 		Epoch:             ownEpoch,
@@ -194,7 +256,7 @@ func TestAMetaWrittenToHeadersReadsBackTheSame(t *testing.T) {
 		RulesHash:         1<<32 - 2,
 	}
 
-	got, err := decodeMeta(encodeMeta(&want), testPartition)
+	got, err := decodeMeta(encodeMeta(&want))
 	if err != nil {
 		t.Fatalf("decodeMeta: %v", err)
 	}
@@ -203,7 +265,6 @@ func TestAMetaWrittenToHeadersReadsBackTheSame(t *testing.T) {
 	}
 }
 
-// Every reason NATS can give maps to a class of a failed upload, so a new reason never goes uncounted.
 func TestEveryReasonHasAnUploadClass(t *testing.T) {
 	for reason := natsjs.ReasonUnexpected; reason <= natsjs.ReasonClosed; reason++ {
 		if _, listed := reasonClasses[reason]; !listed {

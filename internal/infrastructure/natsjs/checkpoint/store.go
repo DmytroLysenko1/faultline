@@ -63,6 +63,11 @@ type Store struct {
 }
 
 func Open(ctx context.Context, conn *natsjs.Conn, lease partitionLease, options *Options) (*Store, error) {
+	store, err := open(ctx, conn, lease, options)
+	return store, translate(err)
+}
+
+func open(ctx context.Context, conn *natsjs.Conn, lease partitionLease, options *Options) (*Store, error) {
 	if err := options.Validate(); err != nil {
 		return nil, err
 	}
@@ -75,7 +80,7 @@ func Open(ctx context.Context, conn *natsjs.Conn, lease partitionLease, options 
 	}
 	bound, err := openBuckets(ctx, control, data, options)
 	if err != nil {
-		return nil, translate(err)
+		return nil, err
 	}
 	return newStore(options, lease, &bound, time.Now), nil
 }
@@ -141,7 +146,7 @@ func (s *Store) Wait(ctx context.Context) error {
 	case <-up.exited:
 		return nil
 	case <-ctx.Done():
-		return fmt.Errorf("wait for the checkpoint upload to stop: %w", ctx.Err())
+		return translate(fmt.Errorf("wait for the checkpoint upload to stop: %w", ctx.Err()))
 	}
 }
 

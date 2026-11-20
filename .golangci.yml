@@ -280,7 +280,7 @@ linters:
           msg: only the journals (memjournal, natsjs/feed) stamp ReceivedAt and make heartbeats — journal order is ReceivedAt order
         - pattern: ^checkpoint\.Err[A-Za-z]+$
           pkg: ^github\.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/checkpoint$
-          msg: branch on processing.* — the checkpoint store translates its errors at its exit (slice 3.4 design §3.9)
+          msg: branch on processing.* — the checkpoint store translates its errors at its exit (docs/design/step-03-journal-and-reliable-ingest.md, slice natsjs/checkpoint)
         - pattern: ^fmt\.Print(|f|ln)$
           msg: no stdout printing — use slog/zap (observability doctrine)
         - pattern: ^log\.(Print|Fatal|Panic)(|f|ln)$

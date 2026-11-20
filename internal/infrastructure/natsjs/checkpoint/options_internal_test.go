@@ -140,7 +140,7 @@ func TestMetaWithAHeaderThatDoesNotParseIsCorrupt(t *testing.T) {
 	headers := headersOf(&storedObject{epoch: testEpoch, position: 3})
 	headers.Set(headerRecordVersion, "256")
 
-	_, err := decodeMeta(headers, testPartition)
+	_, err := decodeMeta(headers)
 
 	if !errors.Is(err, errCorrupt) || !errors.Is(err, errBadHeader) {
 		t.Fatalf("decodeMeta: err = %v, want %v", err, errCorrupt)
@@ -205,9 +205,11 @@ func TestEveryFailureLeavesTheStoreInTheVocabularyOfProcessing(t *testing.T) {
 }
 
 func TestEveryCauseOfTheStoreHasAProcessingMeaning(t *testing.T) {
-	causes := []error{errEpochRegressed, errPointerMoved, errObjectChanged, errCheckpointMissing, errStreamRecreated,
-		errCorrupt, errStoreClosed, errStoreState, errDiscardTarget, errLeaseLost, errPointerForeign, errCASUnknown,
-		errPurgeLeft}
+	causes := []error{
+		errEpochRegressed, errPointerMoved, errObjectChanged, errCheckpointMissing, errStreamRecreated, errCorrupt,
+		errStoreClosed, errStoreState, errDiscardTarget, errLeaseLost, errPointerForeign, errFenced, errCASUnknown,
+		errUnresolved, errPositionRegressed, errNameCollision,
+	}
 	for _, cause := range causes {
 		if !slices.ContainsFunc(translations(), func(t translation) bool { return errors.Is(t.cause, cause) }) {
 			t.Errorf("cause %v has no row in translations", cause)

@@ -10,37 +10,80 @@ const (
 	verdictLeaseLost
 	verdictForeign
 	verdictRegressed
-	verdictUnknown
+	verdictRetry
+	verdictFence
+	verdictPending
+	verdictPurge
+	verdictReferenced
 )
 
+type casStep uint8
+
+const (
+	stepUpdate casStep = iota
+	stepRetry
+	stepFence
+	stepExhausted
+)
+
+var nextAfter = [...]verdict{
+	stepUpdate:    verdictRetry,
+	stepRetry:     verdictFence,
+	stepFence:     verdictPending,
+	stepExhausted: verdictPending,
+}
+
 func judgeBefore(found *pointer, own uint64, next *objectRef, created time.Time) verdict {
-	switch {
-	case foreign(found, own):
-		return verdictForeign
-	case found.value.Epoch > own:
-		return verdictLeaseLost
-	case regressed(found, next, created):
+	if decided, settled := judgeEpoch(found, own); settled {
+		return decided
+	}
+	if regressed(found, next, created) {
 		return verdictRegressed
+	}
+	return verdictProceed
+}
+
+func judgeAfter(found *pointer, own uint64, next *objectRef, step casStep) verdict {
+	if decided, settled := judgeEpoch(found, own); settled {
+		return decided
+	}
+	if sameObject(found.value.Current, next) {
+		return verdictAccepted
+	}
+	return nextAfter[step]
+}
+
+func judgePending(found *pointer, own uint64, item *pendingObject) verdict {
+	if decided, settled := judgeEpoch(found, own); settled {
+		return decided
+	}
+	switch {
+	case sameObject(found.value.Current, &item.ref):
+		return verdictAccepted
+	case sameObject(found.value.Previous, &item.ref):
+		return verdictReferenced
+	case item.unwritable(found.revision):
+		return verdictPurge
 	default:
-		return verdictProceed
+		return verdictFence
 	}
 }
 
-func judgeAfter(found *pointer, own uint64, next *objectRef) verdict {
+func judgeEpoch(found *pointer, own uint64) (verdict, bool) {
 	switch {
-	case found == nil || found.corrupt:
-		return verdictUnknown
+	case foreign(found, own):
+		return verdictForeign, true
 	case found.value.Epoch > own:
-		return verdictLeaseLost
-	case sameObject(found.value.Current, next):
-		return verdictAccepted
+		return verdictLeaseLost, true
 	default:
-		return verdictUnknown
+		return verdictProceed, false
 	}
 }
 
 func foreign(found *pointer, own uint64) bool {
-	return found == nil || found.corrupt || found.value.Epoch < own
+	return found == nil ||
+		found.corrupt ||
+		found.value.Epoch < own
 }
 
 func regressed(found *pointer, next *objectRef, created time.Time) bool {

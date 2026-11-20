@@ -149,6 +149,7 @@ func metaHeaders(meta *processing.CheckpointMeta) nats.Header {
 		"Checkpoint-Record-Version": uint64(meta.RecordVersion),
 		"Checkpoint-Limits-Hash":    meta.LimitsHash,
 		"Checkpoint-Rules-Hash":     uint64(meta.RulesHash),
+		"Checkpoint-Partition":      uint64(meta.Position.Partition),
 	} {
 		headers.Set(name, strconv.FormatUint(value, 10))
 	}

@@ -2,6 +2,7 @@ package checkpoint
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -12,11 +13,7 @@ import (
 var errLeftOver = errors.New("checkpoint object still holds messages after its purge")
 
 func (u *uploader) dropped(root context.Context, written *object, cause error) error {
-	if err := u.purgeOwn(root, written); err != nil {
-		return terminal(fmt.Errorf("%w: %s after %w: %w", errPurgeLeft, written.name, detachedCause{
-			text: cause.Error(),
-		}, err))
-	}
+	u.takeBack(root, *written.ref())
 	return u.classified(cause)
 }
 
@@ -34,34 +31,32 @@ func (u *uploader) classified(cause error) error {
 	return failed(failUpload, cause)
 }
 
-// purgeOwn has no lease check on purpose (no pointer names the object, C11) and purges the meta before the
-// chunks, so a purge cut in the middle never leaves a meta naming chunks that are gone.
-func (u *uploader) purgeOwn(root context.Context, written *object) error {
-	subjects := []string{u.store.chunkSubject(written.nuid)}
-	own, err := u.ownMetaLanded(root, written)
+func (u *uploader) purgeRef(root context.Context, ref objectRef) error {
+	subjects := []string{u.store.chunkSubject(ref.NUID)}
+	own, err := u.ownMetaLanded(root, ref)
 	if err != nil {
 		return err
 	}
 	if own {
-		subjects = append([]string{u.store.metaSubject(written.name)}, subjects...)
+		subjects = append([]string{u.store.metaSubject(ref.Name)}, subjects...)
 	}
 	return u.purgeSubjects(root, subjects)
 }
 
-func (u *uploader) ownMetaLanded(root context.Context, written *object) (bool, error) {
+func (u *uploader) ownMetaLanded(root context.Context, ref objectRef) (bool, error) {
 	var last *jetstream.RawStreamMsg
 	err := u.callWithin(root, sweepCallBudget, func(ctx context.Context) error {
 		var err error
-		last, err = u.store.lastMessage(ctx, u.store.metaSubject(written.name))
+		last, err = u.store.lastMessage(ctx, u.store.metaSubject(ref.Name))
 		return err
 	})
 	if errors.Is(err, errNoMessage) {
 		return false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("read the meta of %s: %w", written.name, err)
+		return false, fmt.Errorf("read the meta of %s: %w", ref.Name, err)
 	}
-	return last.Header.Get(jetstream.MsgIDHeader) == written.metaID(), nil
+	return describes(last.Data, ref.NUID), nil
 }
 
 func (u *uploader) purgeSubjects(root context.Context, subjects []string) error {
@@ -101,4 +96,9 @@ func (u *uploader) callWithin(
 	ctx, cancel := context.WithTimeout(root, budget)
 	defer cancel()
 	return call(ctx)
+}
+
+func describes(data []byte, nuid string) bool {
+	var body metaBody
+	return json.Unmarshal(data, &body) == nil && body.NUID == nuid
 }

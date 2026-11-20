@@ -83,21 +83,12 @@ func (e *cycleError) apply(u *uploader) bool {
 		u.store.stats.fail(e.fail, e.cause)
 		u.store.stats.failUpload(e.uploadClass())
 	case kindTerminal:
-		return u.ended(e.cause)
+		u.store.stats.lastFailure.Store(new(translate(e.cause)))
+		u.terminate(e.cause)
+		return true
 	case kindStopped:
 	}
 	return false
-}
-
-func (u *uploader) ended(cause error) bool {
-	if u.stopRequested() && (errors.Is(cause, errCASUnknown) || errors.Is(cause, errPurgeLeft)) {
-		u.store.stats.leftAtStop.Add(1)
-		u.store.stats.lastFailure.Store(&cause)
-		return false
-	}
-	u.store.stats.lastFailure.Store(&cause)
-	u.terminate(cause)
-	return true
 }
 
 func (e *cycleError) uploadClass() uploadClass {

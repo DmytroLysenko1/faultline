@@ -26,6 +26,7 @@ const (
 	loseReply
 	alterReply
 	answerReply
+	holdFrame
 )
 
 const (
@@ -48,6 +49,7 @@ type Verdict struct {
 	kind    verdictKind
 	field   string
 	payload []byte
+	held    *HeldFrame
 }
 
 func Forward() Verdict {
@@ -82,6 +84,39 @@ func Answer(payload []byte) Verdict {
 	}
 }
 
+func Hold() (Verdict, *HeldFrame) {
+	held := &HeldFrame{
+		release:  make(chan struct{}),
+		answered: make(chan struct{}),
+	}
+	return Verdict{
+		kind: holdFrame,
+		held: held,
+	}, held
+}
+
+type HeldFrame struct {
+	release   chan struct{}
+	released  sync.Once
+	answered  chan struct{}
+	answering sync.Once
+	answer    []byte
+}
+
+func (h *HeldFrame) Release() {
+	h.released.Do(func() {
+		close(h.release)
+	})
+}
+
+func (h *HeldFrame) Answered() <-chan struct{} {
+	return h.answered
+}
+
+func (h *HeldFrame) Answer() []byte {
+	return h.answer
+}
+
 type Frame struct {
 	Op      string
 	Subject string
@@ -93,6 +128,7 @@ type relay struct {
 	pass        bool
 	replaced    bool
 	replacement []byte
+	held        *HeldFrame
 }
 
 func passed() relay {
@@ -115,6 +151,7 @@ type Proxy struct {
 	tb       testing.TB
 	listener net.Listener
 	target   string
+	done     chan struct{}
 	mu       sync.Mutex
 	inspect  func(f *Frame) Verdict
 	answers  map[string]Verdict
@@ -135,6 +172,7 @@ func StartProxy(tb testing.TB, url string) *Proxy {
 		tb:       tb,
 		listener: listener,
 		target:   strings.TrimPrefix(url, scheme),
+		done:     make(chan struct{}),
 		answers:  map[string]Verdict{},
 	}
 	ctx := tb.Context()
@@ -183,11 +221,16 @@ func (p *Proxy) relay(ctx context.Context, client net.Conn) bool {
 		p.closeQuietly(server)
 		return false
 	}
+	toServer := &lockedConn{
+		Conn: server,
+	}
 	p.wg.Go(func() {
-		p.pump(client, server, p.passToServer)
+		p.pump(client, toServer, p.passToServer)
 	})
 	p.wg.Go(func() {
-		p.pump(server, client, p.toClient)
+		p.pump(server, &lockedConn{
+			Conn: client,
+		}, p.toClient)
 	})
 	return true
 }
@@ -205,6 +248,9 @@ func (p *Proxy) track(conns ...net.Conn) bool {
 func (p *Proxy) close() {
 	p.closeQuietly(p.listener)
 	p.mu.Lock()
+	if !p.closed {
+		close(p.done)
+	}
 	p.closed = true
 	for _, conn := range p.conns {
 		p.closeQuietly(conn)
@@ -219,17 +265,102 @@ func (p *Proxy) closeQuietly(closer io.Closer) {
 	}
 }
 
-func (p *Proxy) pump(from, to net.Conn, judge func(f *Frame) relay) {
-	defer p.closeQuietly(to)
+func (p *Proxy) passToServer(f *Frame) relay {
+	p.mu.Lock()
+	inspect := p.inspect
+	p.mu.Unlock()
+	if inspect == nil {
+		return passed()
+	}
+	judged := inspect(f)
+	if judged.kind == holdFrame {
+		p.awaitAnswer(f, judged)
+		return relay{
+			pass: true,
+			held: judged.held,
+		}
+	}
+	return relay{
+		pass: p.toServer(f, judged),
+	}
+}
+
+func (p *Proxy) awaitAnswer(f *Frame, judged Verdict) {
+	if f.Reply == "" {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.answers[f.Reply] = judged
+}
+
+func (p *Proxy) toServer(f *Frame, judged Verdict) bool {
+	if judged.kind == forward {
+		return true
+	}
+	if judged.kind == drop {
+		return false
+	}
+	if f.Reply == "" {
+		p.tb.Errorf("proxy: %s on %s has no reply to lose or alter", f.Op, f.Subject)
+		return true
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.answers[f.Reply] = judged
+	return true
+}
+
+func (p *Proxy) toClient(f *Frame) relay {
+	p.mu.Lock()
+	judged, pending := p.answers[f.Subject]
+	delete(p.answers, f.Subject)
+	p.mu.Unlock()
+	if !pending {
+		return passed()
+	}
+	switch judged.kind {
+	case holdFrame:
+		judged.held.answering.Do(func() {
+			judged.held.answer = slices.Clone(f.Payload)
+			close(judged.held.answered)
+		})
+		return passed()
+	case loseReply:
+		p.altered.Add(1)
+		return relay{}
+	case answerReply:
+		p.altered.Add(1)
+		return relay{
+			pass:        true,
+			replaced:    true,
+			replacement: judged.payload,
+		}
+	default:
+		return p.alteredAnswer(f, judged.field)
+	}
+}
+
+func (p *Proxy) alteredAnswer(f *Frame, field string) relay {
+	if !alterField(f.Payload, field) {
+		p.tb.Errorf("proxy: the answer on %s has no string field %q: %s", f.Subject, field, f.Payload)
+		return passed()
+	}
+	p.altered.Add(1)
+	return passed()
+}
+
+func (p *Proxy) pump(from net.Conn, to *lockedConn, judge func(f *Frame) relay) {
+	defer p.closeQuietly(to.Conn)
 	reader := bufio.NewReader(from)
 	for {
-		if err := relayFrame(reader, to, judge); err != nil {
+		if err := p.relayFrame(reader, to, judge); err != nil {
 			return
 		}
 	}
 }
 
-func relayFrame(reader *bufio.Reader, to io.Writer, judge func(f *Frame) relay) error {
+func (p *Proxy) relayFrame(reader *bufio.Reader, to io.Writer, judge func(f *Frame) relay) error {
 	line, payload, f, err := readFrame(reader)
 	if err != nil {
 		return err
@@ -238,11 +369,39 @@ func relayFrame(reader *bufio.Reader, to io.Writer, judge func(f *Frame) relay) 
 	if f != nil {
 		decided = judge(f)
 	}
+	if decided.held != nil {
+		p.park(decided.held, to, decided.wire(line, payload, f))
+		return nil
+	}
 	if !decided.pass {
 		return nil
 	}
 	_, err = to.Write(decided.wire(line, payload, f))
 	return err
+}
+
+func (p *Proxy) park(held *HeldFrame, to io.Writer, frame []byte) {
+	p.wg.Go(func() {
+		select {
+		case <-held.release:
+		case <-p.done:
+			return
+		}
+		if _, err := to.Write(frame); err != nil && !errors.Is(err, net.ErrClosed) {
+			p.tb.Logf("proxy: write a released frame: %v", err)
+		}
+	})
+}
+
+type lockedConn struct {
+	net.Conn
+	mu sync.Mutex
+}
+
+func (c *lockedConn) Write(b []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.Conn.Write(b)
 }
 
 func readFrame(reader *bufio.Reader) (string, []byte, *Frame, error) {
@@ -307,64 +466,6 @@ func shapeOf(op string) (replyAt, sizes int) {
 	default:
 		return messageReplyAt, headerSizes
 	}
-}
-
-func (p *Proxy) passToServer(f *Frame) relay {
-	return relay{
-		pass: p.toServer(f),
-	}
-}
-
-func (p *Proxy) toServer(f *Frame) bool {
-	p.mu.Lock()
-	inspect := p.inspect
-	p.mu.Unlock()
-	if inspect == nil {
-		return true
-	}
-	judged := inspect(f)
-	if judged.kind == forward {
-		return true
-	}
-	if judged.kind == drop {
-		return false
-	}
-	if f.Reply == "" {
-		p.tb.Errorf("proxy: %s on %s has no reply to lose or alter", f.Op, f.Subject)
-		return true
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.answers[f.Reply] = judged
-	return true
-}
-
-func (p *Proxy) toClient(f *Frame) relay {
-	p.mu.Lock()
-	judged, pending := p.answers[f.Subject]
-	delete(p.answers, f.Subject)
-	p.mu.Unlock()
-	if !pending {
-		return passed()
-	}
-	if judged.kind == loseReply {
-		p.altered.Add(1)
-		return relay{}
-	}
-	if judged.kind == answerReply {
-		p.altered.Add(1)
-		return relay{
-			pass:        true,
-			replaced:    true,
-			replacement: judged.payload,
-		}
-	}
-	if !alterField(f.Payload, judged.field) {
-		p.tb.Errorf("proxy: the answer on %s has no string field %q: %s", f.Subject, judged.field, f.Payload)
-		return passed()
-	}
-	p.altered.Add(1)
-	return passed()
 }
 
 func alterField(payload []byte, field string) bool {

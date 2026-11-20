@@ -194,7 +194,7 @@ func (s *Store) openCurrent(ctx context.Context, found *pointer, state *jetstrea
 }
 
 func (s *Store) metaOf(info *jetstream.ObjectInfo, ref *objectRef) (processing.CheckpointMeta, error) {
-	meta, err := decodeMeta(info.Headers, s.options.Partition)
+	meta, err := decodeMeta(info.Headers)
 	if err != nil {
 		return processing.CheckpointMeta{}, err
 	}

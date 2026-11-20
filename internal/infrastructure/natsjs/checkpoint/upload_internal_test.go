@@ -39,7 +39,6 @@ const (
 	replicatedConflict = `{"error":{"code":400,"err_code":10164,"description":"wrong last sequence"}}`
 )
 
-// clusterSizes are R1 and R3: a wrong last sequence comes back as 10071 on one and may be 10164 on the other.
 var clusterSizes = []int{testReplicas, threeNodes}
 
 type pointerShape struct {
@@ -59,7 +58,6 @@ func shapeOfPointer(value *pointerValue) pointerShape {
 	return shape
 }
 
-// gate holds the first frame that matches until it is opened; opened again it does nothing.
 type gate struct {
 	held   atomic.Bool
 	open   chan struct{}
@@ -120,7 +118,6 @@ func TestCheckpointsAreUploadedVerifiedCommittedAndRotated(t *testing.T) {
 	w.assertLatest(t, image, retention.created)
 }
 
-// assertLatest reads the current checkpoint through a second store, as the next holder would.
 func (w *world) assertLatest(t *testing.T, image []byte, created time.Time) {
 	t.Helper()
 	next := newStore(w.options, w.lease, &w.store.buckets, time.Now)
@@ -229,7 +226,6 @@ type refusedUploadWant struct {
 	Objects int
 }
 
-// A chunk the bucket refuses fails the upload and the object is taken back; the pointer does not move.
 func TestARefusedChunkFailsTheUploadAndLeavesNothing(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -359,7 +355,6 @@ type terminalArgs struct {
 	pointerEpoch uint64
 }
 
-// A pointer the holder did not write ends the store before its Update, and the object it uploaded stays (C3, C11).
 func TestAPointerOfAnotherHolderEndsTheStoreAndKeepsTheObject(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -410,29 +405,62 @@ func TestAnUpdateWhoseAnswerWasLostIsSettledByTheReread(t *testing.T) {
 	}
 }
 
-// An Update that never reached the server leaves an outcome the holder cannot know without a fence (3.4b-2): the
-// store ends and keeps the object, since an Update that did land would make it the current one (C11).
-func TestAnUpdateWithoutAKnownOutcomeEndsTheStoreAndKeepsTheObject(t *testing.T) {
+func TestAnUpdateWithoutAKnownOutcomeWaitsAndIsFencedOffBeforeTheNextUpload(t *testing.T) {
 	for _, nodes := range clusterSizes {
 		t.Run(strconv.Itoa(nodes)+" nodes", func(t *testing.T) {
 			w := startWorldOn(t, nodes)
 			sink, retention := w.started(t)
-			w.dropAll(isPointerWrite)
+			var chunks atomic.Int32
+			w.proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
+				if isChunk(f) {
+					chunks.Add(1)
+				}
+				if isPointerWrite(f) {
+					return natsjstest.Drop()
+				}
+				return natsjstest.Forward()
+			})
 
-			if err := spoolCheckpoint(t, sink, firstPosition, checkpointImage(t)); err != nil {
-				t.Fatalf("spool: %v", err)
-			}
-
-			err := w.ended(t)
-			if !errors.Is(err, processing.ErrCheckpointRefused) || !errors.Is(err, errCASUnknown) {
-				t.Fatalf("Err() = %v, want a refused store with an unknown outcome", err)
-			}
+			w.spoolAndSettle(t, sink, firstPosition, failedFor("cas"))
+			waiting := w.store.Stats()
 			if objects := w.ownObjects(t); len(objects) != 1 {
 				t.Errorf("objects %v, want the uploaded one kept", objects)
 			}
-			w.assertInvariants(t, retention, 1)
+			sent := chunks.Load()
+			w.spoolAndSettle(t, sink, secondPosition, failedFor("bucket_unresolved"))
+			if chunks.Load() != sent {
+				t.Errorf("%d chunks sent while an object waits, want none", chunks.Load()-sent)
+			}
+			w.proxy.Intercept(nil)
+			w.spoolAndSettle(t, sink, thirdPosition, committedThrough(thirdPosition))
+
+			got := waitingCounts{Pending: waiting.Pending, Unknown: waiting.CASUnknown, Fences: waiting.Fences}
+			if diff := cmp.Diff(waitingCounts{Pending: 1, Unknown: 1, Fences: 1}, got); diff != "" {
+				t.Errorf("counts while waiting mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff([]uint64{thirdPosition}, retention.committed()); diff != "" {
+				t.Errorf("feed commits mismatch (-want +got):\n%s", diff)
+			}
+			w.assertInvariants(t, retention, 0)
 		})
 	}
+}
+
+type waitingCounts struct {
+	Pending uint64
+	Unknown uint64
+	Fences  uint64
+}
+
+func (w *world) spoolAndSettle(t *testing.T, sink *Sink, position uint64, done func(stats *Stats) bool) {
+	t.Helper()
+	cycles := w.store.Stats().Cycles
+	if err := spoolCheckpoint(t, sink, position, checkpointImage(t)); err != nil {
+		t.Fatalf("spool %d: %v", position, err)
+	}
+	w.settled(t, func(stats *Stats) bool {
+		return stats.Cycles > cycles && done(stats)
+	})
 }
 
 func TestARefusedFeedCommitIsCountedAndTheNextCheckpointCommits(t *testing.T) {
@@ -477,7 +505,6 @@ func TestCloseDuringTheUploadTakesItBack(t *testing.T) {
 	w.assertInvariants(t, retention, 0)
 }
 
-// Close while the Update is on its way does not stop the CAS (C11): the pointer moves, the feed is not committed.
 func TestCloseDuringTheCASCompletesIt(t *testing.T) {
 	w := startWorld(t)
 	sink, retention := w.started(t)
@@ -500,7 +527,6 @@ func TestCloseDuringTheCASCompletesIt(t *testing.T) {
 	w.assertInvariants(t, retention, 0)
 }
 
-// closeWhile closes the store while a frame is held, then lets the frame go and waits for the store to stop.
 func (w *world) closeWhile(t *testing.T, held *gate) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), stopWithin)
@@ -550,7 +576,6 @@ func spooled(t *testing.T, dir string) []string {
 	return names
 }
 
-// The upload goes no faster than its rate: past a burst of two chunks, every byte waits its turn.
 func TestAnUploadIsPacedToItsRate(t *testing.T) {
 	w := startWorld(t)
 	w.store.options.UploadRate = pacedRate
@@ -611,8 +636,6 @@ func TestAnAbortedCheckpointLeavesNothingAndFreesTheSlot(t *testing.T) {
 	w.assertInvariants(t, retention, 0)
 }
 
-// nats.go promises 10164 for a wrong last sequence on R > 1; a meta conflict with either code is settled by its
-// own message.
 func TestAMetaConflictWithTheReplicatedCodeIsSettledByItsOwnMessage(t *testing.T) {
 	for _, nodes := range clusterSizes {
 		t.Run(strconv.Itoa(nodes)+" nodes", func(t *testing.T) {
@@ -630,7 +653,6 @@ func TestAMetaConflictWithTheReplicatedCodeIsSettledByItsOwnMessage(t *testing.T
 	}
 }
 
-// A chunk acknowledged at a sequence that did not grow is not one the bucket just stored.
 func TestAChunkAckThatDidNotGrowFailsTheUpload(t *testing.T) {
 	w := startWorld(t)
 	sink, retention := w.started(t)
@@ -653,8 +675,6 @@ func TestAChunkAckThatDidNotGrowFailsTheUpload(t *testing.T) {
 	w.assertInvariants(t, retention, 0)
 }
 
-// The digest is taken from the spool before a chunk is sent, so a chunk changed on its way is caught by the read
-// back, not trusted.
 func TestAChunkChangedOnItsWayFailsTheVerify(t *testing.T) {
 	w := startWorld(t)
 	sink, retention := w.started(t)
@@ -703,9 +723,7 @@ func isPurge(f *natsjstest.Frame) bool {
 	return f.Subject == bucketPurge
 }
 
-// A failed read back whose object then cannot be purged ends the store as refused: the corrupt read is the cause,
-// not the store's word, or the start of the next process would read it as a checkpoint it may discard.
-func TestAnObjectThatCannotBeTakenBackEndsTheStoreAsRefusedNotUnusable(t *testing.T) {
+func TestAnObjectThatCannotBeTakenBackWaitsAndIsPurgedByALaterCycle(t *testing.T) {
 	w := startWorld(t)
 	sink, retention := w.started(t)
 	var chunks atomic.Int32
@@ -719,31 +737,25 @@ func TestAnObjectThatCannotBeTakenBackEndsTheStoreAsRefusedNotUnusable(t *testin
 		return natsjstest.Forward()
 	})
 
-	if err := spoolCheckpoint(t, sink, firstPosition, checkpointImage(t)); err != nil {
-		t.Fatalf("spool: %v", err)
+	w.spoolAndSettle(t, sink, firstPosition, failedFor("verify"))
+	if stats := w.store.Stats(); stats.Pending != 1 {
+		t.Errorf("pending = %d, want the object that could not be purged", stats.Pending)
 	}
+	w.spoolAndSettle(t, sink, secondPosition, failedFor("bucket_unresolved"))
+	w.proxy.Intercept(nil)
+	w.spoolAndSettle(t, sink, thirdPosition, committedThrough(thirdPosition))
 
-	err := w.ended(t)
-	if !errors.Is(err, processing.ErrCheckpointRefused) || errors.Is(err, processing.ErrCheckpointUnusable) ||
-		processing.Discardable(err) {
-		t.Fatalf("Err() = %v, want refused, neither unusable nor discardable", err)
+	if stats := w.store.Stats(); stats.Pending != 0 {
+		t.Errorf("pending = %d after a purge that went through", stats.Pending)
 	}
-	if stats := w.store.Stats(); !errors.Is(stats.LastFailure, errPurgeLeft) {
-		t.Errorf("last failure = %v, want the purge that was left", stats.LastFailure)
-	}
-	w.assertInvariants(t, retention, 1)
+	w.assertInvariants(t, retention, 0)
 }
 
-// The object a CAS moved out of the pointer that cannot be purged ends the store until the pending list of 3.4b-2.
-func TestAnObjectThatLeftThePointerButCannotBePurgedEndsTheStore(t *testing.T) {
+func TestAnObjectThatLeftThePointerButCannotBePurgedWaitsForTheNextCycle(t *testing.T) {
 	w := startWorld(t)
 	sink, retention := w.started(t)
-	image := checkpointImage(t)
 	for _, position := range []uint64{firstPosition, secondPosition} {
-		if err := spoolCheckpoint(t, sink, position, image); err != nil {
-			t.Fatalf("spool %d: %v", position, err)
-		}
-		w.settled(t, committedThrough(position))
+		w.spoolAndSettle(t, sink, position, committedThrough(position))
 	}
 	w.proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
 		if isPurge(f) {
@@ -752,22 +764,21 @@ func TestAnObjectThatLeftThePointerButCannotBePurgedEndsTheStore(t *testing.T) {
 		return natsjstest.Forward()
 	})
 
-	if err := spoolCheckpoint(t, sink, thirdPosition, image); err != nil {
-		t.Fatalf("spool: %v", err)
+	w.spoolAndSettle(t, sink, thirdPosition, committedThrough(thirdPosition))
+	if stats := w.store.Stats(); stats.Pending != 1 {
+		t.Errorf("pending = %d, want the object that left", stats.Pending)
 	}
+	w.proxy.Intercept(nil)
+	w.spoolAndSettle(t, sink, fourthPosition, committedThrough(fourthPosition))
 
-	if err := w.ended(t); !errors.Is(err, processing.ErrCheckpointRefused) || !errors.Is(err, errPurgeLeft) {
-		t.Fatalf("Err() = %v, want refused for a purge that was left", err)
-	}
 	value, _ := w.pointer(t)
-	if diff := cmp.Diff(pointerShape{Epoch: testEpoch, Current: thirdPosition, Previous: secondPosition},
+	if diff := cmp.Diff(pointerShape{Epoch: testEpoch, Current: fourthPosition, Previous: thirdPosition},
 		shapeOfPointer(value)); diff != "" {
 		t.Errorf("pointer mismatch (-want +got):\n%s", diff)
 	}
-	w.assertInvariants(t, retention, 1)
+	w.assertInvariants(t, retention, 0)
 }
 
-// After Close no checkpoint is taken, even while the CAS that was under way finishes.
 func TestACheckpointBetweenCloseAndTheEndOfTheUploadIsRefused(t *testing.T) {
 	w := startWorld(t)
 	sink, retention := w.started(t)
@@ -796,7 +807,6 @@ func TestACheckpointBetweenCloseAndTheEndOfTheUploadIsRefused(t *testing.T) {
 	w.assertInvariants(t, retention, 0)
 }
 
-// A stop deadline too short for the CAS leaves its outcome to the next holder; it is no lost partition.
 func TestACloseWithoutTimeLeftIsAStopNotAnEnd(t *testing.T) {
 	w := startWorld(t)
 	sink, retention := w.started(t)
@@ -825,7 +835,6 @@ func TestACloseWithoutTimeLeftIsAStopNotAnEnd(t *testing.T) {
 	w.assertInvariants(t, retention, 1)
 }
 
-// classOf is the one class counted, or "" when none or more than one was.
 func classOf(counts map[string]uint64) string {
 	var counted []string
 	for class, count := range counts {
@@ -844,8 +853,6 @@ type stopArgs struct {
 	drop    func(f *natsjstest.Frame) bool
 }
 
-// A Close without time left, while the store takes an object back or settles an Update, leaves what it cut to the
-// next holder: the store stops, it does not end, and the leftover is counted.
 func TestACloseWithoutTimeLeftLeavesTheRestToTheNextHolder(t *testing.T) {
 	tests := []struct {
 		name string
@@ -897,8 +904,6 @@ func waitFor(t *testing.T, seen *atomic.Bool) {
 	}
 }
 
-// closeExpired closes with a deadline already past: the store must stop at once, not end, whatever call was under
-// way.
 func (w *world) closeExpired(t *testing.T) {
 	t.Helper()
 	expired, cancel := context.WithDeadline(t.Context(), time.Now())
@@ -916,9 +921,7 @@ func (w *world) closeExpired(t *testing.T) {
 	}
 }
 
-// A bucket gone while the object is read back fails the verify with a read that would mean "unusable" to the start
-// of a process; the object cannot be taken back either, and the store ends refused, never discardable.
-func TestABucketGoneDuringTheVerifyEndsTheStoreRefusedNotDiscardable(t *testing.T) {
+func TestABucketGoneDuringTheVerifyLeavesTheObjectWaiting(t *testing.T) {
 	w := startWorld(t)
 	sink, _ := w.started(t)
 	var gone atomic.Bool
@@ -932,18 +935,18 @@ func TestABucketGoneDuringTheVerifyEndsTheStoreRefusedNotDiscardable(t *testing.
 		return natsjstest.Forward()
 	})
 
-	if err := spoolCheckpoint(t, sink, firstPosition, checkpointImage(t)); err != nil {
-		t.Fatalf("spool: %v", err)
-	}
+	w.spoolAndSettle(t, sink, firstPosition, failedFor("verify"))
 
-	err := w.ended(t)
-	if !errors.Is(err, processing.ErrCheckpointRefused) || errors.Is(err, processing.ErrCheckpointUnusable) ||
-		processing.Discardable(err) {
-		t.Fatalf("Err() = %v, want refused, neither unusable nor discardable", err)
+	if stats := w.store.Stats(); stats.Pending != 1 {
+		t.Errorf("pending = %d, want the object that could not be purged", stats.Pending)
+	}
+	select {
+	case <-w.store.Done():
+		t.Errorf("the store ended: %v", w.store.Err())
+	default:
 	}
 }
 
-// While the lease is suspended no checkpoint is taken: Begin answers busy at once and writes no spool.
 func TestACheckpointWhileTheLeaseIsSuspendedIsBusy(t *testing.T) {
 	w := startWorld(t)
 	sink, _ := w.started(t)

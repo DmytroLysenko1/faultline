@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -40,7 +39,7 @@ func (o *object) info(bucket string) *jetstream.ObjectInfo {
 		Bucket:  bucket,
 		NUID:    o.nuid,
 		Size:    unsigned(o.size),
-		ModTime: time.Now().UTC(),
+		ModTime: o.at.UTC(),
 		Chunks:  o.chunks,
 		Digest:  o.digest,
 	}

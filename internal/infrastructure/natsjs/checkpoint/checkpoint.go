@@ -27,7 +27,6 @@ var (
 	errLeaseLost         = errors.New("partition lease not valid")
 	errPointerForeign    = errors.New("checkpoint pointer was written by another holder")
 	errCASUnknown        = errors.New("checkpoint pointer write has no known outcome")
-	errPurgeLeft         = errors.New("checkpoint object could not be purged")
 )
 
 const (

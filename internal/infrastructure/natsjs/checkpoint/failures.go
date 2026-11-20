@@ -27,8 +27,6 @@ func (d detachedCause) Error() string {
 func translations() []translation {
 	return []translation{
 		{cause: errPointerForeign, layer: processing.ErrCheckpointRefused},
-		{cause: errCASUnknown, layer: processing.ErrCheckpointRefused},
-		{cause: errPurgeLeft, layer: processing.ErrCheckpointRefused},
 		{cause: errPointerMoved, layer: processing.ErrCheckpointMoved},
 		{cause: errObjectChanged, layer: processing.ErrCheckpointMoved},
 		{cause: errCheckpointMissing, layer: processing.ErrCheckpointUnusable},
@@ -39,6 +37,11 @@ func translations() []translation {
 		{cause: errStoreClosed, layer: processing.ErrCheckpointRefused},
 		{cause: errDiscardTarget, layer: processing.ErrDiscardRefused},
 		{cause: errLeaseLost, layer: processing.ErrLeaseLost},
+		{cause: errFenced, layer: processing.ErrCheckpointRefused},
+		{cause: errCASUnknown, layer: processing.ErrCheckpointRefused},
+		{cause: errUnresolved, layer: processing.ErrCheckpointRefused},
+		{cause: errPositionRegressed, layer: processing.ErrCheckpointRefused},
+		{cause: errNameCollision, layer: processing.ErrCheckpointRefused},
 	}
 }
 

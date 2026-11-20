@@ -15,13 +15,15 @@ const (
 	skipBusy skipReason = iota
 	skipLeaseSuspended
 	skipBucketFull
+	skipRetentionSuspended
 	skipReasons
 )
 
 var skipNames = [skipReasons]string{
-	skipBusy:           "busy",
-	skipLeaseSuspended: "lease_suspended",
-	skipBucketFull:     "bucket_full",
+	skipBusy:               "busy",
+	skipLeaseSuspended:     "lease_suspended",
+	skipBucketFull:         "bucket_full",
+	skipRetentionSuspended: "retention_suspended",
 }
 
 type uploadClass uint8
@@ -47,7 +49,6 @@ var uploadClassNames = [uploadClasses]string{
 	classForeignStream: "foreign_stream",
 }
 
-// reasonClasses maps the reason NATS gave to the class of a failed upload; a reason not listed is other.
 var reasonClasses = map[natsjs.Reason]uploadClass{
 	natsjs.ReasonUnexpected:            classOther,
 	natsjs.ReasonNoResponders:          classTimeout,
@@ -76,18 +77,20 @@ const (
 	failNameCollision
 	failCommit
 	failBucketRead
+	failBucketUnresolved
 	failReasons
 )
 
 var failNames = [failReasons]string{
-	failUpload:        "upload",
-	failChunkCount:    "chunk_count",
-	failVerify:        "verify",
-	failCAS:           "cas",
-	failRegressed:     "position_regressed",
-	failNameCollision: "name_collision",
-	failCommit:        "commit",
-	failBucketRead:    "bucket_read",
+	failUpload:           "upload",
+	failChunkCount:       "chunk_count",
+	failVerify:           "verify",
+	failCAS:              "cas",
+	failRegressed:        "position_regressed",
+	failNameCollision:    "name_collision",
+	failCommit:           "commit",
+	failBucketRead:       "bucket_read",
+	failBucketUnresolved: "bucket_unresolved",
 }
 
 type Stats struct {
@@ -108,6 +111,10 @@ type Stats struct {
 	LastFailure        error
 	SpoolLeft          uint64
 	LeftAtStop         uint64
+	Pending            uint64
+	Fences             uint64
+	CASUnknown         uint64
+	PurgeLeftover      uint64
 	Cycles             uint64
 	SweptObjects       uint64
 	SweptOrphans       uint64
@@ -119,6 +126,10 @@ type Stats struct {
 type commitRecord struct {
 	through  uint64
 	at       time.Time
+	measured *measurement
+}
+
+type measurement struct {
 	bytes    int64
 	upload   time.Duration
 	verify   time.Duration
@@ -134,6 +145,7 @@ type counters struct {
 	lastSweep     atomic.Pointer[error]
 	committed     atomic.Uint64
 	lastCommit    atomic.Pointer[commitRecord]
+	lastMeasure   atomic.Pointer[measurement]
 	bucketBytes   atomic.Uint64
 	skipped       [skipReasons]atomic.Uint64
 	failed        [failReasons]atomic.Uint64
@@ -141,6 +153,10 @@ type counters struct {
 	lastFailure   atomic.Pointer[error]
 	spoolLeft     atomic.Uint64
 	leftAtStop    atomic.Uint64
+	pending       atomic.Uint64
+	fences        atomic.Uint64
+	casUnknown    atomic.Uint64
+	purgeLeftover atomic.Uint64
 	cycles        atomic.Uint64
 }
 
@@ -156,6 +172,10 @@ func (c *counters) snapshot(epoch uint64, maxBytes int64) Stats {
 		LastFailure:    loaded(c.lastFailure.Load()),
 		SpoolLeft:      c.spoolLeft.Load(),
 		LeftAtStop:     c.leftAtStop.Load(),
+		Pending:        c.pending.Load(),
+		Fences:         c.fences.Load(),
+		CASUnknown:     c.casUnknown.Load(),
+		PurgeLeftover:  c.purgeLeftover.Load(),
 		Cycles:         c.cycles.Load(),
 		SweptObjects:   c.sweptObjects.Load(),
 		SweptOrphans:   c.sweptOrphans.Load(),
@@ -164,14 +184,16 @@ func (c *counters) snapshot(epoch uint64, maxBytes int64) Stats {
 		LastSweepError: loaded(c.lastSweep.Load()),
 	}
 	if last := c.lastCommit.Load(); last != nil {
-		stats.withCommit(last)
+		stats.CommittedThrough = last.through
+		stats.CommittedAt = last.at
+	}
+	if last := c.lastMeasure.Load(); last != nil {
+		stats.withMeasure(last)
 	}
 	return stats
 }
 
-func (s *Stats) withCommit(last *commitRecord) {
-	s.CommittedThrough = last.through
-	s.CommittedAt = last.at
+func (s *Stats) withMeasure(last *measurement) {
 	s.LastBytes = last.bytes
 	s.LastUpload = last.upload
 	s.LastVerify = last.verify
@@ -194,7 +216,7 @@ func loaded(err *error) error {
 
 func (c *counters) sweepFailed(err error) {
 	c.sweepFailures.Add(1)
-	c.lastSweep.Store(&err)
+	c.lastSweep.Store(new(translate(err)))
 }
 
 func (c *counters) skip(reason skipReason) {
@@ -203,7 +225,7 @@ func (c *counters) skip(reason skipReason) {
 
 func (c *counters) fail(reason failReason, err error) {
 	c.failed[reason].Add(1)
-	c.lastFailure.Store(&err)
+	c.lastFailure.Store(new(translate(err)))
 }
 
 func (c *counters) failUpload(class uploadClass) {
@@ -215,6 +237,9 @@ func (c *counters) failUpload(class uploadClass) {
 func (c *counters) commit(record *commitRecord) {
 	c.committed.Add(1)
 	c.lastCommit.Store(record)
+	if record.measured != nil {
+		c.lastMeasure.Store(record.measured)
+	}
 }
 
 func rate(bytes int64, took time.Duration) int64 {

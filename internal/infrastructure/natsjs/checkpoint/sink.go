@@ -3,6 +3,7 @@ package checkpoint
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -38,7 +39,9 @@ type uploader struct {
 	accepting    bool
 	stopAt       time.Time
 	stopTimer    *time.Timer
-	landed       *commitRecord
+	landed       []*commitRecord
+	pending      []pendingObject
+	feedClosed   bool
 }
 
 func (s *Store) Start(ctx context.Context, feed retention) (*Sink, error) {
@@ -98,6 +101,10 @@ func (s *Sink) Begin(_ context.Context, meta *processing.CheckpointMeta) (proces
 }
 
 func (u *uploader) begin(meta *processing.CheckpointMeta) (*spoolWriter, error) {
+	if meta.Position.Partition != u.store.options.Partition {
+		return nil, fmt.Errorf("%w: store of partition %d got a checkpoint of %d", processing.ErrForeignCheckpoint,
+			u.store.options.Partition, meta.Position.Partition)
+	}
 	if err := u.reserve(); err != nil {
 		return nil, err
 	}
@@ -147,7 +154,6 @@ func (u *uploader) refusal() error {
 func (u *uploader) completed(meta *processing.CheckpointMeta) *processing.CheckpointMeta {
 	options := &u.store.options
 	completed := *meta
-	completed.Position.Partition = options.Partition
 	completed.StreamCreated = u.feed.Created()
 	completed.Epoch = options.Epoch
 	completed.CheckpointVersion = topology.CheckpointVersion
@@ -180,7 +186,6 @@ func (u *uploader) free() {
 	u.busy = false
 }
 
-// stop runs once, from Close under the store's mutex: a second call would close stopping twice and panic.
 func (u *uploader) stop(deadline time.Time) {
 	u.stopAt = deadline
 	u.stopTimer = time.AfterFunc(time.Until(deadline), u.cancel)
@@ -198,9 +203,36 @@ func (u *uploader) run(root, upload context.Context) {
 	defer u.exit()
 	for {
 		if !u.next(root, upload) {
+			u.leave(root)
 			return
 		}
 	}
+}
+
+func (u *uploader) leave(root context.Context) {
+	if !u.stopRequested() || u.ended() {
+		return
+	}
+	err := u.resolve(root)
+	u.publishCommits()
+	if outcome, known := errors.AsType[*cycleError](err); known && outcome.kind == kindTerminal {
+		outcome.apply(u)
+		return
+	}
+	u.store.stats.leftAtStop.Add(uint64(len(u.pending)))
+}
+
+func (u *uploader) publishCommits() {
+	for _, record := range u.landed {
+		u.store.stats.commit(record)
+	}
+	u.landed = nil
+}
+
+func (u *uploader) ended() bool {
+	u.store.mu.Lock()
+	defer u.store.mu.Unlock()
+	return u.store.failed != nil
 }
 
 func (u *uploader) next(root, upload context.Context) bool {
@@ -211,19 +243,14 @@ func (u *uploader) next(root, upload context.Context) bool {
 	case <-u.stopping:
 		return false
 	case next := <-u.spools:
-		return !u.handle(root, upload, &next)
+		return !u.handle(root, upload, new(next))
 	}
 }
 
-// handle publishes the commit only after the slot is freed: a reader of Stats that sees it may hand the next
-// checkpoint at once and must not get busy.
 func (u *uploader) handle(root, upload context.Context, next *spool) bool {
 	err := u.cycle(root, upload, next)
 	u.release(next)
-	if u.landed != nil {
-		u.store.stats.commit(u.landed)
-		u.landed = nil
-	}
+	u.publishCommits()
 	ended := u.record(err)
 	u.store.stats.cycles.Add(1)
 	return ended

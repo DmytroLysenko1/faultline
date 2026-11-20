@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/iotest"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/nats-io/nats.go"
+	"go.uber.org/goleak"
 )
 
 const (
@@ -24,14 +27,20 @@ const (
 	replacedAnswer = `{"error":{"code":503,"err_code":10077,"description":"maximum bytes exceeded"}}`
 	requestWait    = 300 * time.Millisecond
 	oneNode        = 1
+	heldBody       = "held"
+	nextBody       = "next"
+	closeWithin    = 2 * time.Second
 )
+
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m)
+}
 
 type relayed struct {
 	Frame   *Frame
 	Written string
 }
 
-// A frame is read whole however TCP splits it, and goes on byte for byte.
 func TestAFrameArrivingByteByByteIsParsedAndRelayedUnchanged(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -77,7 +86,7 @@ func TestAFrameArrivingByteByByteIsParsedAndRelayedUnchanged(t *testing.T) {
 			var written bytes.Buffer
 			var seen *Frame
 
-			err := relayFrame(reader, &written, func(f *Frame) relay {
+			err := new(Proxy).relayFrame(reader, &written, func(f *Frame) relay {
 				seen = f
 				return passed()
 			})
@@ -127,7 +136,6 @@ type outcome struct {
 	Altered int
 }
 
-// Each verdict on a request through the proxy: what reached the server, what came back, what was counted.
 func TestEachVerdictDoesWhatItSays(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -178,7 +186,123 @@ func TestEachVerdictDoesWhatItSays(t *testing.T) {
 	}
 }
 
-// serve answers every request on serviceSubject with streamAnswer and counts the requests it saw.
+type heldOutcome struct {
+	Order  []string
+	Answer string
+}
+
+func TestAHeldFrameGoesOnlyOnReleaseAndItsAnswerIsSeen(t *testing.T) {
+	cluster := Start(t, oneNode)
+	order := record(t, cluster.URLs()[0])
+	proxy := StartProxy(t, cluster.URLs()[0])
+	verdict, held := Hold()
+	proxy.Intercept(func(f *Frame) Verdict {
+		if f.Subject == serviceSubject && string(f.Payload) == heldBody {
+			return verdict
+		}
+		return Forward()
+	})
+	client := connect(t, proxy.URL())
+	inbox := nats.NewInbox()
+	replies, err := client.SubscribeSync(inbox)
+	if err != nil {
+		t.Fatalf("SubscribeSync: %v", err)
+	}
+
+	publish(t, client, inbox, heldBody)
+	if _, err := client.Request(serviceSubject, []byte(nextBody), requestWait); err != nil {
+		t.Fatalf("the request after the held one: %v", err)
+	}
+	held.Release()
+	<-held.Answered()
+
+	if _, err := replies.NextMsg(requestWait); err != nil {
+		t.Fatalf("the answer to the held request: %v", err)
+	}
+	got := heldOutcome{Order: order.seen(), Answer: string(held.Answer())}
+	if diff := cmp.Diff(heldOutcome{Order: []string{nextBody, heldBody}, Answer: streamAnswer}, got); diff != "" {
+		t.Errorf("held mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestAProxyClosedWithAHeldFrameNeverWritesIt(t *testing.T) {
+	cluster := Start(t, oneNode)
+	order := record(t, cluster.URLs()[0])
+	proxy := StartProxy(t, cluster.URLs()[0])
+	verdict, held := Hold()
+	var heldSeen atomic.Bool
+	proxy.Intercept(func(f *Frame) Verdict {
+		if f.Subject == serviceSubject {
+			heldSeen.Store(true)
+			return verdict
+		}
+		return Forward()
+	})
+	client := connect(t, proxy.URL())
+	publish(t, client, nats.NewInbox(), heldBody)
+	for !heldSeen.Load() {
+		time.Sleep(time.Millisecond)
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		proxy.close()
+	}()
+	select {
+	case <-closed:
+	case <-time.After(closeWithin):
+		t.Fatalf("the proxy did not close within %s with a held frame", closeWithin)
+	}
+	held.Release()
+
+	if seen := order.seen(); len(seen) != 0 {
+		t.Errorf("the server saw %v, want nothing", seen)
+	}
+}
+
+func publish(t *testing.T, client *nats.Conn, reply, payload string) {
+	t.Helper()
+	if err := client.PublishRequest(serviceSubject, reply, []byte(payload)); err != nil {
+		t.Fatalf("PublishRequest: %v", err)
+	}
+	if err := client.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+}
+
+type arrivals struct {
+	mu    sync.Mutex
+	order []string
+}
+
+func (a *arrivals) seen() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.Clone(a.order)
+}
+
+func record(t *testing.T, url string) *arrivals {
+	t.Helper()
+	seen := new(arrivals)
+	conn := connect(t, url)
+	_, err := conn.Subscribe(serviceSubject, func(msg *nats.Msg) {
+		seen.mu.Lock()
+		seen.order = append(seen.order, string(msg.Data))
+		seen.mu.Unlock()
+		if err := msg.Respond([]byte(streamAnswer)); err != nil {
+			t.Errorf("Respond: %v", err)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if err := conn.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	return seen
+}
+
 func serve(t *testing.T, url string) *atomic.Int32 {
 	t.Helper()
 	served := new(atomic.Int32)

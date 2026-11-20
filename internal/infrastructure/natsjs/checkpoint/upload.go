@@ -47,6 +47,7 @@ type object struct {
 	chunkSize uint32
 	took      time.Duration
 	verified  time.Duration
+	at        time.Time
 }
 
 func newObject(written *spool, chunk uint32) *object {
@@ -79,10 +80,7 @@ func (o *object) acknowledged(ack *jetstream.PubAck, stream string) error {
 }
 
 func (u *uploader) cycle(root, upload context.Context, next *spool) error {
-	if !u.store.lease.Valid() {
-		return skipped(skipLeaseSuspended, errLeaseLost)
-	}
-	if err := u.fits(upload, next.size); err != nil {
+	if err := u.ready(root, upload, next.size); err != nil {
 		return err
 	}
 	budgeted, cancel := context.WithTimeout(upload, u.uploadBudget(next.size))
@@ -95,6 +93,16 @@ func (u *uploader) cycle(root, upload context.Context, next *spool) error {
 		return u.dropped(root, written, err)
 	}
 	return u.commit(root, written)
+}
+
+func (u *uploader) ready(root, upload context.Context, size int64) error {
+	if !u.store.lease.Valid() {
+		return skipped(skipLeaseSuspended, errLeaseLost)
+	}
+	if err := u.resolve(root); err != nil {
+		return err
+	}
+	return u.fits(upload, size)
 }
 
 func (u *uploader) fits(upload context.Context, size int64) error {
@@ -113,6 +121,7 @@ func (u *uploader) fits(upload context.Context, size int64) error {
 func (u *uploader) send(root, ctx context.Context, next *spool) (*object, error) {
 	started := time.Now()
 	written := newObject(next, u.store.chunkBytes)
+	written.at = u.store.now()
 	err := u.sendChunks(ctx, next, written)
 	if err == nil {
 		err = u.sendMeta(ctx, written)
@@ -219,7 +228,6 @@ func (u *uploader) attemptContext(attempt context.Context) (context.Context, con
 	if !time.Now().Before(deadline) {
 		return nil, nil, errNoTimeLeft
 	}
-	// An attempt on its way to the server is not canceled with its caller; only its own deadline ends it.
 	sent, cancel := context.WithDeadline(context.WithoutCancel(attempt), deadline)
 	return sent, cancel, nil
 }

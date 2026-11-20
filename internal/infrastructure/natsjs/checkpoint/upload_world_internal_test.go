@@ -2,6 +2,7 @@ package checkpoint
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -27,18 +28,21 @@ const (
 	firstPosition  = 10
 	secondPosition = 20
 	thirdPosition  = 30
+	fourthPosition = 40
 	chunkPrefix    = objSubjectPrefix + "faultline_checkpoints_p0" + chunkSubjectPart
 	metaPrefix     = objSubjectPrefix + "faultline_checkpoints_p0" + metaSubjectPart
 	pointerSubject = kvSubjectPrefix + PointerBucket + ".p0"
 	bucketInfo     = "$JS.API.STREAM.INFO." + objStreamPrefix + "faultline_checkpoints_p0"
 )
 
-// fakeRetention is the feed as the store sees it: it remembers every position committed and can refuse.
 type fakeRetention struct {
 	created time.Time
 	mu      sync.Mutex
 	commits []uint64
+	calls   int
 	refuse  int
+	refusal error
+	refused func()
 }
 
 func (r *fakeRetention) Created() time.Time {
@@ -48,9 +52,13 @@ func (r *fakeRetention) Created() time.Time {
 func (r *fakeRetention) Commit(_ context.Context, through processing.Position) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.calls++
 	if r.refuse > 0 {
 		r.refuse--
-		return errInjected
+		if r.refused != nil {
+			r.refused()
+		}
+		return cmp.Or(r.refusal, errInjected)
 	}
 	r.commits = append(r.commits, through.Sequence)
 	return nil
@@ -62,7 +70,6 @@ func (r *fakeRetention) committed() []uint64 {
 	return append([]uint64(nil), r.commits...)
 }
 
-// started stakes an empty partition and starts the store with chunks small enough for a real image to span six.
 func (w *world) started(t *testing.T) (*Sink, *fakeRetention) {
 	t.Helper()
 	if _, _, err := w.store.Latest(t.Context(), testPartition); !errors.Is(err, processing.ErrNoCheckpoint) {
@@ -112,7 +119,6 @@ func spoolAt(position uint64) *processing.CheckpointMeta {
 	}
 }
 
-// spool hands the store one checkpoint through the processing port, as the Pipeline does.
 func spoolCheckpoint(t *testing.T, sink *Sink, position uint64, image []byte) error {
 	t.Helper()
 	writer, err := sink.Begin(t.Context(), spoolAt(position))
@@ -125,7 +131,6 @@ func spoolCheckpoint(t *testing.T, sink *Sink, position uint64, image []byte) er
 	return writer.Close()
 }
 
-// settled waits until the store has ended as many cycles as the counts in stats say, or fails the test.
 func (w *world) settled(t *testing.T, done func(stats *Stats) bool) Stats {
 	t.Helper()
 	deadline := time.Now().Add(settleWithin)
@@ -170,7 +175,6 @@ func (w *world) ended(t *testing.T) error {
 	}
 }
 
-// ownObjects are the NUIDs whose chunks the bucket still holds.
 func (w *world) ownObjects(t *testing.T) []string {
 	t.Helper()
 	var held []string
@@ -182,7 +186,6 @@ func (w *world) ownObjects(t *testing.T) []string {
 	return held
 }
 
-// ownMetas are the names of this epoch's objects whose meta the bucket still holds.
 func (w *world) ownMetas(t *testing.T) []string {
 	t.Helper()
 	var held []string
@@ -211,11 +214,9 @@ func isChunkCount(f *natsjstest.Frame) bool {
 	return f.Subject == bucketInfo && bytes.Contains(f.Payload, []byte(`"subjects_filter":"`+chunkPrefix))
 }
 
-// assertInvariants checks the bucket against the pointer and the commits (I-a, I-b, I-c): every commit is at most
-// the current position, the current object reads back whole, and the bucket holds no object of this epoch but the
-// current, the previous and the ones a terminal branch kept on purpose.
 func (w *world) assertInvariants(t *testing.T, retention *fakeRetention, kept int) {
 	t.Helper()
+	kept += int(w.store.Stats().Pending)
 	value, _ := w.pointer(t)
 	if value.Current == nil {
 		if len(retention.committed()) > 0 || len(w.ownObjects(t)) > kept || len(w.ownMetas(t)) > kept {

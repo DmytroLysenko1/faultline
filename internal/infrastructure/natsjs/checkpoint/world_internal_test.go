@@ -51,6 +51,7 @@ func TestMain(m *testing.M) {
 }
 
 type storedObject struct {
+	partition      uint64
 	epoch          uint64
 	position       uint64
 	headerEpoch    uint64
@@ -68,6 +69,7 @@ func headersOf(object *storedObject) nats.Header {
 		headerRecordVersion:     1,
 		headerLimitsHash:        11,
 		headerRulesHash:         12,
+		headerPartition:         object.partition,
 	}
 	for name, value := range values {
 		headers.Set(name, strconv.FormatUint(value, decimal))
@@ -95,14 +97,13 @@ func testOptions() *Options {
 	}
 }
 
-// idleStats are the stats of a store of testOptions that has not uploaded anything.
 func idleStats() Stats {
 	return Stats{
 		Epoch:          testEpoch,
 		BucketMaxBytes: testMaxBytes,
-		Skipped:        map[string]uint64{"busy": 0, "lease_suspended": 0, "bucket_full": 0},
+		Skipped:        map[string]uint64{"busy": 0, "lease_suspended": 0, "bucket_full": 0, "retention_suspended": 0},
 		Failed: map[string]uint64{"upload": 0, "chunk_count": 0, "verify": 0, "cas": 0, "position_regressed": 0,
-			"name_collision": 0, "commit": 0, "bucket_read": 0},
+			"name_collision": 0, "commit": 0, "bucket_read": 0, "bucket_unresolved": 0},
 		UploadFailed: map[string]uint64{"other": 0, "bucket_full": 0, "sealed": 0, "too_large": 0, "timeout": 0,
 			"foreign_stream": 0},
 	}
@@ -145,7 +146,6 @@ func (v *validTimes) Valid() bool {
 	return v.left >= 0
 }
 
-// world is a real JetStream: the store talks to it through the proxy, the operator writes to it directly.
 type world struct {
 	proxy    *natsjstest.Proxy
 	operator jetstream.JetStream
@@ -161,7 +161,6 @@ func startWorld(t *testing.T) *world {
 	return startWorldOn(t, testReplicas)
 }
 
-// startWorldOn is a world on a cluster of nodes, with the buckets replicated on all of them.
 func startWorldOn(t *testing.T, nodes int) *world {
 	t.Helper()
 	cluster := natsjstest.Start(t, nodes)
@@ -209,8 +208,17 @@ func createJournal(t *testing.T, js jetstream.JetStream, options *Options) {
 	t.Helper()
 	name := options.Topology.Stream(options.Partition)
 	config := jetstream.StreamConfig{Name: name, Subjects: []string{journalSubject}}
-	if _, err := js.CreateStream(t.Context(), config); err != nil {
-		t.Fatalf("journal stream: %v", err)
+	ctx, cancel := context.WithTimeout(t.Context(), worldTimeout)
+	defer cancel()
+	for {
+		_, err := js.CreateStream(ctx, config)
+		if err == nil {
+			return
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("journal stream: %v", err)
+		}
+		time.Sleep(settlePoll)
 	}
 }
 
@@ -246,7 +254,6 @@ func (w *world) setPointer(t *testing.T, value *pointerValue) {
 	}
 }
 
-// putPointer is setPointer for proxy callbacks, which must not stop the proxy's goroutine.
 func (w *world) putPointer(t *testing.T, value *pointerValue) {
 	t.Helper()
 	if err := w.writePointer(context.WithoutCancel(t.Context()), value); err != nil {
