@@ -252,6 +252,28 @@ linters:
               desc: test harnesses stay in tests
             - pkg: github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/otlptest
               desc: test harnesses stay in tests
+        credential-is-a-stdlib-leaf:
+          list-mode: strict
+          files:
+            - "**/internal/domain/credential/**"
+            - "!$test"
+          allow:
+            - $gostd
+        tokenadmin-knows-only-credential:
+          list-mode: strict
+          files:
+            - "**/internal/application/tokenadmin/**"
+            - "!$test"
+          allow:
+            - $gostd
+            - github.com/DmytroLysenko1/faultline/internal/domain/credential
+        tokens-never-use-math-rand:
+          files:
+            - "**/internal/domain/credential/**"
+            - "**/internal/application/tokenadmin/**"
+          deny:
+            - pkg: math/rand
+              desc: ingest token secrets come only from the injected crypto/rand reader (A10)
         layer-infrastructure:
           files:
             - "**/internal/infrastructure/**"
@@ -314,6 +336,11 @@ linters:
         - pattern: ^checkpoint\.Err[A-Za-z]+$
           pkg: ^github\.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/checkpoint$
           msg: branch on processing.* — the checkpoint store translates its errors at its exit (docs/design/step-03-journal-and-reliable-ingest.md, slice natsjs/checkpoint)
+        - pattern: ^reflect\.DeepEqual$
+          msg: digests and secrets compare only through Digest.Equal (constant time, A7)
+        - pattern: ^credential\.Reveal$
+          pkg: ^github\.com/DmytroLysenko1/faultline/internal/domain/credential$
+          msg: only cmd/faultline/tokens.go reveals an ingest token, once, to its operator (A3)
         - pattern: ^fmt\.Print(|f|ln)$
           msg: no stdout printing — use slog/zap (observability doctrine)
         - pattern: ^log\.(Print|Fatal|Panic)(|f|ln)$
@@ -347,6 +374,18 @@ linters:
         linters:
           - forbidigo
         text: the checkpoint store translates its errors
+      - path-except: (internal/domain/credential/|internal/application/tokenadmin/)
+        linters:
+          - forbidigo
+        text: digests and secrets compare only through Digest.Equal
+      - path: _test\.go$
+        linters:
+          - forbidigo
+        text: digests and secrets compare only through Digest.Equal
+      - path: (_test\.go$|cmd/faultline/tokens\.go$)
+        linters:
+          - forbidigo
+        text: only cmd/faultline/tokens.go reveals an ingest token
       - path: (_test\.go$|/[a-z]+test/|^test/|^hack/)
         linters:
           - wrapcheck

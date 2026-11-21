@@ -31,6 +31,7 @@ func serverOptions(shared *events, options Options) []grpc.ServerOption {
 	return []grpc.ServerOption{
 		grpc.ForceServerCodecV2(decodeCodec(shared)),
 		grpc.MaxRecvMsgSize(MaxRecvMsgBytes),
+		grpc.MaxHeaderListSize(MaxHeaderListBytes),
 		grpc.MaxConcurrentStreams(MaxConcurrentStreams),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             KeepaliveMinTime,

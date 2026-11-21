@@ -107,8 +107,9 @@ BUDGET_PACKAGES := ./internal/domain/topology/... ./internal/infrastructure/memj
 DRAIN_PACKAGES := ./test/pipeline/...
 
 .PHONY: test-probes
-test-probes: ## Heap and time probes without -race: decode limit, memory budget model, then pipeline drain
+test-probes: ## Heap and time probes without -race: decode limit, token parse allocations, memory budget model, then pipeline drain
 	go test -count=1 -run 'TestWeightBounds' $(PROBE_PACKAGES)
+	go test -count=1 -run 'TestParseDoesNotAllocate' ./internal/domain/credential/
 	go test -count=1 -run 'TestWorstCaseHeap|TestViewHeap' $(BUDGET_PACKAGES)
 	go test -count=1 -run 'TestDrainFullJournal' $(DRAIN_PACKAGES)
 	go test -count=1 -run 'TestLargestAllowedGraph' ./cmd/faultctl/

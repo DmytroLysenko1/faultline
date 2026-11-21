@@ -10,6 +10,7 @@ import (
 
 const (
 	MaxRecvMsgBytes       = 4 << 20
+	MaxHeaderListBytes    = 16 << 10
 	MaxConcurrentStreams  = 10
 	MaxConnections        = 1
 	ExportHeapRatio       = 11
