@@ -9,6 +9,8 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs"
 )
 
 const (
@@ -59,16 +61,10 @@ func (u *uploader) sendMeta(ctx context.Context, written *object) error {
 	written.metaSent = true
 	_, err = u.publish(ctx, nothingLeftToSend, msg, jetstream.WithMsgID(written.metaID()),
 		jetstream.WithExpectLastSequencePerSubject(noEarlierOnSubject))
-	if !sequenceConflict(err) {
+	if !natsjs.WrongLastSequence(err) {
 		return err
 	}
 	return u.ownMeta(ctx, written)
-}
-
-func sequenceConflict(err error) bool {
-	apiErr, isAPI := errors.AsType[*jetstream.APIError](err)
-	return isAPI && (apiErr.ErrorCode == jetstream.JSErrCodeStreamWrongLastSequence ||
-		apiErr.ErrorCode == jetstream.JSErrCodeStreamWrongLastSequenceConstant)
 }
 
 func (u *uploader) ownMeta(ctx context.Context, written *object) error {

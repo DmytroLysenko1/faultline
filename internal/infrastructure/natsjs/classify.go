@@ -74,6 +74,7 @@ const (
 	codeStreamSealed         jetstream.ErrorCode = 10109
 	codeNoLimits             jetstream.ErrorCode = 10120
 	codeDuplicateInProcess   jetstream.ErrorCode = 10158
+	codePurgeFailed          jetstream.ErrorCode = 10110
 )
 
 var codeReasons = map[jetstream.ErrorCode]Reason{
@@ -179,4 +180,24 @@ func clientReason(err error) Reason {
 		}
 	}
 	return ReasonUnexpected
+}
+
+func WrongLastSequence(err error) bool {
+	return HasCode(err, jetstream.JSErrCodeStreamWrongLastSequence) ||
+		HasCode(err, jetstream.JSErrCodeStreamWrongLastSequenceConstant)
+}
+
+func Unsent(err error) bool {
+	return errors.Is(err, nats.ErrReconnectBufExceeded) ||
+		errors.Is(err, nats.ErrNoResponders) ||
+		errors.Is(err, jetstream.ErrNoStreamResponse)
+}
+
+func PurgeDenied(err error) bool {
+	return HasCode(err, codePurgeFailed)
+}
+
+func HasCode(err error, code jetstream.ErrorCode) bool {
+	apiErr, isAPI := errors.AsType[*jetstream.APIError](err)
+	return isAPI && apiErr.ErrorCode == code
 }

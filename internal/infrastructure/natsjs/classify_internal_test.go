@@ -85,3 +85,69 @@ func TestEveryReasonHasAName(t *testing.T) {
 		t.Errorf("an out-of-range reason is %q, want %q", got, ReasonUnexpected.String())
 	}
 }
+
+func TestWrongLastSequenceAndPurgeDeniedReadTheirCodes(t *testing.T) {
+	tests := []struct {
+		name          string
+		args          error
+		wantWrongLast bool
+		wantDenied    bool
+	}{
+		{
+			name:          "wrong last sequence",
+			args:          apiError(jetstream.JSErrCodeStreamWrongLastSequence, "wrong last sequence: 3"),
+			wantWrongLast: true,
+		},
+		{
+			name:          "the constant form",
+			args:          apiError(jetstream.JSErrCodeStreamWrongLastSequenceConstant, "wrong last sequence"),
+			wantWrongLast: true,
+		},
+		{name: "a denied purge", args: apiError(codePurgeFailed, "stream purge not permitted"), wantDenied: true},
+		{name: "a sealed stream", args: apiError(codeStreamSealed, "stream is sealed")},
+		{name: "a client error", args: nats.ErrTimeout},
+		{name: "nothing", args: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := WrongLastSequence(tt.args); got != tt.wantWrongLast {
+				t.Errorf("WrongLastSequence = %v, want %v", got, tt.wantWrongLast)
+			}
+			if got := PurgeDenied(tt.args); got != tt.wantDenied {
+				t.Errorf("PurgeDenied = %v, want %v", got, tt.wantDenied)
+			}
+		})
+	}
+}
+
+func TestUnsentIsOnlyWhatTheClientNeverSent(t *testing.T) {
+	tests := []struct {
+		name string
+		args error
+		want bool
+	}{
+		{
+			name: "a reconnecting client without a buffer",
+			args: fmt.Errorf("publish: %w", nats.ErrReconnectBufExceeded),
+			want: true,
+		},
+		{name: "no responders", args: nats.ErrNoResponders, want: true},
+		{name: "no stream response", args: jetstream.ErrNoStreamResponse, want: true},
+		{name: "a lost connection while waiting", args: nats.ErrDisconnected},
+		{
+			name: "a server without a meta leader answered",
+			args: apiError(codeClusterUnavailable, "JetStream system temporarily unavailable"),
+		},
+		{name: "a server that is not the leader answered", args: apiError(codeNotLeader, "not leader")},
+		{name: "a server dropped the request from its queue", args: apiError(codeTooManyRequests, "too many requests")},
+		{name: "a timeout", args: context.DeadlineExceeded},
+		{name: "nothing", args: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Unsent(tt.args); got != tt.want {
+				t.Errorf("Unsent = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

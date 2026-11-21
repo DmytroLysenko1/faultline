@@ -9,6 +9,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/record"
 )
 
@@ -53,17 +54,11 @@ func (j journalPulses) publish(ctx context.Context, beat *pulse, msgID string, e
 		jetstream.WithExpectStream(j.stream),
 	}, expect...)
 	ack, err := j.js.PublishMsg(ctx, &nats.Msg{Subject: j.subject, Data: data}, options...)
-	if conflicting(err) {
+	if natsjs.WrongLastSequence(err) {
 		return fmt.Errorf("%w: %w", errPulseConflict, err)
 	}
 	if err != nil {
 		return err
 	}
 	return acknowledgedBy(ack, j.stream)
-}
-
-func conflicting(err error) bool {
-	apiErr, isAPI := errors.AsType[*jetstream.APIError](err)
-	return isAPI && (apiErr.ErrorCode == jetstream.JSErrCodeStreamWrongLastSequence ||
-		apiErr.ErrorCode == jetstream.JSErrCodeStreamWrongLastSequenceConstant)
 }
