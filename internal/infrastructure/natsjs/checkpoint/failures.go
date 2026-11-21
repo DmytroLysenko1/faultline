@@ -37,6 +37,7 @@ func translations() []translation {
 		{cause: errStoreClosed, layer: processing.ErrCheckpointRefused},
 		{cause: errDiscardTarget, layer: processing.ErrDiscardRefused},
 		{cause: errLeaseLost, layer: processing.ErrLeaseLost},
+		{cause: errSweepLeaseLost, layer: processing.ErrLeaseLost},
 		{cause: errFenced, layer: processing.ErrCheckpointRefused},
 		{cause: errCASUnknown, layer: processing.ErrCheckpointRefused},
 		{cause: errUnresolved, layer: processing.ErrCheckpointRefused},

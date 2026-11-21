@@ -29,11 +29,7 @@ const (
 	chunkIDFormat  = "%s.%d"
 )
 
-var (
-	errForeignAck   = errors.New("checkpoint chunk acknowledged by another stream or out of order")
-	errBucketFull   = errors.New("checkpoint image does not fit the object bucket")
-	errBucketUnread = errors.New("checkpoint object bucket could not be read")
-)
+var errForeignAck = errors.New("checkpoint chunk acknowledged by another stream or out of order")
 
 type object struct {
 	name      string
@@ -97,29 +93,6 @@ func (u *uploader) cycle(upload, control context.Context, next *spool) error {
 		return u.dropped(control, written, err)
 	}
 	return u.commit(control, written)
-}
-
-func (u *uploader) ready(upload, control context.Context, size int64) error {
-	if !u.store.lease.Valid() {
-		return skipped(skipLeaseSuspended, errLeaseLost)
-	}
-	if err := u.resolve(control); err != nil {
-		return u.classified(err)
-	}
-	return u.fits(upload, size)
-}
-
-func (u *uploader) fits(ctx context.Context, size int64) error {
-	used, err := u.bucketBytes(ctx)
-	if err != nil {
-		return u.classified(failed(failBucketRead, fmt.Errorf("%w: %w", errBucketUnread, err)))
-	}
-	u.store.stats.bucketBytes.Store(used)
-	if used+unsigned(size) > unsigned(u.store.options.MaxBytes) {
-		return skipped(skipBucketFull, fmt.Errorf("%w: %d bytes, the bucket holds %d of %d", errBucketFull, size, used,
-			u.store.options.MaxBytes))
-	}
-	return nil
 }
 
 func (u *uploader) send(control, budgeted context.Context, next *spool) (*object, error) {
@@ -223,19 +196,29 @@ func (u *uploader) publish(
 	msg *nats.Msg, options ...jetstream.PublishOpt,
 ) (*jetstream.PubAck, error) {
 	options = append(options, jetstream.WithExpectStream(u.store.buckets.object), jetstream.WithRetryAttempts(0))
+	bounded, cancel := context.WithDeadline(ctx, u.retryBound(time.Now()))
+	defer cancel()
 	var ack *jetstream.PubAck
-	err := retry.Do(ctx, chunkPolicy(), func(attempt context.Context) error {
+	err := retry.Do(bounded, chunkPolicy(), func(attempt context.Context) error {
 		if err := u.boundary(phaseUpload, left); err != nil {
 			return err
 		}
 		deadline, _ := attempt.Deadline()
-		return u.uploadWithin(ctx, time.Until(deadline), func(sent context.Context) error {
+		return u.uploadWithin(bounded, time.Until(deadline), func(sent context.Context) error {
 			var err error
 			ack, err = u.store.buckets.data.PublishMsg(sent, msg, options...)
 			return err
 		})
 	})
-	return ack, stopMarked(ctx, err)
+	return ack, stopMarked(bounded, err)
+}
+
+func (u *uploader) retryBound(first time.Time) time.Time {
+	return first.Add(retryWithin(u.store.buckets.window, &u.store.options))
+}
+
+func retryWithin(window time.Duration, options *Options) time.Duration {
+	return min(window-chunkAttempt-uploadSlack, transfer(options.WorstImage, options.UploadRate)+uploadSlack)
 }
 
 func chunkPolicy() *retry.Policy {

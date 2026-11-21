@@ -153,7 +153,7 @@ func (w *world) purgeSubject(t *testing.T, subject string) {
 	}
 }
 
-func TestASweepStopsAtTheFirstPurgeWithoutAValidLease(t *testing.T) {
+func TestASweepStopsWithoutAValidLeaseAndIsNoFailure(t *testing.T) {
 	w := startWorld(t)
 	stale := w.putObject(t, olderEpoch, 20, imageOf(9))
 	_, meta := w.restorable(t)
@@ -168,7 +168,7 @@ func TestASweepStopsAtTheFirstPurgeWithoutAValidLease(t *testing.T) {
 		t.Errorf("a sweep without a valid lease purged %s (-before +after):\n%s", stale.Name, diff)
 	}
 	got := w.store.Stats()
-	if !errors.Is(got.LastSweepError, errSweepStopped) || got.SweptObjects != 0 || got.SweepFailures != 1 {
-		t.Errorf("stats %+v, want one sweep failure that stopped before purging %s", got, stale.Name)
+	if got.LastSweepError != nil || got.SweptObjects != 0 || got.SweepFailures != 0 {
+		t.Errorf("stats %+v, want a sweep the suspended lease stopped before purging %s, no failure counted", got, stale.Name)
 	}
 }

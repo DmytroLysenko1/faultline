@@ -352,6 +352,8 @@ OK на `Export` отдаётся **только** после того, как `
 4. старые объекты чекпоинта удаляются после успешного CAS (хранится последний и предыдущий);
 5. если предыдущая загрузка ещё идёт — новый чекпоинт пропускается (`checkpoint.skipped`), а не копится; возраст последнего зафиксированного — `checkpoint.age_seconds`, self-alert `checkpoint.stale` при > 60 s (NFR-SELF-003 «чекпоинт старше 60 s»).
 
+**Уточнено срезом 3.4c (ёмкость).** Перед загрузкой: `Valid()` → разбор списка «ждёт решения» (своё, что не удалось снять сразу; пока он не пуст — `Failed{bucket_unresolved}`) → образ больше `WorstImage` — Warn и счётчик `checkpoint.image_over_worst`, загрузка идёт → `Info.State.Bytes + размер > MaxBytes` (или прошлая загрузка получила 10077 «maximum bytes exceeded») → широкая чистка горутины: указатель читается у лидера (эпоха больше — потеря аренды, чужой — отказ, оба терминальны), снимаются меты с эпохой **меньше** своей вне current/previous и куски без меты старше порога сирот, бюджет 10 s, `Valid()` и «нет остановки» перед каждым вызовом; обрыв по `Close` — не отказ. Чистка, которая завершилась и ничего не сняла, ставит паузу до созревания старшей пропущенной сироты (`now` строго позже). Не помещается и после чистки — `Skipped{bucket_full}`. Отказы места различаются: `bucket_full` (10077 «maximum bytes exceeded», взводит чистку следующего цикла), `account_full` (10002, 10120), `insufficient_resources` (10023, 10047) — эти два чистку не взводят. Повторы куска и меты ограничены в `publish` дедлайном от первой попытки сообщения `min(first + окно дедупа − 15 s, first + WorstImage / UploadRate + 10 s)`: окно у сервера отсчитывается от сохранения каждого Msg-Id, поэтому повтор не выходит из окна; конец границы — `Failed{upload, timeout}`. Граница — liveness, не гарантия единственной копии: при stepdown или рестарте узла повтор внутри окна может лечь вторым сообщением; его ловит сверка числа кусков (`Failed{chunk_count}` и снятие своего объекта) до CAS. Бакет объектов обязан быть `DiscardNew`, без `MaxAge` и без предела сообщений на субъект, с `Duplicates` не меньше окна — иначе `Open` отказывает `ErrBucketDrift` (на `DiscardOld` сервер молча вытеснял бы куски вместо 10077). Чистка, оборванная остановкой, — не отказ: цикл кончается `stopped` (потеря аренды — `lease_suspended`); нечитаемая мета не мешает чистке считаться завершённой для паузы, но сироты при ней не трогаются. Пропуск `dedup_window` снят. Коды: 10164 — конфликт CAS (`JSErrCodeStreamWrongLastSequenceConstant`, статус 400), «в процессе» для Msg-Id — 10158.
+
 Порядок «загружен → указатель → удержание» — единственный: обратный удалил бы из журнала записи, не покрытые надёжным чекпоинтом.
 
 **Сделано в 3.3** (`natsjs/feed`, `natsjs`, `natsjs/record`; дизайн-контракт среза — итоговая редакция после шести ревизий):
@@ -737,7 +739,7 @@ waitCtx := WithTimeout(ctx, min(publish_timeout (2 s), remaining − publish_res
 
 `CheckpointMeta{Position, ReceivedAt, StreamCreated, Epoch, CheckpointVersion, RecordVersion, LimitsHash, RulesHash}` — значение с публичными полями (правило проекта); партиция — `Position.Partition` (отдельное поле дублировало его, 3c-app). Pipeline заполняет `Position` и `ReceivedAt`, остальное — `Store`.
 
-**Каденс чекпоинта (3c-app).** Чекпоинт — после успешного `Publish` итерации, когда с прошлого есть применённые записи и прошёл `CheckpointInterval` (минимум, не обещание; 0 — выключено, > 0 без хранилища — ошибка `NewPipeline`). Сбой периодического чекпоинта учитывается (`CheckpointStats.Failed`, `LastFailure`) и не останавливает обработку; `ErrCheckpointBusy` — `Skipped`. Чекпоинт, прерванный отменой ctx вызывающим, не считается сбоем и останавливает `Run`. При дренаже (cmd закрывает журнал при мягкой остановке) пишется финальный чекпоинт; финальный, потерянный насовсем (не busy, не отмена), возвращается ошибкой из `Run`. `CheckpointStats` считают отданное в spool, а не зафиксированное — фиксацию отчитывает `Store`. Уточнено финальным ревью 3c-app: после busy следующая попытка — через полный интервал (худший возраст ≈ 2 × интервал + загрузка, под порогом `checkpoint.stale` 60 s); `LastFailure` держит последний сбой до следующего (возраст — по `checkpoint.age_seconds` хранилища); тихая остановка — только `context.Canceled` ctx вызывающего, `DeadlineExceeded` — сбой; spool, который не удалось убрать (`Abort` упал), считается сбоем даже при отмене; `CheckpointWriter` после неудачного `Close` мёртв — `Abort` не нужен, уборку spool делает `Store` (и при старте — сирот в `FAULTLINE_CHECKPOINT_DIR`).
+**Каденс чекпоинта (3c-app).** Чекпоинт — после успешного `Publish` итерации, когда с прошлого есть применённые записи и прошёл `CheckpointInterval` (минимум, не обещание; 0 — выключено, > 0 без хранилища — ошибка `NewPipeline`). Сбой периодического чекпоинта учитывается (`CheckpointStats.Failed`, `LastFailure`) и не останавливает обработку; `ErrCheckpointBusy` — `Skipped`. Чекпоинт, прерванный отменой ctx вызывающим, не считается сбоем и останавливает `Run`. При дренаже (cmd закрывает журнал при мягкой остановке) пишется финальный чекпоинт (срез 3.4c: `checkpointer.final` зовёт `checkpointSink.BeginOnStop` — один финальный за жизнь store принимается и при идущей загрузке; фид для него не коммитится); финальный, потерянный насовсем (не busy, не отмена), возвращается ошибкой из `Run`. `CheckpointStats` считают отданное в spool, а не зафиксированное — фиксацию отчитывает `Store`. Уточнено финальным ревью 3c-app: после busy следующая попытка — через полный интервал (худший возраст ≈ 2 × интервал + загрузка, под порогом `checkpoint.stale` 60 s); `LastFailure` держит последний сбой до следующего (возраст — по `checkpoint.age_seconds` хранилища); тихая остановка — только `context.Canceled` ctx вызывающего, `DeadlineExceeded` — сбой; spool, который не удалось убрать (`Abort` упал), считается сбоем даже при отмене; `CheckpointWriter` после неудачного `Close` мёртв — `Abort` не нужен, уборку spool делает `Store` (и при старте — сирот в `FAULTLINE_CHECKPOINT_DIR`).
 
 **`Restore(ctx, source, partition, limits, startedAt, options...) (Restored{Builder, Through, ReceivedAt, Found}, error)`** — fail-closed: любая ошибка возвращается, пустой старт — только `ErrNoCheckpoint` (`Through = {partition, 0}`, фид открывается с первой оставшейся записи); чужая партиция — `ErrForeignCheckpoint`; совместимость лимитов и версий решает `RestoreBuilder`. Личность стрима и «позиция ∈ [первая − 1, последняя]» проверяет `Store`/фид (срез natsjs/checkpoint) — `processing` стрима не видит. `ErrNoCheckpoint` значит только «указателя нет»: указатель на пропавший объект — ошибка, иначе пустой старт после удержания молча потерял бы состояние. Контракт фида (`journaltest`, срез natsjs/feed): позиции внутри партиции строго растут, пропуски допустимы (DLQ), повтор старой позиции — ошибка фида, а не новая запись.
 
@@ -755,9 +757,9 @@ waitCtx := WithTimeout(ctx, min(publish_timeout (2 s), remaining − publish_res
 | загрузка чекпоинта + CAS + удержание | ≤ `checkpoint_interval` (10 s); дольше — следующий пропускается, `checkpoint.age_seconds` растёт | ctx `Store`, на чанк 5 s |
 | восстановление: аренда → `Latest` → `RestoreBuilder` | ≤ 30 s (иначе exit 1) | ctx старта |
 | продление аренды / пульс / проверка личности | 2 s / 2 s / 5 s | ctx обслуживания |
-| остановка `processor` | `Feed.Close` 0,5 s → дренаж 2,5 + 0,5 s → **финальный чекпоинт** (spool ≤ 1 s + загрузка ≤ 5 s, иначе пропуск — повтор с прошлого) → аренда `kv.Delete` 0,5 s → `Drain` 0,5 s → HTTP 2 s → 0,3 s = **≤ 12,8 s** | `terminationGracePeriodSeconds` 20 |
+| остановка `processor` | `Feed.Close` 0,5 s → дренаж 2,5 + 0,5 s → **финальный чекпоинт** (spool ≤ 1 s вне 6 s бюджета `Store`; загрузка по плану остановки в `Close` 6 s, иначе пропуск — повтор с прошлого) → `Store.Wait` ≤ 6 s → аренда `kv.Delete` 0,5 s → `Wait` фида 0,5 s → `Drain` 0,5 s → HTTP 2 s → 0,3 s = **≤ 14,3 s** (срез 3.4c, как в правке :1276) | `terminationGracePeriodSeconds` 20 |
 | остановка `ingester` | OTLP 3,5 s → `Journal.Close` ≤ 2 s → `Drain` 0,5 s → HTTP 2 s → 0,3 s = **8,3 s** | — |
-| остановка `all` | OTLP 3,5 → `Journal.Close` 2 → процессор как выше без HTTP ≈ 10,8 → HTTP 2 → 0,3 ≈ **18,6 s** | `terminationGracePeriodSeconds` 25 |
+| остановка `all` | OTLP 3,5 → `Journal.Close` 2 → процессор как выше без HTTP ≈ 12,3 → HTTP 2 → 0,3 ≈ **20,1 s** | `terminationGracePeriodSeconds` 25 |
 
 ## 5. Классификация ретраев + карта ошибок OTLP
 
@@ -897,7 +899,7 @@ FSM ингестера — как в ред. 2 (приложение А) с за
 
 ## Жизненный цикл ролей
 
-Как в ред. 2, с изменениями для `processor`: `Starting → WaitingLease → Restoring (указатель → объект → проверки → RestoreBuilder, ≤ 30 s) → Serving`; ошибка восстановления — `Exit1` (fail-closed). Остановка `processor`: `Feed.Close` → дренаж Pipeline → **финальный чекпоинт** (spool + загрузка ≤ 6 s, иначе пропуск — следующий старт повторит с прошлого) → `kv.Delete` аренды → `Drain` → HTTP. `terminationGracePeriodSeconds`: `processor` 20, `all` 25. Шов `drainSource` (`memjournal` — `drain_incomplete`; `natsjs` — `feed_unprocessed`, код 0), `roles.go`, `/healthz` против `/readyz`, владение конфигурацией стримов процессором — как в ред. 2 (приложение А).
+Как в ред. 2, с изменениями для `processor`: `Starting → WaitingLease → Restoring (указатель → объект → проверки → RestoreBuilder, ≤ 30 s) → Serving`; ошибка восстановления — `Exit1` (fail-closed). Остановка `processor`: `Feed.Close` → дренаж Pipeline → **финальный чекпоинт** (spool вне 6 s; срез 3.4c: `Close` ставит `stopAt` = дедлайн − 0,5 s и три среза — до CAS `stopAt − 1 s`, вызовы `stopAt − 0,5 s`, корень `stopAt`; горутина на каждой границе выбирает план: (а) идущая и финальный подряд, (б) только финальный — идущая снимается, (в) только идущая, (г) ничего; `Wait` ждёт выход горутины; финальный помещается до ≈ 200–245 MiB при замеренной `R_read`, до замера при 64 MiB/s ≈ 140 MiB — `(6 − 1 − 0,2 − 0,4) s · 32 MiB/s`; иначе пропуск — следующий старт повторит с прошлого) → `kv.Delete` аренды → `Drain` → HTTP. `terminationGracePeriodSeconds`: `processor` 20, `all` 25. Шов `drainSource` (`memjournal` — `drain_incomplete`; `natsjs` — `feed_unprocessed`, код 0), `roles.go`, `/healthz` против `/readyz`, владение конфигурацией стримов процессором — как в ред. 2 (приложение А).
 
 ---
 
@@ -1243,8 +1245,8 @@ func (f *Feed) Commit(ctx context.Context, through processing.Position) error //
 
 | Причина | `Receive` | Буфер | Исход |
 |---|---|---|---|
-| `Close` | лежащее в канале, затем `processing.ErrFeedClosed` | отдаётся | дренаж + финальный чекпоинт, код 0 |
-| `Lost()` | сразу ошибка с `feed.ErrLeaseLost` | нет | код 1 |
+| `Close` | лежащее в канале, затем `processing.ErrFeedClosed` | отдаётся | дренаж + финальный чекпоинт (`BeginOnStop`, без `Commit` фида), код 0 |
+| `Lost()` | сразу ошибка с `processing.ErrLeaseLost` | нет | код 1 |
 | личность, диапазон, порча, `ErrConsumerLost` | сразу ошибка с причиной | нет | `cmd`: остановить `Store` (новых загрузок нет), `Store.Wait` ≤ 6 s (загрузка и CAS в полёте), затем освободить аренду и код 1; `Wait` не уложился — **не** освобождать (TTL), код 1 |
 
   Один исход для всех нештатных стопов: процесс, не держащий партицию, не держит и аренду — но отдаёт её только
@@ -1277,7 +1279,7 @@ func (f *Feed) Commit(ctx context.Context, through processing.Position) error //
 `Store.Wait` (загрузка + CAS, **без `Commit`/`Purge`** — следующий держатель удержит при первом `Commit`, это
 безопасно по монотонности указателя; ≤ 6, включая загрузку, начатую до SIGTERM) → освобождение 0,5 → `Wait` 0,5 →
 `Drain` 0,5 → HTTP 2 → 0,3 = **≤ 14,3 s** при grace 20 s. `Store.Wait` ждёт всю цепочку «загрузка → CAS»
-(`Commit` на остановке не вызывается). Ctx продления отменяется после `Store.Wait`; не уложился в 6 s — аренда не
+(`Commit` на остановке не вызывается; после `ErrFeedClosed` и для финального — никогда; снятие своего — точечное, в бюджете остановки, широкой чистки на остановке нет). Ctx продления отменяется после `Store.Wait`; не уложился в 6 s — аренда не
 освобождается, ключ истекает по TTL (то же правило, что при нештатном стопе).
 **Остановка `all`** (правка :722): OTLP 3,5 → `Journal.Close` 2 → процессор без HTTP ≈ 12,3 → HTTP 2 → 0,3 ≈
 **20,1 s** при grace 25 s.
@@ -1375,8 +1377,10 @@ func (f *Feed) Commit(ctx context.Context, through processing.Position) error //
 - `Store` останавливаемый: после остановки новых загрузок нет; `Wait(ctx)` ждёт загрузку и CAS в полёте.
 - Эпоха в указателе больше своей: при восстановлении/застолблении — `ErrEpochRegressed` (runbook), при CAS в работе
   — обёрнутый `ErrLeaseLost`.
-- На остановке — без `Commit`/`Purge`; `Store.Wait` ≤ 6 s.
-- `cmd` выбирает код по `errors.Is` с `lease.ErrLeaseLost` и `feed.ErrLeaseLost`.
+- На остановке — без `Commit` и без широкой чистки; `Store.Wait` ≤ 6 s. Срез 3.4c: финальный — `BeginOnStop`; срезы
+  `stopAt − 1 s` (всё до CAS) и `stopAt − 0,5 s` (вызовы); снятая на остановке своя загрузка оставляет не больше
+  одного сообщения на объект (его снимает порог сирот следующего держателя), иначе — список и `LeftAtStop`.
+- `cmd` выбирает код по `errors.Is` с `processing.ErrLeaseLost` (алиасы `lease.ErrLeaseLost` и `feed.ErrLeaseLost` сняты в `2eb9684`).
 - Runbook сброса эпох: процессоры в 0 → бакет уже есть (его создаёт `Acquire`) → запрос API
   `$JS.API.STREAM.PURGE.KV_faultline_leases {"seq": <max эпоха всех указателей + 1>}` (`nats req`; единственный
   описанный способ) → процессоры вверх. Проба: `Purge(seq 1000)` → следующий `Create` получает ревизию 1000.

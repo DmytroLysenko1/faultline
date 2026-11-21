@@ -73,6 +73,11 @@ func (r *fakeRetention) committed() []uint64 {
 
 func (w *world) started(t *testing.T) (*Sink, *fakeRetention) {
 	t.Helper()
+	return w.startedAfter(t, func() {})
+}
+
+func (w *world) startedAfter(t *testing.T, prepare func()) (*Sink, *fakeRetention) {
+	t.Helper()
 	if err := latestErr(w.store.Latest(t.Context(), testPartition)); !errors.Is(err, processing.ErrNoCheckpoint) {
 		t.Fatalf("Latest: %v", err)
 	}
@@ -80,6 +85,7 @@ func (w *world) started(t *testing.T) (*Sink, *fakeRetention) {
 		t.Fatalf("StakeEmpty: %v", err)
 	}
 	w.store.chunkBytes = uploadChunk
+	prepare()
 	retention := &fakeRetention{created: w.streamCreated(t)}
 	sink, err := w.store.Start(t.Context(), retention)
 	if err != nil {

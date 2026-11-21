@@ -15,6 +15,8 @@ var (
 	errStopUpload  = errors.New("checkpoint work before the pointer write cut by the stop")
 	errStopControl = errors.New("checkpoint call cut by the stop")
 	errStopPlan    = errors.New("checkpoint upload dropped by the stop plan")
+	errStopSweep   = errors.New("checkpoint sweep cut by the stop")
+	errStopStake   = errors.New("checkpoint stake cut by the stop")
 	errNoTimeLeft  = errors.New("too little time left before the stop deadline for a checkpoint call")
 )
 
@@ -42,6 +44,9 @@ type progress struct {
 func (u *uploader) stop(deadline time.Time) {
 	u.stopAt = deadline
 	close(u.stopping)
+	if u.cancelSweep != nil {
+		u.cancelSweep(errStopSweep)
+	}
 	if !u.accepting {
 		return
 	}
@@ -279,7 +284,7 @@ func signed(value uint64) int64 {
 }
 
 func stopCauses() []error {
-	return []error{errStopUpload, errStopControl, errStopPlan, errNoTimeLeft}
+	return []error{errStopUpload, errStopControl, errStopSweep, errStopStake, errStopPlan, errNoTimeLeft}
 }
 
 func stopCaused(err error) bool {

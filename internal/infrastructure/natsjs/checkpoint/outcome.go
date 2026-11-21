@@ -81,7 +81,7 @@ func (e *cycleError) apply(u *uploader) bool {
 		u.store.stats.skip(e.skip)
 	case kindFailed:
 		u.store.stats.fail(e.fail, e.cause)
-		u.store.stats.failUpload(e.uploadClass())
+		u.uploadFailed(e.uploadClass())
 	case kindTerminal:
 		u.store.stats.lastFailure.Store(new(translate(e.cause)))
 		u.terminate(e.cause)

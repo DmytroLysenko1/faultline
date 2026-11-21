@@ -1,6 +1,7 @@
 package checkpoint
 
 import (
+	"errors"
 	"sync/atomic"
 	"time"
 
@@ -42,17 +43,21 @@ const (
 	classTooLarge
 	classTimeout
 	classForeignStream
+	classAccountFull
+	classInsufficientResources
 	uploadClasses
 )
 
 var uploadClassNames = [uploadClasses]string{
-	noUploadClass:      "",
-	classOther:         "other",
-	classBucketFull:    "bucket_full",
-	classSealed:        "sealed",
-	classTooLarge:      "too_large",
-	classTimeout:       "timeout",
-	classForeignStream: "foreign_stream",
+	noUploadClass:              "",
+	classOther:                 "other",
+	classBucketFull:            "bucket_full",
+	classSealed:                "sealed",
+	classTooLarge:              "too_large",
+	classTimeout:               "timeout",
+	classForeignStream:         "foreign_stream",
+	classAccountFull:           "account_full",
+	classInsufficientResources: "insufficient_resources",
 }
 
 var reasonClasses = map[natsjs.Reason]uploadClass{
@@ -62,10 +67,10 @@ var reasonClasses = map[natsjs.Reason]uploadClass{
 	natsjs.ReasonDisconnected:          classTimeout,
 	natsjs.ReasonStoreFailed:           classOther,
 	natsjs.ReasonInProcess:             classTimeout,
-	natsjs.ReasonInsufficientResources: classBucketFull,
+	natsjs.ReasonInsufficientResources: classInsufficientResources,
 	natsjs.ReasonStreamMismatch:        classForeignStream,
 	natsjs.ReasonSealed:                classSealed,
-	natsjs.ReasonAccountLimits:         classBucketFull,
+	natsjs.ReasonAccountLimits:         classAccountFull,
 	natsjs.ReasonStreamFull:            classBucketFull,
 	natsjs.ReasonTooLarge:              classTooLarge,
 	natsjs.ReasonCanceled:              classOther,
@@ -124,7 +129,11 @@ type Stats struct {
 	Cycles             uint64
 	Finals             uint64
 	PreviousLeftAtStop uint64
+	LastImageBytes     int64
+	ImageOverWorst     uint64
+	SpaceSweeps        uint64
 	SweptObjects       uint64
+	SweptBytes         uint64
 	SweptOrphans       uint64
 	SweepFailures      uint64
 	UnreadableMeta     uint64
@@ -149,6 +158,10 @@ type measurement struct {
 type counters struct {
 	sweptObjects  atomic.Uint64
 	sweptOrphans  atomic.Uint64
+	sweptBytes    atomic.Uint64
+	spaceSweeps   atomic.Uint64
+	overWorst     atomic.Uint64
+	lastImage     atomic.Int64
 	sweepFailures atomic.Uint64
 	unreadable    atomic.Uint64
 	lastSweep     atomic.Pointer[error]
@@ -190,11 +203,13 @@ func (c *counters) snapshot(epoch uint64, maxBytes int64) Stats {
 		Cycles:         c.cycles.Load(),
 		SweptObjects:   c.sweptObjects.Load(),
 		SweptOrphans:   c.sweptOrphans.Load(),
+		SweptBytes:     c.sweptBytes.Load(),
 		SweepFailures:  c.sweepFailures.Load(),
 		UnreadableMeta: c.unreadable.Load(),
 		LastSweepError: loaded(c.lastSweep.Load()),
 	}
 	c.withCommits(&stats)
+	c.withCapacity(&stats)
 	return stats
 }
 
@@ -208,6 +223,12 @@ func (c *counters) withCommits(stats *Stats) {
 	if last := c.lastMeasure.Load(); last != nil {
 		stats.withMeasure(last)
 	}
+}
+
+func (c *counters) withCapacity(stats *Stats) {
+	stats.LastImageBytes = c.lastImage.Load()
+	stats.ImageOverWorst = c.overWorst.Load()
+	stats.SpaceSweeps = c.spaceSweeps.Load()
 }
 
 func (s *Stats) withMeasure(last *measurement) {
@@ -231,7 +252,10 @@ func loaded(err *error) error {
 	return *err
 }
 
-func (c *counters) sweepFailed(err error) {
+func (c *counters) sweepEnded(err error) {
+	if err == nil || stopCaused(err) || errors.Is(err, errSweepLeaseLost) {
+		return
+	}
 	c.sweepFailures.Add(1)
 	c.lastSweep.Store(new(translate(err)))
 }

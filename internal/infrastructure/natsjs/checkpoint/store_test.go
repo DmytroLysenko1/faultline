@@ -23,24 +23,27 @@ import (
 )
 
 const (
-	connectTimeout = 2 * time.Second
-	drainTimeout   = time.Second
-	closeTimeout   = 5 * time.Second
-	singleNode     = 1
-	threeNodes     = 3
-	cliChunk       = 128 << 10
-	bigImage       = 6 << 20
-	smallImage     = 300 << 10
-	worstImage     = 8 << 20
-	bucketBytes    = 40 << 20
-	grownBucket    = 48 << 20
-	uploadRate     = 64 << 20
-	leaseTTL       = 25 * time.Second
-	ownEpoch       = 7
-	position       = 42
-	stepdownWait   = 5 * time.Second
-	bindWithin     = 20 * time.Second
-	bindAttempt    = 2 * time.Second
+	connectTimeout  = 2 * time.Second
+	drainTimeout    = time.Second
+	closeTimeout    = 5 * time.Second
+	singleNode      = 1
+	threeNodes      = 3
+	cliChunk        = 128 << 10
+	bigImage        = 6 << 20
+	smallImage      = 300 << 10
+	worstImage      = 8 << 20
+	bucketBytes     = 40 << 20
+	grownBucket     = 48 << 20
+	uploadRate      = 64 << 20
+	leaseTTL        = 25 * time.Second
+	ownEpoch        = 7
+	position        = 42
+	stepdownWait    = 5 * time.Second
+	bindWithin      = 20 * time.Second
+	bindAttempt     = 2 * time.Second
+	shortDuplicates = time.Minute
+	objectStream    = "OBJ_faultline_checkpoints_p0"
+	pointerStream   = "KV_" + checkpoint.PointerBucket
 )
 
 type live struct {
@@ -270,6 +273,56 @@ func TestABucketThatServesDirectReadsIsRefused(t *testing.T) {
 
 	if !errors.Is(err, checkpoint.ErrBucketDrift) {
 		t.Fatalf("Open: err = %v, want %v", err, checkpoint.ErrBucketDrift)
+	}
+}
+
+func TestAnObjectBucketThatCouldLoseChunksOrDuplicatesDrifted(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    streamChange
+		wantErr error
+	}{
+		{name: "duplicates kept under the window", args: streamChange{stream: objectStream,
+			change: func(c *jetstream.StreamConfig) { c.Duplicates = shortDuplicates }}, wantErr: checkpoint.ErrBucketDrift},
+		{name: "old chunks discarded when full", args: streamChange{stream: objectStream,
+			change: func(c *jetstream.StreamConfig) { c.Discard = jetstream.DiscardOld }}, wantErr: checkpoint.ErrBucketDrift},
+		{name: "chunks that age out", args: streamChange{stream: objectStream,
+			change: func(c *jetstream.StreamConfig) { c.MaxAge = time.Hour }}, wantErr: checkpoint.ErrBucketDrift},
+		{name: "one chunk kept per subject", args: streamChange{stream: objectStream,
+			change: func(c *jetstream.StreamConfig) { c.MaxMsgsPerSubject = 1 }}, wantErr: checkpoint.ErrBucketDrift},
+		{name: "a pointer bucket whose window the operator changed still opens", args: streamChange{
+			stream: pointerStream, change: func(c *jetstream.StreamConfig) { c.Duplicates = shortDuplicates }}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := startLive(t, singleNode)
+			l.open(t)
+			l.changeStream(t, &tt.args)
+
+			_, err := checkpoint.Open(t.Context(), l.conn, natsjstest.Held{}, l.options)
+
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Open: err = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+type streamChange struct {
+	stream string
+	change func(config *jetstream.StreamConfig)
+}
+
+func (l *live) changeStream(t *testing.T, changed *streamChange) {
+	t.Helper()
+	stream, err := l.js.Stream(t.Context(), changed.stream)
+	if err != nil {
+		t.Fatalf("stream %s: %v", changed.stream, err)
+	}
+	config := stream.CachedInfo().Config
+	changed.change(&config)
+	if _, err := l.js.UpdateStream(t.Context(), config); err != nil {
+		t.Fatalf("change %s: %v", changed.stream, err)
 	}
 }
 

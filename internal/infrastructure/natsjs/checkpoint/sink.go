@@ -51,6 +51,8 @@ type uploader struct {
 	feedClosed     bool
 	finalCommitted bool
 	queued         *spool
+	cancelSweep    context.CancelCauseFunc
+	schedule       sweepSchedule
 	phase          uploadPhase
 	left           int64
 	size           int64

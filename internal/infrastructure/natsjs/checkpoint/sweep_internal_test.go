@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/natsjstest"
 )
@@ -72,5 +75,26 @@ func TestASweepKeepsAnObjectWhoseNameDoesNotParse(t *testing.T) {
 
 	if !slices.Contains(w.subjects(t), w.metaSubject(unparsedName)) {
 		t.Errorf("the sweep removed %q, whose name tells no epoch", unparsedName)
+	}
+}
+
+func isChunkPurge(f *natsjstest.Frame) bool {
+	return isPurge(f) && strings.Contains(string(f.Payload), chunkSubjectPart)
+}
+
+func TestAMetaSweptBeforeItsChunksFailedIsStillCounted(t *testing.T) {
+	w := startWorld(t)
+	stale := w.putObject(t, olderEpoch, 20, imageOf(9))
+	_, meta := w.restorable(t)
+	w.once(isChunkPurge, natsjstest.Answer([]byte(unavailableAnswer)))
+
+	if _, err := w.store.Stake(t.Context(), &meta); err != nil {
+		t.Fatalf("Stake: %v", err)
+	}
+
+	got := w.store.Stats()
+	want := []uint64{1, stale.Size, 1}
+	if diff := cmp.Diff(want, []uint64{got.SweptObjects, got.SweptBytes, got.SweepFailures}); diff != "" {
+		t.Errorf("swept objects, bytes, failures (-want +got):\n%s", diff)
 	}
 }

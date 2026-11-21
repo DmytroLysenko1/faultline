@@ -56,16 +56,40 @@ type Options struct {
 }
 
 func (o *Options) Validate() error {
+	return o.validate(dedupWindow)
+}
+
+func (o *Options) validate(window time.Duration) error {
 	if o == nil {
 		return fmt.Errorf("%w: no options", ErrInvalidOptions)
 	}
 	if err := o.Topology.Validate(); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidOptions, err)
 	}
-	for _, check := range []func() error{o.validateOwner, o.validateRates, o.validateCapacity} {
+	checks := []func() error{
+		o.validateOwner,
+		o.validateRates,
+		func() error {
+			return o.validateWindow(window)
+		},
+		o.validateCapacity,
+	}
+	for _, check := range checks {
 		if err := check(); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (o *Options) validateWindow(window time.Duration) error {
+	if window <= chunkAttempt+uploadSlack {
+		return fmt.Errorf("%w: a dedup window of %s does not outlive one chunk attempt and the upload slack",
+			ErrInvalidOptions, window)
+	}
+	if cycle := o.worstCycle(); cycle >= window {
+		return fmt.Errorf("%w: worst upload and verify cycle %s is not under the %s dedup window",
+			ErrInvalidOptions, cycle, window)
 	}
 	return nil
 }
@@ -82,10 +106,6 @@ func (o *Options) validateRates() error {
 	if o.UploadRate <= 0 || o.VerifyRate < 0 || o.WorstImage <= 0 {
 		return fmt.Errorf("%w: upload rate %d, verify rate %d, worst image %d",
 			ErrInvalidOptions, o.UploadRate, o.VerifyRate, o.WorstImage)
-	}
-	if cycle := o.worstCycle(); cycle >= dedupWindow {
-		return fmt.Errorf("%w: worst upload and verify cycle %s is not under the %s dedup window",
-			ErrInvalidOptions, cycle, dedupWindow)
 	}
 	return nil
 }

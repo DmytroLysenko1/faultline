@@ -15,10 +15,13 @@ import (
 	"github.com/samber/lo"
 )
 
-const sweepCallBudget = 5 * time.Second
+const (
+	sweepCallBudget = 5 * time.Second
+	sweepBudget     = 10 * time.Second
+)
 
 var (
-	errSweepStopped   = errors.New("sweep stopped: lease is not valid")
+	errSweepLeaseLost = errors.New("checkpoint sweep stopped: the partition lease is not valid")
 	errUnreadableMeta = errors.New("checkpoint object meta does not parse")
 )
 
@@ -26,77 +29,156 @@ type storedMeta struct {
 	subject string
 	name    string
 	nuid    string
+	size    uint64
 }
 
 type metaBody struct {
 	NUID string `json:"nuid"`
+	Size uint64 `json:"size"`
 }
 
 type bucketView struct {
 	subjects   map[string]uint64
 	metas      []storedMeta
-	unreadable int
+	unreadable uint64
+}
+
+type sweepRule struct {
+	pointer *pointer
+	below   uint64
+	proceed func() error
+}
+
+type sweepOutcome struct {
+	completed   bool
+	removed     int
+	firstMature time.Time
+}
+
+type sweeper struct {
+	store   *Store
+	rule    *sweepRule
+	outcome sweepOutcome
+}
+
+func stakingRule(written *pointer, own uint64, proceed func() error) *sweepRule {
+	return &sweepRule{
+		pointer: written,
+		below:   own + 1,
+		proceed: proceed,
+	}
+}
+
+func spaceRule(found *pointer, own uint64, proceed func() error) *sweepRule {
+	return &sweepRule{
+		pointer: found,
+		below:   own,
+		proceed: proceed,
+	}
 }
 
 func (s *Store) sweep(ctx context.Context, written *pointer) {
-	if err := s.sweepBucket(ctx, written); err != nil {
-		s.stats.sweepFailed(err)
+	_, err := s.sweepBucket(ctx, stakingRule(written, s.options.Epoch, s.leaseKept))
+	s.stats.sweepEnded(err)
+}
+
+func (s *Store) leaseKept() error {
+	if !s.lease.Valid() {
+		return errSweepLeaseLost
+	}
+	return nil
+}
+
+func (s *Store) sweepBucket(ctx context.Context, rule *sweepRule) (sweepOutcome, error) {
+	ctx, cancel := context.WithTimeout(ctx, sweepBudget)
+	defer cancel()
+	run := &sweeper{
+		store: s,
+		rule:  rule,
+	}
+	err := run.sweep(ctx)
+	return run.outcome, err
+}
+
+func (r *sweepRule) stale(meta *storedMeta) bool {
+	epoch, _, named := parseName(meta.name)
+	return named && epoch < r.below && !r.pointer.holds(meta.name)
+}
+
+func (o *sweepOutcome) matures(at time.Time) {
+	if o.firstMature.IsZero() || at.Before(o.firstMature) {
+		o.firstMature = at
 	}
 }
 
-func (s *Store) sweepBucket(ctx context.Context, written *pointer) error {
-	view, err := s.viewBucket(ctx)
+func (o *sweepOutcome) pausedUntil(now time.Time, orphanAge time.Duration) time.Time {
+	if !o.completed || o.removed > 0 {
+		return time.Time{}
+	}
+	if o.firstMature.IsZero() {
+		return now.Add(orphanAge)
+	}
+	return o.firstMature
+}
+
+func (w *sweeper) sweep(ctx context.Context) error {
+	view, err := w.view(ctx)
 	if err != nil {
 		return err
 	}
-	if err := s.sweepMetas(ctx, view.metas, written); err != nil {
+	if err := w.sweepMetas(ctx, view.metas); err != nil {
 		return err
 	}
 	if view.unreadable > 0 {
+		w.outcome.completed = true
 		return fmt.Errorf("%w: %d metas, chunks without a meta are kept", errUnreadableMeta, view.unreadable)
 	}
-	return s.sweepOrphans(ctx, view.subjects, view.metas)
+	if err := w.sweepOrphans(ctx, view.subjects, view.metas); err != nil {
+		return err
+	}
+	w.outcome.completed = true
+	return nil
 }
 
-func (s *Store) viewBucket(ctx context.Context) (bucketView, error) {
+func (w *sweeper) view(ctx context.Context) (bucketView, error) {
 	var subjects map[string]uint64
-	err := sweepCall(ctx, func(call context.Context) error {
+	err := w.call(ctx, func(call context.Context) error {
 		var err error
-		subjects, err = s.buckets.subjects(call)
+		subjects, err = w.store.buckets.subjects(call)
 		return err
 	})
 	if err != nil {
 		return bucketView{}, fmt.Errorf("list bucket subjects: %w", err)
 	}
 	view := bucketView{subjects: subjects}
-	if err := s.storedMetas(ctx, &view); err != nil {
+	if err := w.storedMetas(ctx, &view); err != nil {
 		return bucketView{}, err
 	}
+	w.store.stats.unreadable.Store(view.unreadable)
 	return view, nil
 }
 
-func (s *Store) storedMetas(ctx context.Context, view *bucketView) error {
-	prefix := s.subjectPrefix() + metaSubjectPart
+func (w *sweeper) storedMetas(ctx context.Context, view *bucketView) error {
+	prefix := w.store.subjectPrefix() + metaSubjectPart
 	for subject := range view.subjects {
 		encoded, isMeta := strings.CutPrefix(subject, prefix)
 		if !isMeta {
 			continue
 		}
-		if err := s.addMeta(ctx, view, subject, encoded); err != nil {
+		if err := w.addMeta(ctx, view, subject, encoded); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Store) addMeta(ctx context.Context, view *bucketView, subject, encoded string) error {
-	found, err := s.storedMeta(ctx, subject, encoded)
+func (w *sweeper) addMeta(ctx context.Context, view *bucketView, subject, encoded string) error {
+	found, err := w.storedMeta(ctx, subject, encoded)
 	if errors.Is(err, errNoMessage) {
 		return nil
 	}
 	if errors.Is(err, errUnreadableMeta) {
 		view.unreadable++
-		s.stats.unreadable.Add(1)
 		return nil
 	}
 	if err != nil {
@@ -106,8 +188,8 @@ func (s *Store) addMeta(ctx context.Context, view *bucketView, subject, encoded 
 	return nil
 }
 
-func (s *Store) storedMeta(ctx context.Context, subject, encoded string) (storedMeta, error) {
-	last, err := s.lastMessage(ctx, subject)
+func (w *sweeper) storedMeta(ctx context.Context, subject, encoded string) (storedMeta, error) {
+	last, err := w.lastMessage(ctx, subject)
 	if err != nil {
 		return storedMeta{}, fmt.Errorf("read meta %s: %w", subject, err)
 	}
@@ -123,37 +205,35 @@ func (s *Store) storedMeta(ctx context.Context, subject, encoded string) (stored
 		subject: subject,
 		name:    string(name),
 		nuid:    body.NUID,
+		size:    body.Size,
 	}, nil
 }
 
-func (s *Store) sweepMetas(ctx context.Context, metas []storedMeta, written *pointer) error {
+func (w *sweeper) sweepMetas(ctx context.Context, metas []storedMeta) error {
 	for _, meta := range metas {
-		if !s.stale(meta, written) {
+		if !w.rule.stale(&meta) {
 			continue
 		}
-		if err := s.purgeObject(ctx, meta); err != nil {
+		if err := w.purgeObject(ctx, &meta); err != nil {
 			return err
 		}
-		s.stats.sweptObjects.Add(1)
 	}
 	return nil
 }
 
-func (s *Store) stale(meta storedMeta, written *pointer) bool {
-	epoch, _, named := parseName(meta.name)
-	return named && epoch <= s.options.Epoch && !written.holds(meta.name)
-}
-
-func (s *Store) purgeObject(ctx context.Context, meta storedMeta) error {
-	if err := s.purge(ctx, meta.subject); err != nil {
+func (w *sweeper) purgeObject(ctx context.Context, meta *storedMeta) error {
+	if err := w.purge(ctx, meta.subject); err != nil {
 		return err
 	}
-	return s.purge(ctx, s.chunkSubject(meta.nuid))
+	w.outcome.removed++
+	w.store.stats.sweptObjects.Add(1)
+	w.store.stats.sweptBytes.Add(meta.size)
+	return w.purge(ctx, w.store.chunkSubject(meta.nuid))
 }
 
-func (s *Store) sweepOrphans(ctx context.Context, subjects map[string]uint64, metas []storedMeta) error {
-	for _, subject := range s.orphanSubjects(subjects, metas) {
-		if err := s.sweepOrphan(ctx, subject); err != nil {
+func (w *sweeper) sweepOrphans(ctx context.Context, subjects map[string]uint64, metas []storedMeta) error {
+	for _, subject := range w.store.orphanSubjects(subjects, metas) {
+		if err := w.sweepOrphan(ctx, subject); err != nil {
 			return err
 		}
 	}
@@ -170,22 +250,52 @@ func (s *Store) orphanSubjects(subjects map[string]uint64, metas []storedMeta) [
 	})
 }
 
-func (s *Store) sweepOrphan(ctx context.Context, subject string) error {
-	last, err := s.lastMessage(ctx, subject)
+func (w *sweeper) sweepOrphan(ctx context.Context, subject string) error {
+	last, err := w.lastMessage(ctx, subject)
 	if errors.Is(err, errNoMessage) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("read orphan %s: %w", subject, err)
 	}
-	if s.now().Sub(last.Time) <= s.options.orphanAge() {
+	mature := last.Time.Add(w.store.options.orphanAge())
+	if !w.store.now().After(mature) {
+		w.outcome.matures(mature)
 		return nil
 	}
-	if err := s.purge(ctx, subject); err != nil {
+	if err := w.purge(ctx, subject); err != nil {
 		return err
 	}
-	s.stats.sweptOrphans.Add(1)
+	w.outcome.removed++
+	w.store.stats.sweptOrphans.Add(1)
 	return nil
+}
+
+func (w *sweeper) lastMessage(ctx context.Context, subject string) (*jetstream.RawStreamMsg, error) {
+	var last *jetstream.RawStreamMsg
+	err := w.call(ctx, func(call context.Context) error {
+		var err error
+		last, err = w.store.buckets.bucket.GetLastMsgForSubject(call, subject)
+		return err
+	})
+	return last, noMessage(err)
+}
+
+func (w *sweeper) purge(ctx context.Context, subject string) error {
+	err := w.call(ctx, func(call context.Context) error {
+		return w.store.buckets.bucket.Purge(call, jetstream.WithPurgeSubject(subject))
+	})
+	if err != nil {
+		return fmt.Errorf("purge %s: %w", subject, err)
+	}
+	return nil
+}
+
+func (w *sweeper) call(ctx context.Context, call func(call context.Context) error) error {
+	if err := w.rule.proceed(); err != nil {
+		return err
+	}
+	return stopMarked(ctx, sweepCall(ctx, call))
 }
 
 func (s *Store) lastMessage(ctx context.Context, subject string) (*jetstream.RawStreamMsg, error) {
@@ -195,23 +305,14 @@ func (s *Store) lastMessage(ctx context.Context, subject string) (*jetstream.Raw
 		last, err = s.buckets.bucket.GetLastMsgForSubject(call, subject)
 		return err
 	})
-	if errors.Is(err, jetstream.ErrMsgNotFound) {
-		return nil, errNoMessage
-	}
-	return last, err
+	return last, noMessage(err)
 }
 
-func (s *Store) purge(ctx context.Context, subject string) error {
-	if !s.lease.Valid() {
-		return errSweepStopped
+func noMessage(err error) error {
+	if errors.Is(err, jetstream.ErrMsgNotFound) {
+		return errNoMessage
 	}
-	err := sweepCall(ctx, func(call context.Context) error {
-		return s.buckets.bucket.Purge(call, jetstream.WithPurgeSubject(subject))
-	})
-	if err != nil {
-		return fmt.Errorf("purge %s: %w", subject, err)
-	}
-	return nil
+	return err
 }
 
 func sweepCall(ctx context.Context, call func(call context.Context) error) error {

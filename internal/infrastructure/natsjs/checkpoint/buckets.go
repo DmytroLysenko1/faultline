@@ -38,16 +38,29 @@ type buckets struct {
 	stream   string
 	prefix   string
 	object   string
+	window   time.Duration
 }
 
-func openBuckets(ctx context.Context, control, data jetstream.JetStream, options *Options) (buckets, error) {
-	if err := ensureStream(ctx, control, new(pointerConfig(options.Topology.Replicas)), unlimited); err != nil {
+func openBuckets(
+	ctx context.Context,
+	control, data jetstream.JetStream,
+	options *Options,
+	window time.Duration,
+) (buckets, error) {
+	pointers := bucketWant{config: pointerConfig(options.Topology.Replicas)}
+	if err := ensureStream(ctx, control, &pointers); err != nil {
 		return buckets{}, fmt.Errorf("pointer bucket: %w", err)
 	}
-	if err := ensureStream(ctx, control, new(objectConfig(options)), options.MaxBytes); err != nil {
+	objects := bucketWant{config: objectConfig(options, window), holdsObjects: true}
+	if err := ensureStream(ctx, control, &objects); err != nil {
 		return buckets{}, fmt.Errorf("object bucket %s: %w", options.objectBucket(), err)
 	}
-	return bind(ctx, control, data, options)
+	bound, err := bind(ctx, control, data, options)
+	if err != nil {
+		return buckets{}, err
+	}
+	bound.window = window
+	return bound, nil
 }
 
 func bind(ctx context.Context, control, data jetstream.JetStream, options *Options) (buckets, error) {
@@ -142,36 +155,45 @@ func pointerConfig(replicas int) jetstream.StreamConfig {
 	}
 }
 
-func objectConfig(options *Options) jetstream.StreamConfig {
+func objectConfig(options *Options, window time.Duration) jetstream.StreamConfig {
 	bucket := objSubjectPrefix + options.objectBucket()
 	return jetstream.StreamConfig{
-		Name:        objStreamPrefix + options.objectBucket(),
-		Subjects:    []string{bucket + chunkSubjectPart + subjectWildcardGT, bucket + metaSubjectPart + subjectWildcardGT},
-		MaxBytes:    options.MaxBytes,
-		Storage:     jetstream.FileStorage,
-		Replicas:    options.Topology.Replicas,
-		Discard:     jetstream.DiscardNew,
-		AllowRollup: true,
-		AllowDirect: false,
-		Duplicates:  dedupWindow,
+		Name: objStreamPrefix + options.objectBucket(),
+		Subjects: []string{
+			bucket + chunkSubjectPart + subjectWildcardGT,
+			bucket + metaSubjectPart + subjectWildcardGT,
+		},
+		MaxBytes:          options.MaxBytes,
+		MaxMsgsPerSubject: unlimited,
+		Storage:           jetstream.FileStorage,
+		Replicas:          options.Topology.Replicas,
+		Discard:           jetstream.DiscardNew,
+		AllowRollup:       true,
+		AllowDirect:       false,
+		Duplicates:        window,
 	}
 }
 
-func ensureStream(ctx context.Context, js jetstream.JetStream, config *jetstream.StreamConfig, maxBytes int64) error {
+type bucketWant struct {
+	config       jetstream.StreamConfig
+	holdsObjects bool
+}
+
+func ensureStream(ctx context.Context, js jetstream.JetStream, want *bucketWant) error {
 	err := retrying(ctx, func(attempt context.Context) error {
-		_, err := js.CreateStream(attempt, *config)
+		_, err := js.CreateStream(attempt, want.config)
 		return err
 	})
 	if !errors.Is(err, jetstream.ErrStreamNameAlreadyInUse) {
 		return err
 	}
-	return reconcile(ctx, js, config, maxBytes)
+	return reconcile(ctx, js, want)
 }
 
-func reconcile(ctx context.Context, js jetstream.JetStream, want *jetstream.StreamConfig, maxBytes int64) error {
+func reconcile(ctx context.Context, js jetstream.JetStream, want *bucketWant) error {
 	var have jetstream.StreamConfig
 	err := retrying(ctx, func(attempt context.Context) error {
-		stream, err := js.Stream(attempt, want.Name)
+		stream, err := js.Stream(attempt, want.config.Name)
 		if err == nil {
 			have = stream.CachedInfo().Config
 		}
@@ -180,16 +202,45 @@ func reconcile(ctx context.Context, js jetstream.JetStream, want *jetstream.Stre
 	if err != nil {
 		return err
 	}
-	if err := checkDrift(&have, want); err != nil {
+	if err := want.drift(&have); err != nil {
 		return err
 	}
-	return grow(ctx, js, &have, maxBytes)
+	return grow(ctx, js, &have, want.config.MaxBytes)
+}
+
+func (w *bucketWant) drift(have *jetstream.StreamConfig) error {
+	if err := checkDrift(have, &w.config); err != nil {
+		return err
+	}
+	if !w.holdsObjects {
+		return nil
+	}
+	return checkObjectDrift(have, &w.config)
 }
 
 func checkDrift(have, want *jetstream.StreamConfig) error {
 	if have.Storage != want.Storage || have.Replicas != want.Replicas || have.AllowDirect != want.AllowDirect {
 		return fmt.Errorf("%w: %s has storage %s, %d replicas, direct %t; want %s, %d, %t", ErrBucketDrift, want.Name,
 			have.Storage, have.Replicas, have.AllowDirect, want.Storage, want.Replicas, want.AllowDirect)
+	}
+	return nil
+}
+
+func checkObjectDrift(have, want *jetstream.StreamConfig) error {
+	if have.Discard != want.Discard ||
+		have.MaxAge != want.MaxAge ||
+		have.MaxMsgsPerSubject != want.MaxMsgsPerSubject {
+		return fmt.Errorf("%w: %s has discard %s, max age %s, %d per subject; want %s, %s, %d", ErrBucketDrift,
+			want.Name, have.Discard, have.MaxAge, have.MaxMsgsPerSubject, want.Discard, want.MaxAge,
+			want.MaxMsgsPerSubject)
+	}
+	return checkDuplicates(have, want.Duplicates)
+}
+
+func checkDuplicates(have *jetstream.StreamConfig, window time.Duration) error {
+	if have.Duplicates < window {
+		return fmt.Errorf("%w: %s keeps duplicates for %s, under the %s window", ErrBucketDrift, have.Name,
+			have.Duplicates, window)
 	}
 	return nil
 }

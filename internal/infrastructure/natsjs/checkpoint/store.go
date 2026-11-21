@@ -47,7 +47,7 @@ type address struct {
 }
 
 type staking struct {
-	cancel context.CancelFunc
+	cancel context.CancelCauseFunc
 	done   chan struct{}
 }
 
@@ -68,13 +68,24 @@ type Store struct {
 	chunkBytes uint32
 }
 
-func Open(ctx context.Context, conn *natsjs.Conn, lease partitionLease, options *Options) (*Store, error) {
-	store, err := open(ctx, conn, lease, options)
+func Open(
+	ctx context.Context,
+	conn *natsjs.Conn,
+	lease partitionLease,
+	options *Options,
+) (*Store, error) {
+	store, err := open(ctx, conn, lease, options, dedupWindow)
 	return store, translate(err)
 }
 
-func open(ctx context.Context, conn *natsjs.Conn, lease partitionLease, options *Options) (*Store, error) {
-	if err := options.Validate(); err != nil {
+func open(
+	ctx context.Context,
+	conn *natsjs.Conn,
+	lease partitionLease,
+	options *Options,
+	window time.Duration,
+) (*Store, error) {
+	if err := options.validate(window); err != nil {
 		return nil, err
 	}
 	control, data, err := jetStreams(conn)
@@ -84,7 +95,7 @@ func open(ctx context.Context, conn *natsjs.Conn, lease partitionLease, options 
 	if err := removeSpools(options.SpoolDir); err != nil {
 		return nil, err
 	}
-	bound, err := openBuckets(ctx, control, data, options)
+	bound, err := openBuckets(ctx, control, data, options, window)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +150,7 @@ func (s *Store) Close(ctx context.Context) {
 	}
 	s.state = stateClosed
 	if s.staking != nil {
-		s.staking.cancel()
+		s.staking.cancel(errStopStake)
 	}
 	if s.up != nil {
 		s.up.stop(stopDeadline(ctx, time.Now()))
@@ -254,7 +265,7 @@ func (s *Store) enter(ctx context.Context) (context.Context, error) {
 		return nil, fmt.Errorf("%w: partition %d is already staked", errStoreState, s.options.Partition)
 	}
 	s.state = stateStaked
-	staked, cancel := context.WithCancel(ctx)
+	staked, cancel := context.WithCancelCause(ctx)
 	s.staking = &staking{
 		cancel: cancel,
 		done:   make(chan struct{}),
@@ -265,7 +276,7 @@ func (s *Store) enter(ctx context.Context) (context.Context, error) {
 func (s *Store) exitStake(err error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.staking.cancel()
+	s.staking.cancel(nil)
 	close(s.staking.done)
 	s.staking = nil
 	if err != nil && s.state == stateStaked {

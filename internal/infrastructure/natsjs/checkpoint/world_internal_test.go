@@ -108,7 +108,7 @@ func idleStats() Stats {
 		Failed: map[string]uint64{"upload": 0, "chunk_count": 0, "verify": 0, "cas": 0, "position_regressed": 0,
 			"name_collision": 0, "commit": 0, "bucket_read": 0, "bucket_unresolved": 0},
 		UploadFailed: map[string]uint64{"other": 0, "bucket_full": 0, "sealed": 0, "too_large": 0, "timeout": 0,
-			"foreign_stream": 0},
+			"foreign_stream": 0, "account_full": 0, "insufficient_resources": 0},
 	}
 }
 
@@ -167,17 +167,25 @@ func startWorld(t *testing.T) *world {
 
 func startWorldOn(t *testing.T, nodes int) *world {
 	t.Helper()
-	cluster := natsjstest.Start(t, nodes)
-	proxy := natsjstest.StartProxy(t, cluster.URLs()[0])
 	options := testOptions()
 	options.Topology.Replicas = nodes
+	return startWorldWith(t, options, dedupWindow)
+}
+
+func startWorldWith(t *testing.T, options *Options, window time.Duration) *world {
+	t.Helper()
+	if err := options.validate(window); err != nil {
+		t.Fatalf("options for a %s window: %v", window, err)
+	}
+	cluster := natsjstest.Start(t, options.Topology.Replicas)
+	proxy := natsjstest.StartProxy(t, cluster.URLs()[0])
 	options.SpoolDir = t.TempDir()
 	operator := connect(t, cluster.URLs()[0])
 	createJournal(t, operator, options)
 	ctx, cancel := context.WithTimeout(t.Context(), worldTimeout)
 	defer cancel()
 	proxied := connect(t, proxy.URL())
-	bound, err := openBuckets(ctx, proxied, proxied, options)
+	bound, err := openBuckets(ctx, proxied, proxied, options, window)
 	if err != nil {
 		t.Fatalf("open buckets: %v", err)
 	}

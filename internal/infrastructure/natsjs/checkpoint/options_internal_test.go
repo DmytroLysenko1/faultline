@@ -208,7 +208,7 @@ func TestEveryCauseOfTheStoreHasAProcessingMeaning(t *testing.T) {
 	causes := []error{
 		errEpochRegressed, errPointerMoved, errObjectChanged, errCheckpointMissing, errStreamRecreated, errCorrupt,
 		errStoreClosed, errStoreState, errDiscardTarget, errLeaseLost, errPointerForeign, errFenced, errCASUnknown,
-		errUnresolved, errPositionRegressed, errNameCollision,
+		errUnresolved, errPositionRegressed, errNameCollision, errSweepLeaseLost,
 	}
 	for _, cause := range causes {
 		if !slices.ContainsFunc(translations(), func(t translation) bool { return errors.Is(t.cause, cause) }) {
@@ -243,6 +243,27 @@ func TestACapacityCheckDoesNotOverflow(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if err := tt.options.validateCapacity(); !errors.Is(err, tt.wantErr) {
 				t.Fatalf("validateCapacity: err = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestADedupWindowMustOutliveOneAttemptAndTheSlack(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    time.Duration
+		wantErr error
+	}{
+		{name: "exactly one attempt and the slack", args: chunkAttempt + uploadSlack, wantErr: ErrInvalidOptions},
+		{name: "a moment longer", args: chunkAttempt + uploadSlack + time.Nanosecond},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			options := testOptions()
+			options.UploadRate = testWorst
+
+			if err := options.validate(tt.args); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("validate(%s) = %v, want %v", tt.args, err, tt.wantErr)
 			}
 		})
 	}

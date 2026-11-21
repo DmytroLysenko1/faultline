@@ -316,6 +316,7 @@ func TestStakingSweepsOnlyWhatNoHolderCanStillNeed(t *testing.T) {
 			}
 			wantStats := idleStats()
 			wantStats.SweptObjects = 1
+			wantStats.SweptBytes = stale.Size
 			wantStats.SweptOrphans = tt.sweptOrphan
 			if diff := cmp.Diff(wantStats, w.store.Stats()); diff != "" {
 				t.Errorf("stats (-want +got):\n%s", diff)

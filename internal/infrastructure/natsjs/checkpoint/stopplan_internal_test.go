@@ -106,6 +106,8 @@ func TestTheStopBudgetsHoldTheirOwnArithmetic(t *testing.T) {
 			callTime(casCalls)},
 		{name: "the handover is the pointer write and the take-back of the previous", args: handoverCalls ==
 			casCalls+takeBackCalls},
+		{name: "the dedup window outlives one attempt and the upload slack", args: dedupWindow >
+			chunkAttempt+uploadSlack},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

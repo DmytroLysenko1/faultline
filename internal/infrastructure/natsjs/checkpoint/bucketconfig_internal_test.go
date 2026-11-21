@@ -49,7 +49,7 @@ func TestTheBucketsAreWhatNATSWouldCreateButReadAtTheLeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reference objects: %v", err)
 	}
-	if _, err := openBuckets(t.Context(), js, js, options); err != nil {
+	if _, err := openBuckets(t.Context(), js, js, options, dedupWindow); err != nil {
 		t.Fatalf("open buckets: %v", err)
 	}
 	tests := []struct {
