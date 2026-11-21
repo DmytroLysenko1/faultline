@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"slices"
 	"sync"
@@ -46,6 +47,7 @@ type world struct {
 	rereadDelay    time.Duration
 	override       *bucketState
 	rereadOverride *bucketState
+	invalid        uint64
 	onReread       func(w *world)
 	stateCalls     []time.Duration
 	readCalls      []time.Duration
@@ -144,7 +146,7 @@ func (w *world) readEntries(ctx context.Context) (bucketEntries, configVerdict, 
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return bucketEntries{State: state, Grants: grants}, verdictOf(&w.config), nil
+	return bucketEntries{State: state, Grants: grants, Invalid: w.invalid}, verdictOf(&w.config), nil
 }
 
 func budgetOf(ctx context.Context) time.Duration {
@@ -854,6 +856,69 @@ func TestRolledBack(t *testing.T) {
 			}
 			if got := rolledBack(tt.state, base); got != tt.want {
 				t.Errorf("rolledBack = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+type recordedLogs struct {
+	mu       sync.Mutex
+	messages []string
+}
+
+func (r *recordedLogs) Enabled(context.Context, slog.Level) bool {
+	return true
+}
+
+func (r *recordedLogs) Handle(_ context.Context, record slog.Record) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.messages = append(r.messages, record.Message)
+	return nil
+}
+
+func (r *recordedLogs) WithAttrs([]slog.Attr) slog.Handler {
+	return r
+}
+
+func (r *recordedLogs) WithGroup(string) slog.Handler {
+	return r
+}
+
+func (r *recordedLogs) has(message string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Contains(r.messages, message)
+}
+
+func TestAFirstLoadOfMostlyInvalidEntriesIsAnError(t *testing.T) {
+	tests := []struct {
+		name    string
+		grants  int
+		invalid uint64
+		want    bool
+	}{
+		{name: "only invalid entries", grants: 0, invalid: 3, want: true},
+		{name: "as many invalid as grants", grants: 2, invalid: 2, want: true},
+		{name: "fewer invalid than grants", grants: 3, invalid: 1},
+		{name: "no invalid entries", grants: 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w, _ := seeded(t, tt.grants)
+			w.invalid = tt.invalid
+			logs := &recordedLogs{}
+			options := testOptions()
+			options.Logger = slog.New(logs)
+			directory, err := newDirectory(w.readState, w.readEntries, options)
+			if err != nil {
+				t.Fatalf("newDirectory: %v", err)
+			}
+			if err := directory.load(t.Context()); err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			if got := logs.has("tokens.mostly_invalid_entries"); got != tt.want {
+				t.Errorf("error logged = %v, want %v", got, tt.want)
 			}
 		})
 	}

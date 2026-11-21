@@ -153,6 +153,7 @@ func TestStrictHeadersReadOnlyTheCanonicalForm(t *testing.T) {
 		{name: "a bare carriage return", args: "NATS/1.0\r\nA: 1\rB: 2\r\n\r\n", wantErr: errInvalidEntry},
 		{name: "a bare line feed after the status", args: "NATS/1.0\nA: 1\r\n\r\n", wantErr: errInvalidEntry},
 		{name: "no terminating blank line", args: "NATS/1.0\r\nA: 1\r\n", wantErr: errInvalidEntry},
+		{name: "no line ends at all", args: "NATS/1.0\r\nA: 1", wantErr: errInvalidEntry},
 		{name: "a status code", args: "NATS/1.0 503\r\n\r\n", wantErr: errInvalidEntry},
 		{name: "a blank line inside", args: "NATS/1.0\r\n\r\nA: 1\r\n\r\n", wantErr: errInvalidEntry},
 		{name: "no colon", args: "NATS/1.0\r\nbogus\r\n\r\n", wantErr: errInvalidEntry},

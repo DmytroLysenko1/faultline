@@ -38,6 +38,7 @@ const (
 	keyPresent
 	keyOwn
 	keyForeign
+	keyInvalid
 	keyUnreadable
 )
 
@@ -105,6 +106,10 @@ func registerError(err error) next {
 	return byReason(registerReasons, err)
 }
 
+func attemptSent(err error) bool {
+	return !notStored(err)
+}
+
 func notStored(err error) bool {
 	return natsjs.Unsent(err) ||
 		natsjs.HasCode(err, codeNotLeader) ||
@@ -124,7 +129,7 @@ func registerSettled(state keyState, ifAbsent move) next {
 		return done()
 	case keyForeign:
 		return fail(tokenadmin.ErrIDTaken)
-	case keyAbsent, keyPresent, keyUnreadable:
+	case keyAbsent, keyPresent, keyInvalid, keyUnreadable:
 	}
 	if ifAbsent == moveFail {
 		return fail(tokenadmin.ErrOutcomeUnknown)
@@ -135,6 +140,9 @@ func registerSettled(state keyState, ifAbsent move) next {
 func provenAfterSending(step next, sentBefore bool) next {
 	if step.move != moveFail || !sentBefore || !provesNoRecord(step.err) {
 		return step
+	}
+	if errors.Is(step.err, ErrUnacceptedGrant) {
+		return fail(errors.Join(tokenadmin.ErrOutcomeUnknown, ErrUnacceptedGrant))
 	}
 	return fail(tokenadmin.ErrOutcomeUnknown)
 }

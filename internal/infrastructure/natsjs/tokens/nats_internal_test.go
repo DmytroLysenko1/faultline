@@ -766,15 +766,44 @@ func TestAnIDHeldByAnotherTenantIsTaken(t *testing.T) {
 	grant := testGrant(t, 20)
 	other := grant
 	other.Tenant = "bank"
-	value, err := encodeEntry(&other)
+	if err := b.store(t).Register(settleContext(t, settleBudget), &other); err != nil {
+		t.Fatalf("Register of the other tenant: %v", err)
+	}
+	if err := b.store(t).Register(settleContext(t, settleBudget), &grant); !errors.Is(err, tokenadmin.ErrIDTaken) {
+		t.Errorf("Register = %v, want ErrIDTaken for a grant of another tenant", err)
+	}
+	if listed, err := b.store(t).List(t.Context()); err != nil || len(listed) != 1 || listed[0].Tenant != "bank" {
+		t.Errorf("List = %v, %v; the other tenant's grant must stay", listed, err)
+	}
+}
+
+func TestAnInvalidRecordAtTheIDIsWithdrawn(t *testing.T) {
+	b := startBed(t, singleNode)
+	mustCreate(t, b.conn, singleNode)
+	grant := testGrant(t, 24)
+	value, err := encodeEntry(&grant)
 	if err != nil {
 		t.Fatalf("encodeEntry: %v", err)
 	}
 	if _, err := b.js.Publish(t.Context(), keyOf(grant.ID), value); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	if err := b.store(t).Register(settleContext(t, settleBudget), &grant); !errors.Is(err, tokenadmin.ErrIDTaken) {
-		t.Errorf("Register = %v, want ErrIDTaken for a record of another tenant", err)
+	err = b.store(t).Register(settleContext(t, settleBudget), &grant)
+	if !errors.Is(err, ErrUnacceptedGrant) || !errors.Is(err, tokenadmin.ErrStoreUnavailable) {
+		t.Errorf("Register = %v; a record the directory refuses is not a taken id", err)
+	}
+	if _, found, err := leaderGet(t.Context(), b.raw, streamName, keyOf(grant.ID)); found || err != nil {
+		t.Errorf("the refused record stayed: found %v, err %v", found, err)
+	}
+}
+
+func TestAReadFailureAfterAFreshPublishIsASuccess(t *testing.T) {
+	l := startLossy(t)
+	store := openStore(t, l.conn)
+	l.proxy.Intercept(once(msgGetSubject, natsjstest.LoseReply))
+	grant := testGrant(t, 25)
+	if err := store.Register(settleContext(t, settleBudget), &grant); err != nil {
+		t.Errorf("Register = %v; an acknowledged publish stays a success when the read-back is lost", err)
 	}
 }
 
@@ -1185,5 +1214,79 @@ func TestARefusedRecordThatCannotBeWithdrawnIsUnknown(t *testing.T) {
 		!errors.Is(err, tokenadmin.ErrOutcomeUnknown) ||
 		errors.Is(err, tokenadmin.ErrStoreUnavailable) {
 		t.Errorf("Register = %v; a refused record that may remain must be compensated", err)
+	}
+}
+
+func TestAWithdrawalWhileOurPublishMayLandIsUnknown(t *testing.T) {
+	l := startLossy(t)
+	grant := testGrant(t, 26)
+	value, err := encodeEntry(&grant)
+	if err != nil {
+		t.Fatalf("encodeEntry: %v", err)
+	}
+	if _, err := l.js.Publish(t.Context(), keyOf(grant.ID), value); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	store := openStore(t, l.conn)
+	l.proxy.Intercept(once(subjectPrefix, natsjstest.LoseReply))
+	err = store.Register(settleContext(t, settleBudget), &grant)
+	if !errors.Is(err, ErrUnacceptedGrant) ||
+		!errors.Is(err, tokenadmin.ErrOutcomeUnknown) ||
+		errors.Is(err, tokenadmin.ErrStoreUnavailable) {
+		t.Errorf("Register = %v; after a lost reply our publish may still land, so nothing is proven", err)
+	}
+}
+
+func TestADuplicateOfARefusedRecordIsUnknown(t *testing.T) {
+	l := startLossy(t)
+	store := openStore(t, l.conn)
+	grant := testGrant(t, 27)
+	value, err := encodeEntry(&grant)
+	if err != nil {
+		t.Fatalf("encodeEntry: %v", err)
+	}
+	duplicate := []byte(`{"stream":"` + streamName + `","seq":1,"duplicate":true}`)
+	stripped := fmt.Sprintf(`{"message":{"subject":%q,"seq":1,"hdrs":%q,"data":%q,"time":"2026-11-22T00:00:00Z"}}`,
+		keyOf(grant.ID),
+		base64.StdEncoding.EncodeToString([]byte("NATS/1.0\r\nNats-Msg-Id: "+string(grant.ID)+"\r\n\r\n")),
+		base64.StdEncoding.EncodeToString(value),
+	)
+	l.proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
+		switch {
+		case strings.HasPrefix(f.Subject, subjectPrefix):
+			return natsjstest.Answer(duplicate)
+		case strings.HasPrefix(f.Subject, msgGetSubject):
+			return natsjstest.Answer([]byte(stripped))
+		default:
+			return natsjstest.Forward()
+		}
+	})
+	err = store.Register(settleContext(t, settleBudget), &grant)
+	if !errors.Is(err, ErrUnacceptedGrant) || !errors.Is(err, tokenadmin.ErrOutcomeUnknown) {
+		t.Errorf("Register = %v; a deduplicated attempt may still have a twin in flight", err)
+	}
+}
+
+func TestAForeignGrantSeenAfterAFreshPublishIsTaken(t *testing.T) {
+	l := startLossy(t)
+	store := openStore(t, l.conn)
+	grant := testGrant(t, 28)
+	other := grant
+	other.Tenant = "bank"
+	value, err := encodeEntry(&other)
+	if err != nil {
+		t.Fatalf("encodeEntry: %v", err)
+	}
+	header := "NATS/1.0\r\nNats-Msg-Id: " + string(grant.ID) +
+		"\r\nNats-Expected-Stream: " + streamName +
+		"\r\nNats-Expected-Last-Subject-Sequence: 0\r\n\r\n"
+	foreign := fmt.Sprintf(`{"message":{"subject":%q,"seq":1,"hdrs":%q,"data":%q,"time":"2026-11-22T00:00:00Z"}}`,
+		keyOf(grant.ID),
+		base64.StdEncoding.EncodeToString([]byte(header)),
+		base64.StdEncoding.EncodeToString(value),
+	)
+	l.proxy.Intercept(once(msgGetSubject, func() natsjstest.Verdict { return natsjstest.Answer([]byte(foreign)) }))
+	if err := store.Register(settleContext(t, settleBudget), &grant); !errors.Is(err, tokenadmin.ErrIDTaken) {
+		t.Errorf("Register = %v; a grant of another tenant under the key is not our success", err)
 	}
 }

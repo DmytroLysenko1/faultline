@@ -137,14 +137,47 @@ func (s *Store) registerOnce(
 		return fail(endOfBudget(sentBefore)), false, nats.ErrConnectionClosed
 	}
 	duplicate, err := s.publish(ctx, grant.ID, value)
-	step := registerRules(duplicate, err)
-	if step.move == moveSettle {
-		step = registerSettled(s.registered(ctx, grant), step.ifAbsent)
+	attempt := publishAttempt{
+		step:     registerRules(duplicate, err),
+		fresh:    err == nil && !duplicate,
+		inFlight: duplicate || (err != nil && !natsjs.WrongLastSequence(err)),
 	}
-	if err == nil && !duplicate {
-		step = s.accepted(ctx, grant)
+	return provenAfterSending(s.afterPublish(ctx, grant, attempt), sentBefore), attemptSent(err), err
+}
+
+type publishAttempt struct {
+	step     next
+	fresh    bool
+	inFlight bool
+}
+
+func (s *Store) afterPublish(ctx context.Context, grant *credential.Grant, attempt publishAttempt) next {
+	if attempt.step.move != moveSettle && !attempt.fresh {
+		return attempt.step
 	}
-	return provenAfterSending(step, sentBefore), !notStored(err), err
+	state := s.registered(ctx, grant)
+	if state == keyInvalid {
+		return fail(errors.Join(s.refuse(ctx, grant.ID, attempt.inFlight), ErrUnacceptedGrant))
+	}
+	if attempt.fresh {
+		return freshSettled(state)
+	}
+	return registerSettled(state, attempt.step.ifAbsent)
+}
+
+func freshSettled(state keyState) next {
+	if state == keyForeign {
+		return fail(tokenadmin.ErrIDTaken)
+	}
+	return done()
+}
+
+func (s *Store) refuse(ctx context.Context, id credential.ID, inFlight bool) error {
+	withdrawn := s.withdraw(ctx, id)
+	if inFlight {
+		return tokenadmin.ErrOutcomeUnknown
+	}
+	return withdrawn
 }
 
 func (s *Store) revokeOnce(
@@ -203,20 +236,13 @@ func (s *Store) registered(ctx context.Context, grant *credential.Grant) keyStat
 	stored, found, err := s.reader.readKey(readCtx, keyOf(grant.ID))
 	switch {
 	case errors.Is(err, errInvalidEntry):
-		return keyForeign
+		return keyInvalid
 	case err != nil:
 		return keyUnreadable
 	case !found:
 		return keyAbsent
 	}
 	return ownership(grant, &stored)
-}
-
-func (s *Store) accepted(ctx context.Context, grant *credential.Grant) next {
-	if s.registered(ctx, grant) != keyForeign {
-		return done()
-	}
-	return fail(errors.Join(s.withdraw(ctx, grant.ID), ErrUnacceptedGrant))
 }
 
 func (s *Store) withdraw(ctx context.Context, id credential.ID) error {

@@ -409,12 +409,21 @@ func TestAProofOfNoRecordAfterASentAttemptIsUnknown(t *testing.T) {
 		},
 		{name: "a taken id stays taken", step: fail(tokenadmin.ErrIDTaken), sentBefore: true, want: tokenadmin.ErrIDTaken},
 		{name: "a success stays a success", step: done(), sentBefore: true},
+		{
+			name:       "a refused record after a sent attempt keeps its cause",
+			step:       fail(errors.Join(tokenadmin.ErrStoreUnavailable, ErrUnacceptedGrant)),
+			sentBefore: true,
+			want:       ErrUnacceptedGrant,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := provenAfterSending(tt.step, tt.sentBefore)
 			if !errors.Is(got.err, tt.want) || (tt.want == nil) != (got.err == nil) {
 				t.Errorf("err = %v, want %v", got.err, tt.want)
+			}
+			if tt.sentBefore && provesNoRecord(got.err) {
+				t.Errorf("err = %v proves no record after an attempt that was sent", got.err)
 			}
 		})
 	}
@@ -487,4 +496,27 @@ func TestACompensationBudgetFitsTwoAttempts(t *testing.T) {
 			t.Errorf("attempts (-want +got):\n%s; err %v", diff, err)
 		}
 	})
+}
+
+func TestOnlyAStoredAttemptCountsAsSent(t *testing.T) {
+	tests := []struct {
+		name string
+		args error
+		want bool
+	}{
+		{name: "a reconnecting client", args: fmt.Errorf("publish: %w", nats.ErrReconnectBufExceeded)},
+		{name: "no responders", args: nats.ErrNoResponders},
+		{name: "a full stream queue", args: apiErr(codeTooManyRequests, "too many requests")},
+		{name: "a non-leader refusal", args: apiErr(codeNotLeader, "not leader")},
+		{name: "a timeout", args: context.DeadlineExceeded, want: true},
+		{name: "a meta group without a leader", args: apiErr(codeClusterUnavailable, "unavailable"), want: true},
+		{name: "a stored message", args: nil, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := attemptSent(tt.args); got != tt.want {
+				t.Errorf("attemptSent = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
