@@ -83,17 +83,20 @@ func newFakeStore(seeded ...credential.Grant) *fakeStore {
 	return store
 }
 
-func (s *fakeStore) Register(ctx context.Context, grant credential.Grant) error {
+func (s *fakeStore) Register(ctx context.Context, grant *credential.Grant) error {
 	s.registerDeadline, _ = ctx.Deadline()
 	if s.register.waitsForEnd {
 		<-ctx.Done()
 		s.registerEndedAt = s.registerDeadline
 	}
-	if _, taken := s.grants[grant.ID]; taken {
+	if stored, taken := s.grants[grant.ID]; taken {
+		if stored.Digest.Equal(grant.Digest) && stored.Tenant == grant.Tenant {
+			return nil
+		}
 		return tokenadmin.ErrIDTaken
 	}
 	if s.register.err == nil || s.register.stores {
-		s.grants[grant.ID] = grant
+		s.grants[grant.ID] = *grant
 	}
 	return s.register.err
 }

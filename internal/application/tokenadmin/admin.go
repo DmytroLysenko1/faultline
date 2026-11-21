@@ -33,7 +33,7 @@ const (
 )
 
 type grantStore interface {
-	Register(ctx context.Context, grant credential.Grant) error
+	Register(ctx context.Context, grant *credential.Grant) error
 	Revoke(ctx context.Context, id credential.ID) (Revocation, error)
 	List(ctx context.Context) ([]credential.Grant, error)
 }
@@ -93,7 +93,7 @@ func (a *Admin) Issue(ctx context.Context, tenant string) (credential.ID, error)
 	}
 	settleCtx, cancel := context.WithTimeout(ctx, a.budget.Settle)
 	defer cancel()
-	if err := a.store.Register(settleCtx, grant); err != nil {
+	if err := a.store.Register(settleCtx, &grant); err != nil {
 		return "", a.afterFailedRegister(ctx, grant.ID, fmt.Errorf("register ingest token %s: %w", grant.ID, err))
 	}
 	if err := a.output.Show(ctx, token); err != nil {

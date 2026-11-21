@@ -214,8 +214,19 @@ linters:
             - "!**/internal/infrastructure/natsjs/journal/meaning.go"
             - "!**/internal/infrastructure/natsjs/journal/*_test.go"
           deny:
-            - pkg: github.com/DmytroLysenko1/faultline/internal/application/ingest
+            - pkg: github.com/DmytroLysenko1/faultline/internal/application/ingest$
               desc: only natsjs/journal/meaning.go gives a failure its ingest meaning (toIngest)
+        natsjs-speaks-no-tokens:
+          files:
+            - "**/internal/infrastructure/natsjs/**"
+            - "!**/internal/infrastructure/natsjs/tokens/**"
+          deny:
+            - pkg: github.com/DmytroLysenko1/faultline/internal/application/tokenadmin
+              desc: only natsjs/tokens stores ingest token grants
+            - pkg: github.com/DmytroLysenko1/faultline/internal/application/ingestauth
+              desc: only natsjs/tokens stores ingest token grants
+            - pkg: github.com/DmytroLysenko1/faultline/internal/domain/credential
+              desc: only natsjs/tokens stores ingest token grants
         nats-stays-in-natsjs:
           files:
             - "**/internal/**"
@@ -263,6 +274,14 @@ linters:
           list-mode: strict
           files:
             - "**/internal/application/tokenadmin/**"
+            - "!$test"
+          allow:
+            - $gostd
+            - github.com/DmytroLysenko1/faultline/internal/domain/credential
+        ingestauth-knows-only-credential:
+          list-mode: strict
+          files:
+            - "**/internal/application/ingestauth/**"
             - "!$test"
           allow:
             - $gostd
@@ -336,6 +355,9 @@ linters:
         - pattern: ^checkpoint\.Err[A-Za-z]+$
           pkg: ^github\.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/checkpoint$
           msg: branch on processing.* — the checkpoint store translates its errors at its exit (docs/design/step-03-journal-and-reliable-ingest.md, slice natsjs/checkpoint)
+        - pattern: ^jetstream\.Err[A-Z][A-Za-z]*$
+          pkg: ^github\.com/nats-io/nats\.go/jetstream$
+          msg: natsjs/tokens reads raw API codes and natsjs classes (Classify, WrongLastSequence, PurgeDenied), never client sentinels whose meaning shifts between nats.go versions
         - pattern: ^reflect\.DeepEqual$
           msg: digests and secrets compare only through Digest.Equal (constant time, A7)
         - pattern: ^credential\.Reveal$
@@ -374,7 +396,15 @@ linters:
         linters:
           - forbidigo
         text: the checkpoint store translates its errors
-      - path-except: (internal/domain/credential/|internal/application/tokenadmin/)
+      - path-except: internal/infrastructure/natsjs/tokens/
+        linters:
+          - forbidigo
+        text: natsjs/tokens reads raw API codes
+      - path: _test\.go$
+        linters:
+          - forbidigo
+        text: natsjs/tokens reads raw API codes
+      - path-except: (internal/domain/credential/|internal/application/tokenadmin/|internal/application/ingestauth/)
         linters:
           - forbidigo
         text: digests and secrets compare only through Digest.Equal
