@@ -12,13 +12,11 @@ import (
 )
 
 const (
-	pullSubjectPrefix = "$JS.API.CONSUMER.MSG.NEXT."
-	subjectSeparator  = "."
-	// a heartbeat of 5 s, in the nanoseconds of the pull request's JSON
+	pullSubjectPrefix   = "$JS.API.CONSUMER.MSG.NEXT."
+	subjectSeparator    = "."
 	fiveSecondHeartbeat = `"idle_heartbeat":5000000000`
 )
 
-// pulls is what the proxy saw of the feed's pull requests: the consumer each asked and its body.
 type pulls struct {
 	mu        sync.Mutex
 	consumers []string
@@ -56,8 +54,6 @@ func (p *pulls) withoutHeartbeat() [][]byte {
 	return missing
 }
 
-// A pull that asks for no heartbeat leaves a consumer lost with its node unnoticed until the pull expires, so
-// every pull the feed sends asks for one, a recreated consumer's too.
 func TestEveryPullAsksForAHeartbeatEvenAfterTheConsumerIsRecreated(t *testing.T) {
 	l := startLive(t, singleNode, oneReplica)
 	proxy := natsjstest.StartProxy(t, l.cluster.URLs()[0])

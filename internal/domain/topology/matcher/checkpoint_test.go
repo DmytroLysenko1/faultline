@@ -67,9 +67,6 @@ func restoreMatcher(limits matcher.Limits, data []byte) (*matcher.Matcher, error
 	return restored, r.Finish()
 }
 
-// TestARestoredMatcherPairsLikeTheOriginal: the waiting halves keep their order and deadlines and
-// the tombstones their scope, so after a restore the same spans pair, duplicate, expire and get
-// evicted exactly as in the matcher that never stopped — retries and clock jumps back included.
 func TestARestoredMatcherPairsLikeTheOriginal(t *testing.T) {
 	rng := rand.New(rand.NewPCG(restoreSeed, restoreSeed))
 	for scenario := range restoreScenarios {

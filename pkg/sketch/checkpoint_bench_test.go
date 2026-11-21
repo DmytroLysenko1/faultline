@@ -15,8 +15,6 @@ const (
 	worstBufferBytes = 1 << 20
 )
 
-// fullArena fills a production-size arena with sketches that each use every bin they can hold:
-// the arena is the bulk of a worst-case checkpoint (C14: the pipeline pause must stay under 1 s).
 func fullArena(b *testing.B) (*Arena, []Sketch) {
 	b.Helper()
 	arena, err := NewArena(worstBudget)
@@ -33,8 +31,6 @@ func fullArena(b *testing.B) (*Arena, []Sketch) {
 	return arena, sketches
 }
 
-// BenchmarkWriteCheckpointWorstCase writes a full 2^24-entry arena through bufio to a file, as
-// the processor writes its spool; MB/s and bytes give the pause for the budgeted 450 MiB state.
 func BenchmarkWriteCheckpointWorstCase(b *testing.B) {
 	arena, sketches := fullArena(b)
 	path := filepath.Join(b.TempDir(), "spool")

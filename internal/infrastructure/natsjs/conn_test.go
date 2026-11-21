@@ -39,9 +39,6 @@ func TestDialOpensThreeNamedConnectionsWithoutAReconnectBuffer(t *testing.T) {
 	}
 }
 
-// TestDialRefusesAServerThatCannotTakeTheLargestRecordWithItsHeaders: one byte short of the guard
-// plus the header budget and a record at the guard would fail on every retry, so the ingester must
-// not start.
 func TestDialRefusesAServerThatCannotTakeTheLargestRecordWithItsHeaders(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -109,7 +106,6 @@ func TestDialToNobodyFails(t *testing.T) {
 	}
 }
 
-// TestDialStaysWithinItsDeadline: every server of a dead list gets only its share of what is left.
 func TestDialStaysWithinItsDeadline(t *testing.T) {
 	cluster := natsjstest.Start(t, singleNode)
 	urls := cluster.URLs()
@@ -134,8 +130,6 @@ func TestDialStaysWithinItsDeadline(t *testing.T) {
 	}
 }
 
-// TestCloseEndsEveryConnectionWithoutCountingAnOutage: a deploy closes every connection; that is not
-// a disconnect, or every deploy would page.
 func TestCloseEndsEveryConnectionWithoutCountingAnOutage(t *testing.T) {
 	cluster := natsjstest.Start(t, singleNode)
 	conn, err := natsjs.Dial(t.Context(), optionsFor(cluster.URLs()))
@@ -171,8 +165,6 @@ func TestALostServerIsCountedAsADisconnectAndItsReturnAsAReconnect(t *testing.T)
 	})
 }
 
-// silentServer accepts connections and never says a word, the way a hung or firewalled server
-// looks to a client waiting for its INFO.
 func silentServer(t *testing.T) string {
 	t.Helper()
 	listener, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
@@ -208,8 +200,6 @@ func holdConnections(t *testing.T, listener net.Listener) {
 	}
 }
 
-// TestDialSharesItsDeadlineAmongSilentServers: three servers that never answer must not cost three
-// full connect timeouts each; Dial ends with its deadline.
 func TestDialSharesItsDeadlineAmongSilentServers(t *testing.T) {
 	silent := silentServer(t)
 	ctx, cancel := context.WithTimeout(t.Context(), drainTimeout)
@@ -226,8 +216,6 @@ func TestDialSharesItsDeadlineAmongSilentServers(t *testing.T) {
 	}
 }
 
-// TestDialGivesUpWhenItsCallerCancels: a cancel without a deadline must end Dial too, though
-// nats.Connect itself cannot be interrupted.
 func TestDialGivesUpWhenItsCallerCancels(t *testing.T) {
 	silent := silentServer(t)
 	ctx, cancel := context.WithCancel(t.Context())

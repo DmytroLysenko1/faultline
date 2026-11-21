@@ -25,6 +25,7 @@ const (
 	settleWithin   = 20 * time.Second
 	settlePoll     = 10 * time.Millisecond
 	stopWithin     = 6 * time.Second
+	tightStop      = 1500 * time.Millisecond
 	firstPosition  = 10
 	secondPosition = 20
 	thirdPosition  = 30
@@ -72,7 +73,7 @@ func (r *fakeRetention) committed() []uint64 {
 
 func (w *world) started(t *testing.T) (*Sink, *fakeRetention) {
 	t.Helper()
-	if _, _, err := w.store.Latest(t.Context(), testPartition); !errors.Is(err, processing.ErrNoCheckpoint) {
+	if err := latestErr(w.store.Latest(t.Context(), testPartition)); !errors.Is(err, processing.ErrNoCheckpoint) {
 		t.Fatalf("Latest: %v", err)
 	}
 	if _, err := w.store.StakeEmpty(t.Context()); err != nil {

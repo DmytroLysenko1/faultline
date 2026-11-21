@@ -23,8 +23,6 @@ func linkTo(t *testing.T, cluster *natsjstest.Cluster) *Link {
 	return &Link{NATS: nc}
 }
 
-// TestEveryConnectionMustCarryARecord: the DLQ copy of a record goes out on the feed connection, so a small
-// max_payload behind any of the three is a refusal at Dial, not a stop at the first corruption.
 func TestEveryConnectionMustCarryARecord(t *testing.T) {
 	roomy := linkTo(t, natsjstest.Start(t, 1))
 	small := linkTo(t, natsjstest.Start(t, 1, func(options *server.Options) { options.MaxPayload = smallPayload }))

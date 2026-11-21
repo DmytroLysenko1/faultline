@@ -8,8 +8,6 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/record"
 )
 
-// TestEncodeAllocatesNothingPerSpan: a warm encoder reuses its pooled buffers; what remains per call (the
-// footprint map, the message id) does not grow with the span count. Not under -race: sync.Pool drops items there.
 func TestEncodeAllocatesNothingPerSpan(t *testing.T) {
 	encoder := new(record.Encoder)
 	allocations := func(count int) float64 {

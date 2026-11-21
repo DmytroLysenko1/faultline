@@ -10,8 +10,6 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/record"
 )
 
-// FuzzRecordDecode: any bytes from the stream either decode or fail with one of the two reader sentinels — never
-// a panic, never another error the feed would not know how to route (DLQ or stop).
 func FuzzRecordDecode(f *testing.F) {
 	valid, _ := encoded(f, syntheticSpans(8, 4, 3, 1))
 	heartbeat, err := record.EncodeHeartbeat(testTenant, testPartition, writtenAt)
@@ -32,7 +30,6 @@ func FuzzRecordDecode(f *testing.F) {
 	})
 }
 
-// FuzzRecordRoundTrip: whatever valid spans go in come back unchanged.
 func FuzzRecordRoundTrip(f *testing.F) {
 	f.Add(uint8(1), uint64(1), uint8(0))
 	f.Add(uint8(64), uint64(7), uint8(0xff))

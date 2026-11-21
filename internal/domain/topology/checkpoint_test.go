@@ -27,7 +27,6 @@ const (
 	killSpanMax   = 30 * time.Second
 )
 
-// run is what an observer of the processor sees: every final in order and every snapshot it publishes.
 type run struct {
 	Finals     []traffic.Final
 	Snapshots  []*topology.Snapshot
@@ -41,10 +40,6 @@ type journal struct {
 	looks   []bool
 }
 
-// randomJournal mixes the step-2 generators with what a restart must survive: RED traffic with
-// varied latencies and many operations (sketch arena pressure, collapse, series and per-service
-// overflow), late calls inside the allowed lateness (late panes and their revisions), retried and
-// duplicated halves whose ReceivedAt jumps back (a new journal leader), and heartbeats.
 func randomJournal(t *testing.T, rng *rand.Rand) journal {
 	t.Helper()
 	limits := smallLimits(rng)
@@ -69,7 +64,6 @@ func randomJournal(t *testing.T, rng *rand.Rand) journal {
 	return built
 }
 
-// interleave keeps the order of each list, so the stepped one brings its backward clock jumps.
 func interleave(rng *rand.Rand, first, second []batch.Batch) []batch.Batch {
 	out := make([]batch.Batch, 0, len(first)+len(second))
 	for len(first) > 0 || len(second) > 0 {
@@ -91,8 +85,6 @@ const (
 	lateArrivalSpan  = 20 * time.Second
 )
 
-// variedBatches are calls with random latencies over many operations; every fourth arrives after
-// the watermark passed its window but inside the allowed lateness.
 func variedBatches(t *testing.T, rng *rand.Rand) []batch.Batch {
 	t.Helper()
 	batches := make([]batch.Batch, 0, variedCalls)
@@ -174,10 +166,6 @@ func restored(t *testing.T, limits *topology.Limits, data []byte, sink *finalsSi
 	return builder
 }
 
-// TestKilledProcessorProducesTheSameFinalsAsAnUninterruptedRun (I14 through a restart): a processor
-// checkpoints after batch k, keeps working, is killed, restarts from the checkpoint and replays the
-// journal from k. Everything it then publishes — finals and snapshots — is what the processor that
-// never stopped published after k, so step 4's idempotent write sees the same rows.
 func TestKilledProcessorProducesTheSameFinalsAsAnUninterruptedRun(t *testing.T) {
 	rng := rand.New(rand.NewPCG(killSeed, killSeed))
 	for scenario := range killScenarios {
@@ -208,8 +196,6 @@ func TestKilledProcessorProducesTheSameFinalsAsAnUninterruptedRun(t *testing.T) 
 	}
 }
 
-// TestACheckpointIsAFunctionOfTheState: writing a restored builder gives the same bytes, so equal
-// states give equal checkpoints and a restore loses nothing the writer saw.
 func TestACheckpointIsAFunctionOfTheState(t *testing.T) {
 	rng := rand.New(rand.NewPCG(killSeed+1, killSeed))
 	for scenario := range killScenarios / 3 {
@@ -244,8 +230,6 @@ func steadyCheckpoint(t *testing.T) []byte {
 	return checkpointOf(t, builder)
 }
 
-// TestEveryShrunkLimitIsIncompatible: a smaller capacity cannot hold what the checkpoint holds, and a
-// different window geometry would place open windows elsewhere — both refuse before any state is read.
 func TestEveryShrunkLimitIsIncompatible(t *testing.T) {
 	data := steadyCheckpoint(t)
 	tests := []struct {
@@ -280,9 +264,6 @@ func TestEveryShrunkLimitIsIncompatible(t *testing.T) {
 	}
 }
 
-// TestRestoreIntoGrownLimitsContinuesLikeTheOriginal: raising a capacity (an upgrade with bigger
-// limits) keeps the state, and while traffic stays below the old limits everything published —
-// finals, early panes, the snapshot and its stats — is the same; only the capacities read larger.
 func TestRestoreIntoGrownLimitsContinuesLikeTheOriginal(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -322,9 +303,6 @@ func TestRestoreIntoGrownLimitsContinuesLikeTheOriginal(t *testing.T) {
 	}
 }
 
-// TestLongerTTLsAndAnotherEarlyFirePeriodAreAccepted: a longer pairing or tombstone TTL only makes
-// new halves and tombstones wait longer, and the early fire period only shapes early panes, so a
-// restore accepts them; the behaviour then follows the new limits.
 func TestLongerTTLsAndAnotherEarlyFirePeriodAreAccepted(t *testing.T) {
 	data := steadyCheckpoint(t)
 	limits := builderLimits()
@@ -336,8 +314,6 @@ func TestLongerTTLsAndAnotherEarlyFirePeriodAreAccepted(t *testing.T) {
 	}
 }
 
-// belowEveryLimit leaves room for the steady traffic: a minute of its tombstones would fill the
-// default hundred, and an eviction there would differ from a grown limit for a good reason.
 func belowEveryLimit() topology.Limits {
 	limits := topologytest.Limits()
 	limits.MaxTombstones = steadyTombstoneRoom
@@ -419,8 +395,6 @@ func TestAnotherVersionIsIncompatible(t *testing.T) {
 	}
 }
 
-// TestADamagedCheckpointIsRejected: a flipped byte anywhere, a cut or an extra byte is an error
-// (CRC32C per chunk, the section order and the end of the stream), never a quietly different state.
 func TestADamagedCheckpointIsRejected(t *testing.T) {
 	data := steadyCheckpoint(t)
 	rng := rand.New(rand.NewPCG(killSeed, 3))
@@ -443,8 +417,6 @@ func TestADamagedCheckpointIsRejected(t *testing.T) {
 	}
 }
 
-// reseal recomputes every chunk checksum, so a test reaches the decoders behind the CRC — as a bug
-// in the writer would.
 func reseal(data []byte) []byte {
 	const header, frame, crc = 8, 5, 4
 	out := slices.Clone(data)
@@ -462,8 +434,6 @@ func reseal(data []byte) []byte {
 	return out
 }
 
-// mirroredBuilder sees the same calls as steadyBuilder but with every batch's spans reversed, so its
-// nodes and edges get other handles.
 func mirroredBuilder(tb testing.TB, count int) *topology.Builder {
 	tb.Helper()
 	builder, err := topology.NewBuilder(builderLimits(), telemetrytest.Epoch())
@@ -488,8 +458,6 @@ const (
 	chunkCRCBytes         = 4
 )
 
-// sections splits a checkpoint into its header and whole sections, each with every chunk and its
-// end chunk, so a test can swap a section between two checkpoints and keep every CRC valid.
 func sections(data []byte) ([]byte, [][]byte) {
 	var split [][]byte
 	start := checkpointHeaderBytes
@@ -527,9 +495,6 @@ func writeTB(tb testing.TB, builder *topology.Builder) []byte {
 	return out.Bytes()
 }
 
-// TestSectionsFromAnotherBuilderAreRefused: each section is valid on its own, but taken from a
-// builder whose nodes have other handles it disagrees with the rest (review: the traffic section
-// of another graph passed restore and later released an operation under the wrong owner).
 func TestSectionsFromAnotherBuilderAreRefused(t *testing.T) {
 	steady, _ := steadyBuilder(t)
 	own, other := writeTB(t, steady), writeTB(t, mirroredBuilder(t, steadyWarmBatches))
@@ -545,9 +510,6 @@ func TestSectionsFromAnotherBuilderAreRefused(t *testing.T) {
 	}
 }
 
-// FuzzCheckpointDecode: whatever bytes arrive — CRC-valid or not, whole sections swapped between two
-// builders — RestoreBuilder returns an error or a builder that keeps applying, firing and showing
-// snapshots without a panic.
 func FuzzCheckpointDecode(f *testing.F) {
 	steady, _ := steadyBuilder(f)
 	own, other := writeTB(f, steady), writeTB(f, mirroredBuilder(f, steadyWarmBatches))

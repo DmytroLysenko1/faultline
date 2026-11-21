@@ -1,10 +1,3 @@
-# One replica with Recreate: the graph lives in memory and OTLP takes one connection, so two pods
-# at once would split the traffic into two partial graphs.
-# No liveness probe: the process exits on its own when a component fails (lifecycle, slice 5b-2).
-# The grace period covers the 9.9 s worst-case shutdown (slice 5b-3, D7).
-# FAULTLINE_SELF_TRACING_ENDPOINT stays unset: a faultline node in the graph would be a phantom
-# edge for hack/democheck.
-
 apiVersion: apps/v1
 kind: Deployment
 metadata:

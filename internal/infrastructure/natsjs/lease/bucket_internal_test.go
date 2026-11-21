@@ -50,8 +50,6 @@ func embeddedBucket(t *testing.T, ctx context.Context, url string, replicas int)
 	return kv, maxAge
 }
 
-// The bucket's max age is read when it opens and checked again once the key is held, so an operator who shrinks it
-// in between is the drift a claim must give the key back for.
 func TestAMaxAgeThatFallsWhileAcquiringGivesTheKeyBack(t *testing.T) {
 	cluster := natsjstest.Start(t, singleNode)
 	ctx, cancel := context.WithTimeout(t.Context(), embeddedBound)
@@ -83,7 +81,6 @@ func shrink(t *testing.T, ctx context.Context, operator jetstream.JetStream) {
 	}
 }
 
-// revisions of a key that was created and then updated once.
 type revisions struct {
 	movedPast uint64
 	current   uint64
@@ -97,9 +94,6 @@ type fidelityWant struct {
 	Value string
 }
 
-// TestNATSAnswersWhatTheFakeAnswers pins what fakeStore assumes about NATS: a stale revision and a held key are
-// refused with the sentinels the lease branches on, and a delete removes the key only at its revision. R1 and R3
-// answer a stale revision with different codes (10071, 10164), so both run.
 func TestNATSAnswersWhatTheFakeAnswers(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -167,7 +161,6 @@ func TestNATSAnswersWhatTheFakeAnswers(t *testing.T) {
 	}
 }
 
-// movedOn creates key and updates it once.
 func movedOn(t *testing.T, ctx context.Context, kv jetstream.KeyValue, key string) revisions {
 	t.Helper()
 	created, err := kv.Create(ctx, key, []byte(heldValue))

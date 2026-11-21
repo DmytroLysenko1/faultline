@@ -37,7 +37,12 @@ type CheckpointWriter interface {
 
 type checkpointSink interface {
 	Begin(ctx context.Context, meta *CheckpointMeta) (CheckpointWriter, error)
+	BeginOnStop(ctx context.Context, meta *CheckpointMeta) (CheckpointWriter, error)
 }
+
+type writerOpener func(ctx context.Context, meta *CheckpointMeta) (CheckpointWriter, error)
+
+type checkpointSave func(ctx context.Context, builder *topology.Builder, now time.Time) error
 
 type CheckpointStats struct {
 	Spooled        uint64
@@ -104,9 +109,30 @@ func (c *checkpointer) pendingAtStop() bool {
 	return c.interval > 0 && c.unwritten
 }
 
-func (c *checkpointer) write(ctx context.Context, builder *topology.Builder, now time.Time) error {
+func (c *checkpointer) periodic(
+	ctx context.Context,
+	builder *topology.Builder,
+	now time.Time,
+) error {
+	return c.write(ctx, builder, now, c.sink.Begin)
+}
+
+func (c *checkpointer) onStop(
+	ctx context.Context,
+	builder *topology.Builder,
+	now time.Time,
+) error {
+	return c.write(ctx, builder, now, c.sink.BeginOnStop)
+}
+
+func (c *checkpointer) write(
+	ctx context.Context,
+	builder *topology.Builder,
+	now time.Time,
+	open writerOpener,
+) error {
 	c.next = now.Add(c.interval)
-	err := c.save(ctx, builder)
+	err := c.save(ctx, builder, open)
 	if canceledByCaller(ctx, err) && !errors.Is(err, errSpoolLeft) {
 		return err
 	}
@@ -117,8 +143,12 @@ func (c *checkpointer) write(ctx context.Context, builder *topology.Builder, now
 	return err
 }
 
-func (c *checkpointer) save(ctx context.Context, builder *topology.Builder) error {
-	writer, err := c.begin(ctx)
+func (c *checkpointer) save(
+	ctx context.Context,
+	builder *topology.Builder,
+	open writerOpener,
+) error {
+	writer, err := c.writer(ctx, open)
 	if err != nil {
 		return err
 	}
@@ -131,8 +161,8 @@ func (c *checkpointer) save(ctx context.Context, builder *topology.Builder) erro
 	return nil
 }
 
-func (c *checkpointer) begin(ctx context.Context) (CheckpointWriter, error) {
-	writer, err := c.sink.Begin(ctx, &CheckpointMeta{
+func (c *checkpointer) writer(ctx context.Context, open writerOpener) (CheckpointWriter, error) {
+	writer, err := open(ctx, &CheckpointMeta{
 		Position:   c.through,
 		ReceivedAt: c.receivedAt,
 	})

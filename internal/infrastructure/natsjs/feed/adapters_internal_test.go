@@ -20,14 +20,12 @@ const (
 	secondPulseAfter = 1
 )
 
-// onNATS is a single-node server with the journal topology ensured, and the jetstream the feed's adapters use.
 func onNATS(t *testing.T) (jetstream.JetStream, *Options) {
 	t.Helper()
 	cluster, options := ensured(t)
 	return natsjstest.JetStream(t, strings.Join(cluster.URLs(), ",")), options
 }
 
-// onNATSBehind is onNATS with the adapters' jetstream going through a proxy that can alter what NATS answers.
 func onNATSBehind(t *testing.T) (jetstream.JetStream, *Options, *natsjstest.Proxy) {
 	t.Helper()
 	cluster, options := ensured(t)
@@ -100,8 +98,6 @@ type foreignAckArgs struct {
 	publish func(t *testing.T, js jetstream.JetStream, options *Options) error
 }
 
-// TestAnAnswerFromAnotherStreamIsRefused: WithExpectStream makes the server refuse a write to another stream, so
-// only a proxy that alters the answer reaches the adapters' own check of the acknowledging stream.
 func TestAnAnswerFromAnotherStreamIsRefused(t *testing.T) {
 	tests := []struct {
 		name    string

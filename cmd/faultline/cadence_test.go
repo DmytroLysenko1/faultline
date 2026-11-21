@@ -12,9 +12,6 @@ import (
 
 const quickFirePeriod = 250 * time.Millisecond
 
-// TestPipelineCadenceSharesTheEarlyFirePeriodAndLeavesRoomForTheLargestRequest: one setting drives
-// both the Fire cadence and the early-pane coverage, and the held batches stop one largest
-// request short of a full journal.
 func TestPipelineCadenceSharesTheEarlyFirePeriodAndLeavesRoomForTheLargestRequest(t *testing.T) {
 	tests := []struct {
 		Name string

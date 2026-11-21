@@ -25,6 +25,7 @@ var (
 
 type objectReader struct {
 	fetch   func(sequence uint64) (*jetstream.RawStreamMsg, error)
+	before  func(read uint64) error
 	still   func() error
 	cancel  context.CancelFunc
 	info    *jetstream.ObjectInfo
@@ -111,7 +112,7 @@ func (r *objectReader) advance() error {
 	if r.read == r.info.Chunks {
 		return r.finish()
 	}
-	found, err := r.fetch(r.next)
+	found, err := r.fetched(r.next)
 	if errors.Is(err, errNoMessage) {
 		return r.missing()
 	}
@@ -133,8 +134,17 @@ func (r *objectReader) accept(found *jetstream.RawStreamMsg) {
 	r.pending = found.Data
 }
 
+func (r *objectReader) fetched(sequence uint64) (*jetstream.RawStreamMsg, error) {
+	if r.before != nil {
+		if err := r.before(r.total); err != nil {
+			return nil, err
+		}
+	}
+	return r.fetch(sequence)
+}
+
 func (r *objectReader) finish() error {
-	_, err := r.fetch(r.next)
+	_, err := r.fetched(r.next)
 	if err == nil {
 		return fmt.Errorf("%w: %q has chunks past its %d", errCorrupt, r.info.Name, r.info.Chunks)
 	}

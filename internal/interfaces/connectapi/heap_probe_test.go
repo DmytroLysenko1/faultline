@@ -178,8 +178,6 @@ func TestWorstCaseHeapCoversOneGetGraphOnTheRealHandler(t *testing.T) {
 	}
 }
 
-// TestResponseTreeModelCoversTheWorstMapping: the proto tree of the largest response, with both
-// summaries on every subject, stays within ResponseTreeBytes.
 func TestResponseTreeModelCoversTheWorstMapping(t *testing.T) {
 	snapshot := snapshotOf(randomServices())
 	grown := telemetrytest.HeapGrowth(func() any {
@@ -197,9 +195,6 @@ func TestResponseTreeModelCoversTheWorstMapping(t *testing.T) {
 
 const slowReaderWindow = time.Second
 
-// TestASlowReaderHoldsOnlyTheWrittenWeight: while a client reads nothing past the headers, the
-// server keeps the response tree and its encoded bytes (and the compressed copy), not the
-// marshal peak; that is what the reservation shrinks to after the first write.
 func TestASlowReaderHoldsOnlyTheWrittenWeight(t *testing.T) {
 	snapshot := snapshotOf(randomServices())
 	written := graphservice.WrittenWeight(probeNodes, probeEdges)

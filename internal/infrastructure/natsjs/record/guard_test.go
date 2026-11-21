@@ -13,10 +13,8 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/record"
 )
 
-// maxRequestBytes is the OTLP gRPC receive limit (otlp.MaxRecvMsgBytes); the record bound is derived from it.
 const maxRequestBytes = 4 << 20
 
-// minWireBytesPerSpan: an accepted span costs at least this on the wire — ids with their tags and lengths (design step 3).
 const minWireBytesPerSpan = 30
 
 func TestARecordOverTheGuardIsTooLarge(t *testing.T) {
@@ -56,8 +54,6 @@ func TestARecordOverTheGuardIsTooLarge(t *testing.T) {
 	}
 }
 
-// TestWorstRecordStaysUnderTheGuard: the largest request the receiver accepts, all spans in one partition,
-// still encodes under MaxRecordBytes — the guard only catches broken invariants, never valid traffic.
 func TestWorstRecordStaysUnderTheGuard(t *testing.T) {
 	allOptional := func(n uint64) span.Span {
 		observed := fullSpan(n)
@@ -99,8 +95,6 @@ func TestWorstRecordStaysUnderTheGuard(t *testing.T) {
 	}
 }
 
-// TestAnOversizedBatchStopsEncodingAtTheGuard: a batch twice the guard is refused without first encoding all of
-// it — otherwise one hostile request would make the ingester allocate its whole encoded size.
 func TestAnOversizedBatchStopsEncodingAtTheGuard(t *testing.T) {
 	spans := make([]span.Span, 2*record.MaxRecordBytes/minWireBytesPerSpan)
 	for i := range spans {

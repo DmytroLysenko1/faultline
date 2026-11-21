@@ -19,8 +19,6 @@ const (
 	quietFor      = 100 * time.Second
 )
 
-// openIdle opens a feed restored from a checkpoint at checkpointed, written at at(0): the idle rule runs from
-// the checkpoint, so the first heartbeat is due IdleAfter later, on the first Next that times out after it.
 func openIdle(t *testing.T) *harness {
 	t.Helper()
 	start := &Start{After: processing.Position{Sequence: checkpointed}, ReceivedAt: at(0)}
@@ -84,7 +82,6 @@ func TestALastCorruptRecordIsTheBaseOfTheNextHeartbeat(t *testing.T) {
 	})
 }
 
-// quiet runs the feed a while and checks that it wrote no heartbeat.
 func quiet(t *testing.T, h *harness) {
 	t.Helper()
 	time.Sleep(quietFor)
@@ -129,8 +126,6 @@ func TestAStalledFeedWritesNoHeartbeat(t *testing.T) {
 	})
 }
 
-// TestOnlyTheLeaseHolderReadsWritesHeartbeatsAndPurges: a processor whose lease is not valid writes nothing
-// into the journal or the DLQ and removes nothing, though it still holds the feed.
 func TestOnlyTheLeaseHolderReadsWritesHeartbeatsAndPurges(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := openIdle(t)
@@ -148,8 +143,6 @@ func TestOnlyTheLeaseHolderReadsWritesHeartbeatsAndPurges(t *testing.T) {
 	})
 }
 
-// openRead opens a fresh feed that read one batch at at(0): the idle rule runs from it, and batches of the same
-// spans later keep it due.
 func openRead(t *testing.T) *harness {
 	t.Helper()
 	h := open(t, &Start{}, idleOptions(), answering())
@@ -249,8 +242,6 @@ func TestAHeartbeatNeverLandsBeforeAnUnreadRecord(t *testing.T) {
 	}
 }
 
-// TestStarvationCountsOnlyConflictsInARow: a heartbeat read between two conflicts closes the idle period,
-// so the conflicts after it start a new series and force nothing.
 func TestStarvationCountsOnlyConflictsInARow(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := openRead(t)
@@ -281,9 +272,6 @@ const (
 	longQuiet    = 200 * time.Second
 )
 
-// TestALaggingLeaderGivesOneHeartbeatPerIdlePeriod: a leader whose clock is a minute behind stamps every
-// heartbeat earlier than its own time, so ReceivedAt keeps falling back to the clamp; the heartbeats still come
-// at most once per IdleAfter instead of on every Next that times out.
 func TestALaggingLeaderGivesOneHeartbeatPerIdlePeriod(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := open(t, &Start{}, idleOptions(), answering())
@@ -308,7 +296,6 @@ func TestALaggingLeaderGivesOneHeartbeatPerIdlePeriod(t *testing.T) {
 	})
 }
 
-// pulseCounts is what Stats says about heartbeats, with the stop reason: a running feed has none.
 type pulseCounts struct {
 	Written       uint64
 	Conflicts     uint64

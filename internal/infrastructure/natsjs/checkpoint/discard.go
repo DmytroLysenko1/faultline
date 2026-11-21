@@ -7,9 +7,16 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/application/processing"
 )
 
-func (s *Store) Discard(ctx context.Context, target processing.DiscardTarget) (processing.Staked, error) {
-	staked, err := s.discard(ctx, target)
-	return staked, translate(err)
+func (s *Store) Discard(
+	ctx context.Context,
+	target processing.DiscardTarget,
+) (processing.Staked, error) {
+	staking, err := s.enter(ctx)
+	if err != nil {
+		return processing.Staked{}, translate(err)
+	}
+	staked, err := s.discard(staking, target)
+	return staked, translate(s.exitStake(err))
 }
 
 func (s *Store) discard(ctx context.Context, target processing.DiscardTarget) (processing.Staked, error) {

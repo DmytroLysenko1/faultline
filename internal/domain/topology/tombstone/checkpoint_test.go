@@ -33,8 +33,6 @@ type setLog struct {
 	Suppressed []bool
 }
 
-// steps adds tombstones the way the matcher does — a fixed TTL after a clock that never goes back —
-// expires some and asks which sides they suppress.
 func steps(set *tombstone.Set, rng *rand.Rand, now *time.Duration, count int) setLog {
 	var log setLog
 	for range count {
@@ -77,8 +75,6 @@ func restoreSet(limit int, data []byte) (tombstone.Set, error) {
 	return restored, r.Finish()
 }
 
-// TestARestoredSetSuppressesAndExpiresLikeTheOriginal: entries keep their order, deadlines and scope,
-// so the same adds, expiries and questions get the same answers, evictions included.
 func TestARestoredSetSuppressesAndExpiresLikeTheOriginal(t *testing.T) {
 	rng := rand.New(rand.NewPCG(20261113, 4))
 	for scenario := range restoreScenarios {

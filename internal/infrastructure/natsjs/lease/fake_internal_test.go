@@ -21,8 +21,6 @@ const (
 
 const slowAnswerDelay = 900 * time.Millisecond
 
-// errUnmodelledOption: the fake ignores what a create option would change, so an option the lease starts to pass
-// must be modelled here first.
 var errUnmodelledOption = errors.New("the fake does not model this create option")
 
 type stored struct {
@@ -31,9 +29,6 @@ type stored struct {
 	written  time.Time
 }
 
-// fakeStore is one key of a KV bucket: revisions come from one sequence, a value expires maxAge after
-// it was written, and writes fail the way NATS fails — never answered, applied with the answer lost,
-// or with the bucket gone. queued faults are used one per write before steady applies.
 type fakeStore struct {
 	lock     sync.Mutex
 	maxAge   time.Duration
@@ -201,7 +196,6 @@ func (f *fakeStore) held() (entry, bool) {
 	return entry{value: current.value, revision: current.revision}, true
 }
 
-// entry is what Get answers: a key's value at a revision, the rest of KeyValueEntry is not read by the lease.
 type entry struct {
 	key      string
 	value    []byte

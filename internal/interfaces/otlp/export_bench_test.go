@@ -29,12 +29,10 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/spanmap"
 )
 
-// Request shapes a client sends: SDK-sized 16 and 128, collector batches 512 and 2048 (send_batch_max_size).
 var exportSizes = []int{16, 128, 512, 2048}
 
 const exportBatch = 512
 
-// countingJournal accepts every batch and counts its spans, so the benchmark measures the ingester, not a journal.
 type countingJournal struct {
 	spans atomic.Int64
 }
@@ -44,7 +42,6 @@ func (j *countingJournal) Append(_ context.Context, spans []span.Span) error {
 	return nil
 }
 
-// demoRequest is exactly count spans of the recorded OTel Demo traffic, with its real resource and span attributes.
 func demoRequest(tb testing.TB, count int) ptraceotlp.ExportRequest {
 	tb.Helper()
 	lines := otlptest.DemoLines(tb)
@@ -111,8 +108,6 @@ func benchServer(b *testing.B, acceptor *ingest.AcceptBatch) ptraceotlp.GRPCClie
 	return ptraceotlp.NewGRPCClient(conn)
 }
 
-// BenchmarkExport is one gzip OTLP/gRPC request end to end in one process: client marshal and gzip, transport,
-// server gunzip, weighing, decoding, mapping and AcceptBatch. ns/span is the whole path, both sides.
 func BenchmarkExport(b *testing.B) {
 	for _, size := range exportSizes {
 		b.Run(fmt.Sprintf("spans=%d", size), func(b *testing.B) {
@@ -137,8 +132,6 @@ func BenchmarkExport(b *testing.B) {
 	}
 }
 
-// BenchmarkExportServerSide is the ingester's decode-and-accept share of a request without the gRPC stack: gunzip,
-// the receiver's weighing codec, span mapping and AcceptBatch (no HTTP/2 framing, interceptors or response).
 func BenchmarkExportServerSide(b *testing.B) {
 	for _, size := range exportSizes {
 		b.Run(fmt.Sprintf("spans=%d", size), func(b *testing.B) {
@@ -161,8 +154,6 @@ func BenchmarkExportServerSide(b *testing.B) {
 	}
 }
 
-// BenchmarkExportServerSideParallel is the same work on every available CPU (-cpu=2 models an ingester on 2 vCPU):
-// spans/s is the decode-and-accept throughput of a replica before the journal.
 func BenchmarkExportServerSideParallel(b *testing.B) {
 	_, compressed := compressedRequest(b, demoRequest(b, exportBatch))
 	journal := &countingJournal{}
@@ -183,7 +174,6 @@ func BenchmarkExportServerSideParallel(b *testing.B) {
 	b.ReportMetric(float64(journal.spans.Load())/b.Elapsed().Seconds(), "spans/s")
 }
 
-// serverSide is one receiver goroutine's reusable state: the weighing codec and a pooled gzip reader, as gRPC keeps.
 type serverSide struct {
 	acceptor *ingest.AcceptBatch
 	codec    *decodelimit.Codec

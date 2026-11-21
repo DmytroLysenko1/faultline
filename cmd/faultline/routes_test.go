@@ -89,8 +89,6 @@ func normalizedReview(rules *operation.Rules) operation.Operation {
 	})
 }
 
-// TestTheRouteRulesFileReachesTheNormalizer: without a file the built-in templating names the
-// path; with one, the service's own route wins.
 func TestTheRouteRulesFileReachesTheNormalizer(t *testing.T) {
 	tests := []struct {
 		Name string
@@ -207,8 +205,6 @@ func (s *oneRecord) Command() ingest.AcceptCommand {
 
 const ingestWait = time.Second
 
-// TestIngestNamesOperationsWithTheRouteRules: the rules loaded at startup reach the ingest path,
-// so the span stored in the journal carries the service's own route.
 func TestIngestNamesOperationsWithTheRouteRules(t *testing.T) {
 	rules, err := loadRouteRules(writeRules(t, catalogRules))
 	if err != nil {

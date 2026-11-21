@@ -43,7 +43,6 @@ func endAt(offset time.Duration) uint64 {
 	return uint64(writtenAt.Add(offset).UnixNano())
 }
 
-// fullSpan sets every optional field so the round trip covers each flag.
 func fullSpan(n uint64) span.Span {
 	return span.Span{
 		Service: resource.ServiceRef{
@@ -64,7 +63,6 @@ func fullSpan(n uint64) span.Span {
 	}
 }
 
-// minimalSpan has only what span.New requires: ids and a service name.
 func minimalSpan(n uint64) span.Span {
 	return span.Span{
 		Service: resource.ServiceRef{
@@ -75,7 +73,6 @@ func minimalSpan(n uint64) span.Span {
 	}
 }
 
-// syntheticSpans is the E0 load shape: services × operations, parents, intervals, ~2 % failures.
 func syntheticSpans(count, services, operations int, seed uint64) []span.Span {
 	rng := rand.New(rand.NewPCG(seed, seed+1))
 	spans := make([]span.Span, 0, count)
@@ -102,7 +99,6 @@ func syntheticSpans(count, services, operations int, seed uint64) []span.Span {
 	return spans
 }
 
-// encoded returns a copy of the record bytes, which publish only borrows.
 func encoded(t testing.TB, spans []span.Span) ([]byte, string) {
 	t.Helper()
 	var data []byte
@@ -123,7 +119,6 @@ func weightOf(spans []span.Span) int64 {
 	}.Footprint()
 }
 
-// reseal recomputes the CRC32C exactly as the format defines it, so a test can reach checks past the checksum.
 func reseal(data []byte) []byte {
 	const offsetCRC, crcBytes = 24, 4
 	sealed := append([]byte(nil), data...)
@@ -133,8 +128,6 @@ func reseal(data []byte) []byte {
 	return sealed
 }
 
-// rawSpan and rawRecord write format v1 straight from the spec, independently of the encoder,
-// so a test can build exactly the malformed record it needs.
 type rawSpan struct {
 	flags    byte
 	kind     byte
@@ -165,7 +158,6 @@ type rawRecord struct {
 	stringLength *uint64
 }
 
-// validRawSpan is what validRaw decodes to.
 func validRawSpan() span.Span {
 	return span.Span{
 		Service: resource.ServiceRef{

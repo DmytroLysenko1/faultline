@@ -166,7 +166,7 @@ func TestStakeEmptyStartsAFreshPartition(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			w := startWorld(t)
 			want := tt.arrange(t, w)
-			if _, _, err := w.store.Latest(t.Context(), testPartition); !errors.Is(err, processing.ErrNoCheckpoint) {
+			if err := latestErr(w.store.Latest(t.Context(), testPartition)); !errors.Is(err, processing.ErrNoCheckpoint) {
 				t.Fatalf("Latest: %v, want %v", err, processing.ErrNoCheckpoint)
 			}
 
@@ -187,7 +187,7 @@ func TestStakeEmptyStartsAFreshPartition(t *testing.T) {
 
 func TestStakeEmptyNeverWritesOverACheckpointThatAppeared(t *testing.T) {
 	w := startWorld(t)
-	if _, _, err := w.store.Latest(t.Context(), testPartition); !errors.Is(err, processing.ErrNoCheckpoint) {
+	if err := latestErr(w.store.Latest(t.Context(), testPartition)); !errors.Is(err, processing.ErrNoCheckpoint) {
 		t.Fatalf("Latest: %v", err)
 	}
 	ref := w.putObject(t, olderEpoch, 3, imageOf(9))
@@ -214,7 +214,7 @@ func TestStakeEmptyNeedsLatestWithoutACheckpoint(t *testing.T) {
 func TestStakeEmptyRefusesAnEmptyPointerRewrittenAfterLatest(t *testing.T) {
 	w := startWorld(t)
 	w.setPointer(t, &pointerValue{Version: pointerVersion, Epoch: olderEpoch})
-	if _, _, err := w.store.Latest(t.Context(), testPartition); !errors.Is(err, processing.ErrNoCheckpoint) {
+	if err := latestErr(w.store.Latest(t.Context(), testPartition)); !errors.Is(err, processing.ErrNoCheckpoint) {
 		t.Fatalf("Latest: %v", err)
 	}
 	w.setPointer(t, &pointerValue{Version: pointerVersion, Epoch: olderEpoch, DiscardedAt: 5})
@@ -229,7 +229,7 @@ func TestStakeEmptyRefusesAnEmptyPointerRewrittenAfterLatest(t *testing.T) {
 
 func TestACreateThatNeverLandedIsAMovedPointer(t *testing.T) {
 	w := startWorld(t)
-	if _, _, err := w.store.Latest(t.Context(), testPartition); !errors.Is(err, processing.ErrNoCheckpoint) {
+	if err := latestErr(w.store.Latest(t.Context(), testPartition)); !errors.Is(err, processing.ErrNoCheckpoint) {
 		t.Fatalf("Latest: %v", err)
 	}
 	w.once(isPointerWrite, natsjstest.Drop())
@@ -264,7 +264,7 @@ func TestAnEmptyStartNeedsLatestToHaveFoundNothing(t *testing.T) {
 			tt.arrange(t, w)
 			ctx, cancel := context.WithTimeout(t.Context(), refusedWithin)
 			defer cancel()
-			if _, _, err := w.store.Latest(ctx, testPartition); err == nil || errors.Is(err, processing.ErrNoCheckpoint) {
+			if err := latestErr(w.store.Latest(ctx, testPartition)); err == nil || errors.Is(err, processing.ErrNoCheckpoint) {
 				t.Fatalf("Latest: err = %v, want a refusal other than %v", err, processing.ErrNoCheckpoint)
 			}
 			w.proxy.Intercept(nil)
@@ -287,7 +287,7 @@ func TestStakeNeedsACheckpointLatestCouldOpen(t *testing.T) {
 	ref := w.putShaped(t, &storedObject{epoch: olderEpoch, position: restoredAt, headerPosition: restoredAt + 1},
 		imageOf(9))
 	w.setPointer(t, &pointerValue{Version: pointerVersion, Epoch: olderEpoch, Current: ref})
-	if _, _, err := w.store.Latest(t.Context(), testPartition); !errors.Is(err, processing.ErrCheckpointUnusable) {
+	if err := latestErr(w.store.Latest(t.Context(), testPartition)); !errors.Is(err, processing.ErrCheckpointUnusable) {
 		t.Fatalf("Latest: %v, want %v", err, processing.ErrCheckpointUnusable)
 	}
 
@@ -361,7 +361,7 @@ func TestDiscardOfAMissingPointerNeedsTheIncidentFirstSequence(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			w := startWorld(t)
 			w.trim(t)
-			if _, _, err := w.store.Latest(t.Context(), testPartition); !errors.Is(err, processing.ErrCheckpointUnusable) {
+			if err := latestErr(w.store.Latest(t.Context(), testPartition)); !errors.Is(err, processing.ErrCheckpointUnusable) {
 				t.Fatalf("Latest: %v, want %v", err, processing.ErrCheckpointUnusable)
 			}
 			w.putObject(t, olderEpoch, 3, imageOf(9))
@@ -401,7 +401,7 @@ func TestDiscardOfAnUnparsedPointerMarksTheIncidentAndKeepsTheBucket(t *testing.
 			w.trim(t)
 			w.putObject(t, olderEpoch, 3, imageOf(9))
 			w.setRawPointer(t, unparsedPointer)
-			if _, _, err := w.store.Latest(t.Context(), testPartition); !errors.Is(err, processing.ErrCheckpointUnusable) {
+			if err := latestErr(w.store.Latest(t.Context(), testPartition)); !errors.Is(err, processing.ErrCheckpointUnusable) {
 				t.Fatalf("Latest: %v, want %v", err, processing.ErrCheckpointUnusable)
 			}
 			subjects := w.subjects(t)
@@ -442,7 +442,7 @@ const (
 
 func TestACanceledCallLeavesWithoutAskingNATS(t *testing.T) {
 	latest := func(ctx context.Context, w *world) error {
-		_, _, err := w.store.Latest(ctx, testPartition)
+		err := latestErr(w.store.Latest(ctx, testPartition))
 		return err
 	}
 	discard := func(ctx context.Context, w *world) error {
@@ -494,7 +494,7 @@ func TestALatestWhoseDeadlinePassesInTheQueueLeaves(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := w.store.Latest(ctx, testPartition)
+		err := latestErr(w.store.Latest(ctx, testPartition))
 		done <- err
 	}()
 

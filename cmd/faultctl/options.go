@@ -98,7 +98,7 @@ func parseFlags(args []string, lookup lookupFunc) (rawOptions, error) {
 	flags.StringVar(&raw.server, flagServer, serverDefault(lookup), "")
 	flags.DurationVar(&raw.timeout, flagTimeout, defaultTimeout, "")
 	if err := flags.Parse(args); err != nil {
-		return rawOptions{}, err
+		return rawOptions{}, fmt.Errorf("parse flags: %w", err)
 	}
 	if flags.NArg() != 0 {
 		return rawOptions{}, errArgument

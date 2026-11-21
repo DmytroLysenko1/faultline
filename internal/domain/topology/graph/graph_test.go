@@ -310,7 +310,6 @@ func TestGeneratedAtNeverGoesBack(t *testing.T) {
 	}
 }
 
-// shapeOnly compares the step-1 graph shape; handles and served counts have their own tests.
 func shapeOnly() cmp.Option {
 	return cmp.Options{
 		cmpopts.IgnoreFields(graph.Node{}, "Handle", "Served"),

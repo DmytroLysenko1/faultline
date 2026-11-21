@@ -6,9 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -101,7 +103,8 @@ func idleStats() Stats {
 	return Stats{
 		Epoch:          testEpoch,
 		BucketMaxBytes: testMaxBytes,
-		Skipped:        map[string]uint64{"busy": 0, "lease_suspended": 0, "bucket_full": 0, "retention_suspended": 0},
+		Skipped: map[string]uint64{"busy": 0, "lease_suspended": 0, "bucket_full": 0, "retention_suspended": 0,
+			"stopped": 0, "not_started": 0, "final_skipped": 0},
 		Failed: map[string]uint64{"upload": 0, "chunk_count": 0, "verify": 0, "cas": 0, "position_regressed": 0,
 			"name_collision": 0, "commit": 0, "bucket_read": 0, "bucket_unresolved": 0},
 		UploadFailed: map[string]uint64{"other": 0, "bucket_full": 0, "sealed": 0, "too_large": 0, "timeout": 0,
@@ -147,13 +150,14 @@ func (v *validTimes) Valid() bool {
 }
 
 type world struct {
-	proxy    *natsjstest.Proxy
-	operator jetstream.JetStream
-	kv       jetstream.KeyValue
-	objects  jetstream.ObjectStore
-	store    *Store
-	lease    *fakeLease
-	options  *Options
+	requested atomic.Int64
+	proxy     *natsjstest.Proxy
+	operator  jetstream.JetStream
+	kv        jetstream.KeyValue
+	objects   jetstream.ObjectStore
+	store     *Store
+	lease     *fakeLease
+	options   *Options
 }
 
 func startWorld(t *testing.T) *world {
@@ -310,4 +314,23 @@ func isInfoLookup(f *natsjstest.Frame) bool {
 func isChunkRead(f *natsjstest.Frame) bool {
 	return strings.HasPrefix(f.Subject, "$JS.API.STREAM.MSG.GET."+objStreamPrefix) &&
 		bytes.Contains(f.Payload, []byte(`"next_by_subj"`))
+}
+
+func latestErr(_ processing.CheckpointMeta, reader io.ReadCloser, err error) error {
+	if reader == nil {
+		return err
+	}
+	return errors.Join(err, reader.Close())
+}
+
+func closeOnCleanup(t *testing.T, reader io.ReadCloser) {
+	t.Helper()
+	if reader == nil {
+		return
+	}
+	t.Cleanup(func() {
+		if err := reader.Close(); err != nil {
+			t.Errorf("close the latest reader: %v", err)
+		}
+	})
 }

@@ -23,8 +23,6 @@ const (
 	frontendHandle  = handle.Node(testNodes)
 )
 
-// generatedSubjects is what a graph would hold for the generator: svc-k at handle k, frontend after
-// them, and edge e from frontend to svc-(e mod nodes).
 func generatedSubjects() *traffic.Subjects {
 	known := &traffic.Subjects{}
 	for node := range testNodes {
@@ -106,9 +104,6 @@ func playFor(t *testing.T, seed uint64, limits *traffic.Limits, batches int) (*h
 	return h, receivedAt
 }
 
-// TestRestoredTrafficContinuesLikeTheOriginal: windows, sketches, the operation registry, the
-// subject book and the views come back as they were, so the same events give the same finals, views
-// and stats — with the small series limit that sends operations to overflow, too.
 func TestRestoredTrafficContinuesLikeTheOriginal(t *testing.T) {
 	for seed := range uint64(restoreJournals) {
 		limits := testLimits()
@@ -134,8 +129,6 @@ func TestRestoredTrafficContinuesLikeTheOriginal(t *testing.T) {
 	}
 }
 
-// TestTrafficRefusesABookOtherThanTheGraph: the book names services by the graph's handles; a graph
-// that disagrees (another service, another callee, fewer subjects) is a corrupt checkpoint.
 func TestTrafficRefusesABookOtherThanTheGraph(t *testing.T) {
 	original, _ := playFor(t, 7, testLimits(), batchesEach)
 	data := trafficCheckpoint(t, original.traffic)

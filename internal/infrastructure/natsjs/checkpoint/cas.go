@@ -1,6 +1,7 @@
 package checkpoint
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -41,59 +42,77 @@ func (r *casRun) waiting() pendingObject {
 		updated:  true,
 		revision: r.revision,
 		left:     r.left,
+		metaSent: true,
+		final:    r.written.final,
 	}
 }
 
-func (u *uploader) commit(root context.Context, written *object) error {
+func (u *uploader) commit(ctx context.Context, written *object) error {
+	u.phase = phaseCAS
 	if !u.store.lease.Valid() {
-		return u.dropped(root, written, skipped(skipLeaseSuspended, errLeaseLost))
+		return u.dropped(ctx, written, skipped(skipLeaseSuspended, errLeaseLost))
 	}
-	found, err := u.pointerNow(root)
+	found, err := u.pointerNow(ctx)
 	if err != nil {
-		return u.dropped(root, written, failed(failCAS, fmt.Errorf("read the pointer before %s: %w", written.name, err)))
+		return u.dropped(ctx, written, failed(failCAS, fmt.Errorf("read the pointer before %s: %w", written.name,
+			err)))
 	}
-	return u.judged(root, written, found)
+	return u.judged(ctx, written, found)
 }
 
-func (u *uploader) judged(root context.Context, written *object, found *pointer) error {
+func (u *uploader) judged(ctx context.Context, written *object, found *pointer) error {
 	switch judgeBefore(found, u.store.options.Epoch, written.ref(), u.feed.Created()) {
 	case verdictForeign:
 		return terminal(fmt.Errorf("%w: before %s", errPointerForeign, written.name))
 	case verdictLeaseLost:
 		return terminal(fmt.Errorf("%w: a later epoch holds the pointer before %s", errLeaseLost, written.name))
 	case verdictRegressed:
-		return u.dropped(root, written, failed(failRegressed, fmt.Errorf("%w: %s", errPositionRegressed, written.name)))
+		return u.dropped(ctx, written, failed(failRegressed, fmt.Errorf("%w: %s", errPositionRegressed, written.name)))
 	default:
-		return u.update(root, &casRun{
+		return u.update(ctx, &casRun{
 			written: written,
 		}, found, stepUpdate)
 	}
 }
 
-func (u *uploader) update(root context.Context, run *casRun, found *pointer, step casStep) error {
+func (u *uploader) update(ctx context.Context, run *casRun, found *pointer, step casStep) error {
 	data, err := encodePointer(u.nextPointer(found, run.written))
 	if err != nil && !run.sent {
-		return u.dropped(root, run.written, failed(failCAS, err))
+		return u.dropped(ctx, run.written, failed(failCAS, err))
 	}
 	if err != nil {
-		return u.settle(root, run, step, err)
+		return u.settle(ctx, run, step, err)
 	}
-	run.basedOn(found)
-	if err := u.writePointer(root, data, found.revision); err != nil {
-		return u.settle(root, run, step, err)
-	}
-	return u.committed(root, run, run.written.ref(), found.value.Current)
-}
-
-func (u *uploader) writePointer(root context.Context, data []byte, revision uint64) error {
-	return u.callWithin(root, pointerWriteBudget, func(ctx context.Context) error {
-		_, err := u.store.buckets.pointers.Update(ctx, u.store.options.pointerKey(), data, revision)
-		return err
+	err = u.controlWithin(ctx, pointerWriteBudget, func(ctx context.Context) error {
+		run.basedOn(found)
+		return u.putPointer(ctx, data, found.revision)
 	})
+	return u.updated(ctx, run, found, step, err)
 }
 
-func (u *uploader) settle(root context.Context, run *casRun, step casStep, cause error) error {
-	reread, err := u.pointerNow(root)
+func (u *uploader) updated(
+	ctx context.Context,
+	run *casRun,
+	found *pointer,
+	step casStep, err error,
+) error {
+	switch {
+	case err == nil:
+		return u.committed(ctx, run, run.written.ref(), found.value.Current)
+	case errors.Is(err, errNoTimeLeft) && !run.sent:
+		return u.dropped(ctx, run.written, err)
+	default:
+		return u.settle(ctx, run, step, err)
+	}
+}
+
+func (u *uploader) putPointer(ctx context.Context, data []byte, revision uint64) error {
+	_, err := u.store.buckets.pointers.Update(ctx, u.store.options.pointerKey(), data, revision)
+	return err
+}
+
+func (u *uploader) settle(ctx context.Context, run *casRun, step casStep, cause error) error {
+	reread, err := u.pointerNow(ctx)
 	if err != nil {
 		return u.unknown(run, errors.Join(cause, err))
 	}
@@ -101,17 +120,17 @@ func (u *uploader) settle(root context.Context, run *casRun, step casStep, cause
 	if ended := epochEnded(decided, run.written.name); ended != nil {
 		return ended
 	}
-	return u.proceed(root, run, reread, decided, cause)
+	return u.proceed(ctx, run, reread, decided, cause)
 }
 
-func (u *uploader) proceed(root context.Context, run *casRun, reread *pointer, decided verdict, cause error) error {
+func (u *uploader) proceed(ctx context.Context, run *casRun, reread *pointer, decided verdict, cause error) error {
 	switch decided {
 	case verdictAccepted:
-		return u.committed(root, run, reread.value.Current, reread.value.Previous)
+		return u.committed(ctx, run, reread.value.Current, reread.value.Previous)
 	case verdictRetry:
-		return u.retry(root, run, reread)
+		return u.retry(ctx, run, reread)
 	case verdictFence:
-		return u.fenceOwn(root, run, reread)
+		return u.fenceOwn(ctx, run, reread)
 	default:
 		return u.unknown(run, cause)
 	}
@@ -128,22 +147,22 @@ func epochEnded(decided verdict, name string) error {
 	}
 }
 
-func (u *uploader) retry(root context.Context, run *casRun, reread *pointer) error {
+func (u *uploader) retry(ctx context.Context, run *casRun, reread *pointer) error {
 	if !u.store.lease.Valid() {
-		return u.settle(root, run, stepExhausted, errLeaseLost)
+		return u.settle(ctx, run, stepExhausted, errLeaseLost)
 	}
-	return u.update(root, run, reread, stepRetry)
+	return u.update(ctx, run, reread, stepRetry)
 }
 
-func (u *uploader) fenceOwn(root context.Context, run *casRun, reread *pointer) error {
-	if err := u.fence(root, reread); err != nil {
-		return u.settle(root, run, stepFence, err)
+func (u *uploader) fenceOwn(ctx context.Context, run *casRun, reread *pointer) error {
+	if err := u.fence(ctx, reread); err != nil {
+		return u.settle(ctx, run, stepFence, err)
 	}
-	u.takeBack(root, *run.written.ref())
+	u.takeBackOrWait(ctx, *run.written.ref(), true)
 	return failed(failCAS, fmt.Errorf("%w: %s", errFenced, run.written.name))
 }
 
-func (u *uploader) fence(root context.Context, found *pointer) error {
+func (u *uploader) fence(ctx context.Context, found *pointer) error {
 	if !u.store.lease.Valid() {
 		return errLeaseLost
 	}
@@ -152,7 +171,9 @@ func (u *uploader) fence(root context.Context, found *pointer) error {
 	if err != nil {
 		return err
 	}
-	return u.writePointer(root, data, found.revision)
+	return u.controlWithin(ctx, pointerWriteBudget, func(ctx context.Context) error {
+		return u.putPointer(ctx, data, found.revision)
+	})
 }
 
 func (u *uploader) unknown(run *casRun, cause error) error {
@@ -178,27 +199,48 @@ func formatCreated(created time.Time) string {
 	return created.UTC().Format(createdLayout)
 }
 
-func (u *uploader) committed(root context.Context, run *casRun, kept ...*objectRef) error {
-	written := run.written
-	u.landed = append(u.landed, &commitRecord{
-		through: written.meta.Position.Sequence,
-		at:      u.store.now(),
-		measured: &measurement{
-			bytes:    written.size,
-			upload:   written.took,
-			verify:   written.verified,
-			uploadBs: rate(written.size, written.took),
-			verifyBs: rate(written.size, written.verified),
-		},
-	})
-	if !u.stopRequested() {
-		u.retain(root, written.meta.Position.Sequence)
+func (u *uploader) committed(ctx context.Context, run *casRun, kept ...*objectRef) error {
+	u.land(run.written)
+	if u.retains(run.written.final) {
+		u.retain(ctx, run.written.meta.Position.Sequence)
 	}
-	u.purgeLeft(root, run.left, kept...)
+	u.purgeLeft(ctx, run.left, kept...)
 	return nil
 }
 
-func (u *uploader) retain(root context.Context, sequence uint64) {
+func (u *uploader) land(written *object) {
+	measured := written.measurement()
+	u.landed = append(u.landed, &commitRecord{
+		through:  written.meta.Position.Sequence,
+		at:       u.store.now(),
+		measured: measured,
+		final:    written.final,
+	})
+	u.measured = remeasured(u.measured, measured)
+}
+
+func (o *object) measurement() *measurement {
+	return &measurement{
+		bytes:    o.size,
+		upload:   o.took,
+		verify:   o.verified,
+		uploadBs: rate(o.size, o.took),
+		verifyBs: rate(o.size, o.verified),
+	}
+}
+
+func remeasured(known rates, measured *measurement) rates {
+	return rates{
+		upload: cmp.Or(measured.uploadBs, known.upload),
+		verify: cmp.Or(measured.verifyBs, known.verify),
+	}
+}
+
+func (u *uploader) retains(final bool) bool {
+	return !final && !u.stopRequested()
+}
+
+func (u *uploader) retain(ctx context.Context, sequence uint64) {
 	if u.feedClosed {
 		return
 	}
@@ -206,7 +248,7 @@ func (u *uploader) retain(root context.Context, sequence uint64) {
 		Partition: u.store.options.Partition,
 		Sequence:  sequence,
 	}
-	err := u.callWithin(root, feedCommitBudget, func(ctx context.Context) error {
+	err := u.controlWithin(ctx, feedCommitBudget, func(ctx context.Context) error {
 		return u.feed.Commit(ctx, through)
 	})
 	if err != nil {
@@ -215,6 +257,9 @@ func (u *uploader) retain(root context.Context, sequence uint64) {
 }
 
 func (u *uploader) retainFailed(err error) {
+	if stopCaused(err) {
+		return
+	}
 	if errors.Is(err, processing.ErrFeedClosed) {
 		u.feedClosed = true
 	}
@@ -225,9 +270,9 @@ func (u *uploader) retainFailed(err error) {
 	u.store.stats.fail(failCommit, err)
 }
 
-func (u *uploader) pointerNow(root context.Context) (*pointer, error) {
+func (u *uploader) pointerNow(ctx context.Context) (*pointer, error) {
 	var found pointer
-	err := u.callWithin(root, pointerWriteBudget, func(ctx context.Context) error {
+	err := u.controlWithin(ctx, pointerWriteBudget, func(ctx context.Context) error {
 		var err error
 		found, err = u.store.readPointer(ctx)
 		return err

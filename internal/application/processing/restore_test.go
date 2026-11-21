@@ -40,8 +40,6 @@ func TestRestoreWithoutACheckpointStartsEmptyAtTheFirstPosition(t *testing.T) {
 	}
 }
 
-// TestRestoreContinuesFromTheCommittedCheckpoint: the builder comes back with what the checkpoint
-// held, and the feed continues right after it with the same ReceivedAt.
 func TestRestoreContinuesFromTheCommittedCheckpoint(t *testing.T) {
 	p, store, _ := stepping(t, tenBatches, everyThird)
 	p.run(t)
@@ -94,8 +92,6 @@ func rewrite(t *testing.T, store *processingtest.CheckpointStore,
 	store.Put(partition, &meta, data)
 }
 
-// TestAnIncompatibleCheckpointFailsClosed: a checkpoint the processor cannot continue from is an
-// error, never an empty start; cmd turns it into exit code 1 unless the operator discards it.
 func TestAnIncompatibleCheckpointFailsClosed(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -191,8 +187,6 @@ func TestRestoreRefusesInvalidLimitsWithoutACheckpoint(t *testing.T) {
 	}
 }
 
-// strayReader is a store answer the contract does not promise: data with an error, or no data
-// without one.
 type strayReader struct {
 	reader io.ReadCloser
 	err    error

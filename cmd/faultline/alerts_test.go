@@ -101,8 +101,6 @@ func TestAReportWarnsOnceForEveryRaisedAlert(t *testing.T) {
 	}
 }
 
-// TestTheFinalReportDoesNotJudgeAShortInterval: the stop comes seconds after the last report, so
-// its deltas say nothing; it logs the state without raising or clearing.
 func TestTheFinalReportDoesNotJudgeAShortInterval(t *testing.T) {
 	logs := &logBuffer{}
 	sampleReporter(logs, fixedSnapshots{snapshot: sampleSnapshot()}).report(t.Context(), true)
@@ -143,8 +141,6 @@ func calmSnapshot() *topology.Snapshot {
 	return snapshot
 }
 
-// TestAlertsRaiseThenClearThroughTheReporter: a hot snapshot, then two calm ones; the log tells the
-// whole story, Warn when raised, Info when cleared, and the state group follows.
 func TestAlertsRaiseThenClearThroughTheReporter(t *testing.T) {
 	logs := &logBuffer{}
 	reporter := sampleReporter(logs, fixedSnapshots{snapshot: sampleSnapshot()})
@@ -208,8 +204,6 @@ func nameOperations(spans []span.Span) {
 	}
 }
 
-// secretTraffic sends pairs with more distinct operations than a service may keep, closes their
-// windows, then sends pairs from the closed past: every term of I6, I10 and I11 is non-zero.
 func secretTraffic(t *testing.T) *topology.Snapshot {
 	t.Helper()
 	limits := topologytest.Limits()
@@ -244,8 +238,6 @@ func engineBalanced(windows map[string]any, engine string) bool {
 	return counter(windows, engine, "offered") == arrived
 }
 
-// TestOneStatsLineBalancesI6I10AndI11: the demo checks the formulas from a single line, so the line
-// alone must carry every term of them, read from one snapshot.
 func TestOneStatsLineBalancesI6I10AndI11(t *testing.T) {
 	logs := &logBuffer{}
 	sampleReporter(logs, fixedSnapshots{snapshot: secretTraffic(t)}).report(t.Context(), false)
@@ -299,8 +291,6 @@ func crowd(count int) []resource.ServiceRef {
 	return owners
 }
 
-// TestASampleReadsTheSubjectsEngine: the alert rules judge events of subjects, the engine that sees
-// every call and served request once; the other two engines split the same events.
 func TestASampleReadsTheSubjectsEngine(t *testing.T) {
 	snapshot := sampleSnapshot()
 	snapshot.TrafficStats.OwnersOverLimit = crowd(manyOwners)
@@ -364,8 +354,6 @@ func TestAlertLinesCarryTheirStateValuesAndReason(t *testing.T) {
 	}
 }
 
-// TestTheLagThresholdAllowsTheDelayTheIdleGapAndOneFire: with no traffic the pipeline sees the
-// heartbeat only when Receive returns, up to one Fire period after it was due.
 func TestTheLagThresholdAllowsTheDelayTheIdleGapAndOneFire(t *testing.T) {
 	cfg := new(defaultConfig())
 	want := defaultWatermarkDelay + defaultIdleAdvanceAfter + defaultEarlyFirePeriod + specLagSlack

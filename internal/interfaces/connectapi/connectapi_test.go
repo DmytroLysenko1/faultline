@@ -708,8 +708,6 @@ func TestReflectionListsGraphService(t *testing.T) {
 	}
 }
 
-// TestLargestAllowedGraphFitsTheSendLimit runs with the response budget such a config must have:
-// the validator refuses a smaller one.
 func TestLargestAllowedGraphFitsTheSendLimit(t *testing.T) {
 	options := defaultOptions()
 	options.ResponseBudget = graphservice.ResponseWeight(maxConfiguredNodes, maxConfiguredEdges)

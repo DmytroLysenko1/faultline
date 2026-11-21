@@ -20,16 +20,24 @@ var (
 	errVerifyEnded = errors.New("checkpoint verify ended before its read")
 )
 
-func (u *uploader) check(budgeted, upload context.Context, written *object) error {
+func (u *uploader) check(budgeted, ctx context.Context, written *object) error {
+	if err := u.boundary(phaseReconcile, 0); err != nil {
+		return err
+	}
 	if err := u.reconcile(budgeted, written); err != nil {
 		return err
 	}
-	return u.verify(upload, written)
+	return u.verify(ctx, written)
 }
 
 func (u *uploader) reconcile(budgeted context.Context, written *object) error {
 	subject := u.store.chunkSubject(written.nuid)
-	held, err := u.subjectCount(budgeted, subject)
+	var held uint64
+	err := u.uploadWithin(budgeted, sweepCallBudget, func(ctx context.Context) error {
+		var err error
+		held, err = u.subjectCount(ctx, subject)
+		return err
+	})
 	if err != nil {
 		return failed(failChunkCount, fmt.Errorf("count the chunks of %s: %w", written.name, err))
 	}
@@ -40,13 +48,19 @@ func (u *uploader) reconcile(budgeted context.Context, written *object) error {
 	return nil
 }
 
-func (u *uploader) verify(upload context.Context, written *object) error {
+func (u *uploader) verify(ctx context.Context, written *object) error {
 	started := time.Now()
-	ctx, cancel := context.WithTimeout(upload, transfer(written.size, u.store.options.verifyRate())+verifySlack)
+	ctx, cancel, err := u.bounded(ctx, transfer(written.size, u.store.options.verifyRate())+verifySlack, edgeUpload)
+	if err != nil {
+		return err
+	}
 	defer cancel()
 	reader := u.store.readerWith(ctx, written.info(u.store.options.objectBucket()), missingIsCorrupt)
-	err := framed.Walk(u.paced(ctx, reader), topology.CheckpointSections()...)
-	if err = errors.Join(err, reader.Close()); err != nil {
+	reader.before = func(read uint64) error {
+		return u.boundary(phaseVerify, written.size-signed(read))
+	}
+	err = framed.Walk(u.paced(ctx, reader), topology.CheckpointSections()...)
+	if err = stopMarked(ctx, errors.Join(err, reader.Close())); err != nil {
 		return failed(failVerify, fmt.Errorf("read back %s: %w", written.name, err))
 	}
 	written.verified = time.Since(started)
@@ -63,15 +77,19 @@ func (u *uploader) paced(ctx context.Context, from io.Reader) io.Reader {
 	}
 	return &pacedReader{
 		done: ctx.Done(),
+		ended: func() error {
+			return stopMarked(ctx, errors.Join(errVerifyEnded, ctx.Err()))
+		},
 		from: from,
 		pace: newPace(u.store.options.VerifyRate, burstChunks*int64(u.store.chunkBytes), time.Now()),
 	}
 }
 
 type pacedReader struct {
-	done <-chan struct{}
-	from io.Reader
-	pace *pace
+	done  <-chan struct{}
+	ended func() error
+	from  io.Reader
+	pace  *pace
 }
 
 func (p *pacedReader) Read(out []byte) (int, error) {
@@ -87,7 +105,7 @@ func (p *pacedReader) wait(gap time.Duration) error {
 	defer timer.Stop()
 	select {
 	case <-p.done:
-		return errVerifyEnded
+		return p.ended()
 	case <-timer.C:
 		return nil
 	}
@@ -105,16 +123,16 @@ func (u *uploader) subjectCount(ctx context.Context, subject string) (uint64, er
 	return held, err
 }
 
-func (u *uploader) bucketBytes(upload context.Context) (uint64, error) {
-	ctx, cancel := context.WithTimeout(upload, sweepCallBudget)
-	defer cancel()
+func (u *uploader) bucketBytes(ctx context.Context) (uint64, error) {
 	var used uint64
-	err := retrying(ctx, func(attempt context.Context) error {
-		info, err := u.store.buckets.bucket.Info(attempt)
-		if err == nil {
-			used = info.State.Bytes
-		}
-		return err
+	err := u.uploadWithin(ctx, sweepCallBudget, func(ctx context.Context) error {
+		return retrying(ctx, func(attempt context.Context) error {
+			info, err := u.store.buckets.bucket.Info(attempt)
+			if err == nil {
+				used = info.State.Bytes
+			}
+			return err
+		})
 	})
 	return used, err
 }

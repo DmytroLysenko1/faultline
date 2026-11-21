@@ -46,6 +46,11 @@ type address struct {
 	created  time.Time
 }
 
+type staking struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
 type Store struct {
 	options    Options
 	lease      partitionLease
@@ -57,6 +62,7 @@ type Store struct {
 	latest     address
 	stats      counters
 	up         *uploader
+	staking    *staking
 	done       chan struct{}
 	failed     error
 	chunkBytes uint32
@@ -132,21 +138,37 @@ func (s *Store) Close(ctx context.Context) {
 		return
 	}
 	s.state = stateClosed
+	if s.staking != nil {
+		s.staking.cancel()
+	}
 	if s.up != nil {
 		s.up.stop(stopDeadline(ctx, time.Now()))
 	}
 }
 
 func (s *Store) Wait(ctx context.Context) error {
-	up := s.uploader()
-	if up == nil {
+	done := s.running()
+	if done == nil {
 		return nil
 	}
 	select {
-	case <-up.exited:
+	case <-done:
 		return nil
 	case <-ctx.Done():
-		return translate(fmt.Errorf("wait for the checkpoint upload to stop: %w", ctx.Err()))
+		return translate(fmt.Errorf("wait for the checkpoint store to stop: %w", ctx.Err()))
+	}
+}
+
+func (s *Store) running() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch {
+	case s.up != nil:
+		return s.up.exited
+	case s.staking != nil:
+		return s.staking.done
+	default:
+		return nil
 	}
 }
 
@@ -162,12 +184,6 @@ func (s *Store) Err() error {
 
 func (s *Store) Stats() Stats {
 	return s.stats.snapshot(s.options.Epoch, s.options.MaxBytes)
-}
-
-func (s *Store) uploader() *uploader {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.up
 }
 
 func stopDeadline(ctx context.Context, now time.Time) time.Time {
@@ -228,16 +244,42 @@ func (s *Store) remembered() address {
 	return s.latest
 }
 
-func (s *Store) staked() error {
+func (s *Store) enter(ctx context.Context) (context.Context, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	switch s.state {
-	case stateClosed:
-		return errStoreClosed
-	case stateStaked, stateStarted:
-		return fmt.Errorf("%w: partition %d is already staked", errStoreState, s.options.Partition)
-	case stateOpened:
-		s.state = stateStaked
+	if s.state == stateClosed {
+		return nil, errStoreClosed
+	}
+	if s.state != stateOpened || s.staking != nil {
+		return nil, fmt.Errorf("%w: partition %d is already staked", errStoreState, s.options.Partition)
+	}
+	s.state = stateStaked
+	staked, cancel := context.WithCancel(ctx)
+	s.staking = &staking{
+		cancel: cancel,
+		done:   make(chan struct{}),
+	}
+	return staked, nil
+}
+
+func (s *Store) exitStake(err error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.staking.cancel()
+	close(s.staking.done)
+	s.staking = nil
+	if err != nil && s.state == stateStaked {
+		s.state = stateOpened
+	}
+	if err != nil && s.state == stateClosed {
+		return fmt.Errorf("%w: %w", errStoreClosed, err)
+	}
+	return err
+}
+
+func (s *Store) notStaking() error {
+	if s.staking != nil {
+		return fmt.Errorf("%w: start while partition %d is staked", errStoreState, s.options.Partition)
 	}
 	return nil
 }

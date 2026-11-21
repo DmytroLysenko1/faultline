@@ -16,6 +16,9 @@ const (
 	skipLeaseSuspended
 	skipBucketFull
 	skipRetentionSuspended
+	skipStopped
+	skipNotStarted
+	skipFinalSkipped
 	skipReasons
 )
 
@@ -24,6 +27,9 @@ var skipNames = [skipReasons]string{
 	skipLeaseSuspended:     "lease_suspended",
 	skipBucketFull:         "bucket_full",
 	skipRetentionSuspended: "retention_suspended",
+	skipStopped:            "stopped",
+	skipNotStarted:         "not_started",
+	skipFinalSkipped:       "final_skipped",
 }
 
 type uploadClass uint8
@@ -116,6 +122,8 @@ type Stats struct {
 	CASUnknown         uint64
 	PurgeLeftover      uint64
 	Cycles             uint64
+	Finals             uint64
+	PreviousLeftAtStop uint64
 	SweptObjects       uint64
 	SweptOrphans       uint64
 	SweepFailures      uint64
@@ -127,6 +135,7 @@ type commitRecord struct {
 	through  uint64
 	at       time.Time
 	measured *measurement
+	final    bool
 }
 
 type measurement struct {
@@ -158,6 +167,8 @@ type counters struct {
 	casUnknown    atomic.Uint64
 	purgeLeftover atomic.Uint64
 	cycles        atomic.Uint64
+	finals        atomic.Uint64
+	previousLeft  atomic.Uint64
 }
 
 func (c *counters) snapshot(epoch uint64, maxBytes int64) Stats {
@@ -183,6 +194,13 @@ func (c *counters) snapshot(epoch uint64, maxBytes int64) Stats {
 		UnreadableMeta: c.unreadable.Load(),
 		LastSweepError: loaded(c.lastSweep.Load()),
 	}
+	c.withCommits(&stats)
+	return stats
+}
+
+func (c *counters) withCommits(stats *Stats) {
+	stats.Finals = c.finals.Load()
+	stats.PreviousLeftAtStop = c.previousLeft.Load()
 	if last := c.lastCommit.Load(); last != nil {
 		stats.CommittedThrough = last.through
 		stats.CommittedAt = last.at
@@ -190,7 +208,6 @@ func (c *counters) snapshot(epoch uint64, maxBytes int64) Stats {
 	if last := c.lastMeasure.Load(); last != nil {
 		stats.withMeasure(last)
 	}
-	return stats
 }
 
 func (s *Stats) withMeasure(last *measurement) {
@@ -237,6 +254,9 @@ func (c *counters) failUpload(class uploadClass) {
 func (c *counters) commit(record *commitRecord) {
 	c.committed.Add(1)
 	c.lastCommit.Store(record)
+	if record.final {
+		c.finals.Add(1)
+	}
 	if record.measured != nil {
 		c.lastMeasure.Store(record.measured)
 	}

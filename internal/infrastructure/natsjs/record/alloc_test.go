@@ -7,8 +7,6 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/record"
 )
 
-// repeatedNames builds count spans over a fixed set of 5 services and 3 operations, so a bigger record has
-// more spans but not more distinct strings.
 func repeatedNames(count int) []span.Span {
 	shapes := syntheticSpans(15, 5, 3, 21)
 	spans := make([]span.Span, count)
@@ -19,8 +17,6 @@ func repeatedNames(count int) []span.Span {
 	return spans
 }
 
-// TestDecodeAllocatesNothingPerSpan: allocations depend on the distinct strings of a record, not on how many
-// spans it carries — the decode cost the processor pays on its single hot goroutine.
 func TestDecodeAllocatesNothingPerSpan(t *testing.T) {
 	allocations := func(count int) float64 {
 		data, _ := encoded(t, repeatedNames(count))

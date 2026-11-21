@@ -86,8 +86,6 @@ func TestRejectedLogIsThrottledAndCarriesWhatItSkipped(t *testing.T) {
 	}
 }
 
-// TestALostWriteLogReopensAndCountsWhatItSkipped: a long outage keeps logging once per interval, and
-// each record says how many failed requests it stands for.
 func TestALostWriteLogReopensAndCountsWhatItSkipped(t *testing.T) {
 	h := start(t, returning(ingest.AcceptResult{}, ingest.ErrUnavailable))
 	for range 3 {

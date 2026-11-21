@@ -87,6 +87,7 @@ func (e *cycleError) apply(u *uploader) bool {
 		u.terminate(e.cause)
 		return true
 	case kindStopped:
+		u.store.stats.skip(skipStopped)
 	}
 	return false
 }

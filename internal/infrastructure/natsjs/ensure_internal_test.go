@@ -15,8 +15,7 @@ import (
 )
 
 const (
-	neverVisible = -1
-	// the design's numbers, kept apart from the code's constants so a changed budget or schedule fails here
+	neverVisible        = -1
 	designedWait        = 5 * time.Second
 	shortCallerBudget   = 2 * time.Second
 	twoHiddenReads      = 300 * time.Millisecond
@@ -27,8 +26,6 @@ const (
 
 var errBroken = errors.New("stream read broken")
 
-// laggingStreams is a cluster whose stream name is taken before the stream answers its Info: the first
-// hidden reads answer hiddenAs, then the stream shows the config it was created with.
 type laggingStreams struct {
 	jetstream.JetStream
 	lock     sync.Mutex
@@ -116,10 +113,6 @@ type lagOutcome struct {
 	took    time.Duration
 }
 
-// TestAJustCreatedStreamIsWaitedForOnlyWhereItCanStillAppear: two processors start together; the one
-// that loses the create, and the one whose own create is not yet visible, wait for the stream — but
-// not past the designed 5 s, never as if the caller's deadline had passed, and never for a stream that
-// was already there at plan time.
 func TestAJustCreatedStreamIsWaitedForOnlyWhereItCanStillAppear(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -173,8 +166,6 @@ func TestAJustCreatedStreamIsWaitedForOnlyWhereItCanStillAppear(t *testing.T) {
 	}
 }
 
-// TestAStreamThatNeverAppearsSaysWhyInOneLine: the operator reads the last answer of NATS — or that
-// there was none — not an internal timer that looks like the start's own deadline.
 func TestAStreamThatNeverAppearsSaysWhyInOneLine(t *testing.T) {
 	tests := []struct {
 		name string

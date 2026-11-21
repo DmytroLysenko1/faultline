@@ -44,9 +44,6 @@ func (q staticQuery) Execute(context.Context) (*topology.Snapshot, error) {
 	return q.snapshot, nil
 }
 
-// slowSnapshot carries names of the longest allowed size made of random letters and digits, so even
-// its gzip response is several times what the fixed socket buffers and the HTTP/2 window can hold,
-// and a client that stops reading leaves the server inside its writes.
 func slowSnapshot() *topology.Snapshot {
 	random := rand.New(rand.NewPCG(slowSeed, slowSeed))
 	namePad := resource.MaxServiceNameBytes - len(strconv.Itoa(slowNodes))
@@ -110,8 +107,6 @@ func openSlowly(t *testing.T, server *httptest.Server, args *slowRequest) *http.
 	return response
 }
 
-// Fixed socket buffers on both ends: the kernel grows unset ones up to 4 MiB each on loopback, enough
-// to swallow the whole gzip response, and then the server finishes while the client reads nothing.
 func fixedBuffer(conn net.Conn, set func(*net.TCPConn, int) error) error {
 	tcp, isTCP := conn.(*net.TCPConn)
 	if !isTCP {
@@ -120,8 +115,6 @@ func fixedBuffer(conn net.Conn, set func(*net.TCPConn, int) error) error {
 	return set(tcp, socketBuffer)
 }
 
-// fixedSendBuffers returns Accept's errors as they are: http.Server retries only what still is a
-// net.Error. A buffer it cannot fix fails the test, not the server.
 type fixedSendBuffers struct {
 	net.Listener
 	t *testing.T
@@ -171,8 +164,6 @@ func waitForFree(admission *graphservice.Admission, want int64) int64 {
 	return got
 }
 
-// staysFree is false as soon as the budget moves away from want: a server that finished its writes
-// gives everything back, and a passing glimpse of the shrunk budget proves nothing.
 func staysFree(admission *graphservice.Admission, want int64) bool {
 	deadline := time.Now().Add(heldFor)
 	for time.Now().Before(deadline) {
@@ -184,9 +175,6 @@ func staysFree(admission *graphservice.Admission, want int64) bool {
 	return true
 }
 
-// TestASlowReaderKeepsOnlyTheWrittenWeightOnTheRealStack: through connect itself, once the
-// response is marshalled and its first bytes are out, the budget holds only the tree and the
-// encoded bytes (and a compressed copy) for as long as the client takes to read.
 func TestASlowReaderKeepsOnlyTheWrittenWeightOnTheRealStack(t *testing.T) {
 	weight := graphservice.ResponseWeight(slowNodes, 0)
 	written := graphservice.WrittenWeight(slowNodes, 0)

@@ -57,9 +57,6 @@ func spread(iteration int) Timings {
 	}
 }
 
-// TestTakesCoverEveryRecordOnceInOrder: record i has Iteration i and Publish N−i, so a take that
-// folds records first…last reads back as Iteration last and Publish N−first. Takes must tile
-// 1…N: no record lost, none taken twice, none mixed into a take out of order.
 func TestTakesCoverEveryRecordOnceInOrder(t *testing.T) {
 	var measured timings
 	var writer sync.WaitGroup

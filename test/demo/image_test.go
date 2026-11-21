@@ -82,8 +82,6 @@ func allowedDirs(t *testing.T, path string) map[string]bool {
 	return allowed
 }
 
-// TestTheImageBuildSeesEveryPackageOfTheServer: a top-level directory the server imports but the
-// Dockerfile does not copy builds locally and fails only inside docker build (pkg/ in step 2).
 func TestTheImageBuildSeesEveryPackageOfTheServer(t *testing.T) {
 	root := otlptest.ModuleRoot(t)
 	copied := copiedDirs(t, filepath.Join(root, dockerfilePath))

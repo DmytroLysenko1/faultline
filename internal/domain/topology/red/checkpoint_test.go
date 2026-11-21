@@ -37,8 +37,6 @@ func restoredArena(r *checkpoint.Reader) *sketch.ArenaRestore {
 	return restore
 }
 
-// TestACellComesBackWithItsCountsAndLatencies: a restored cell summarizes to the same RED as the
-// original, percentiles included.
 func TestACellComesBackWithItsCountsAndLatencies(t *testing.T) {
 	arena, err := sketch.NewArena(redArena)
 	if err != nil {

@@ -1,8 +1,3 @@
-# faultline server image (design step 1, slice 7, D2).
-# Two stages: `build` compiles a static binary with the Go toolchain, `runtime` ships only that
-# binary on distroless. Base images are pinned by multi-arch index digest (arm64 laptops and
-# amd64 CI build from the same bytes).
-
 ARG GO_IMAGE=golang:1.27.3-bookworm@sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0
 ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 

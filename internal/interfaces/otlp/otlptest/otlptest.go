@@ -80,9 +80,6 @@ func fillRequest(traces ptrace.Traces, checkEvery int, appendSpan func(index int
 	}
 }
 
-// RoutedSpans fills a request with server spans whose routes are unique and routeBytes long, so
-// every span carries its own operation name into the batch. Routes are spelled in letters that are
-// neither digits nor hex, so the normalizer keeps them instead of folding them into {id}.
 func RoutedSpans(tb testing.TB, routeBytes int) ptrace.Traces {
 	tb.Helper()
 	traces := ptrace.NewTraces()

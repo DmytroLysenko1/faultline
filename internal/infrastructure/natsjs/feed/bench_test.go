@@ -19,9 +19,6 @@ const (
 	largeRecordBytes = 1 << 20
 )
 
-// BenchmarkFeedReceive opens the feed on benchRecords stored records of a fixed encoded size and reads them
-// all, each released: MB/s of record bytes through consumer creation, pulls, decode and Receive. The
-// allocations include the NATS server running in the test process; BenchmarkDelivery counts the feed's.
 func BenchmarkFeedReceive(b *testing.B) {
 	for _, nodes := range []int{singleNode, threeNodes} {
 		for _, size := range []int{smallRecordBytes, largeRecordBytes} {
@@ -70,8 +67,6 @@ func spansOfSize(b *testing.B, size int) []span.Span {
 	return spans
 }
 
-// publishBench writes benchRecords records of spans, each made unique by its first span so none is a
-// duplicate.
 func (l *live) publishBench(b *testing.B, spans []span.Span) {
 	b.Helper()
 	for index := range uint64(benchRecords) {

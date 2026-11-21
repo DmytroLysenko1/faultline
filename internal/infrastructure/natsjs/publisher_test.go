@@ -60,8 +60,6 @@ func assertStored(t *testing.T, cluster *natsjstest.Cluster, stream string, want
 	}
 }
 
-// TestTheLargestRecordFitsWithItsHeaders: a record of exactly the guard plus the Msg-Id and
-// Expect-Stream headers must be stored, or a valid request would be retried until it is dropped.
 func TestTheLargestRecordFitsWithItsHeaders(t *testing.T) {
 	cluster := natsjstest.Start(t, threeNodes)
 	topology := topologyOf(onePartition, threeReplicas)
@@ -104,8 +102,6 @@ type liveAnswer struct {
 	wantReason natsjs.Reason
 }
 
-// TestEveryLiveNATSAnswerHasItsReason: the answers come from a live server, not from literals,
-// so a server that changes a code or a description fails here instead of turning into "unexpected".
 func TestEveryLiveNATSAnswerHasItsReason(t *testing.T) {
 	tests := []liveAnswer{
 		{name: "a full stream", args: fillTheStream, wantReason: natsjs.ReasonStreamFull},
@@ -222,8 +218,6 @@ func publishWithAnExpiredDeadline(t *testing.T, _ *natsjstest.Cluster, conn *nat
 	return err
 }
 
-// answeredBySomeoneElse puts a plain subscriber where the stream should be: whatever it answers is not
-// a PubAck of the partition's stream and must never become OK.
 func answeredBySomeoneElse(reply []byte) func(*testing.T, *natsjstest.Cluster, *natsjs.Conn, natsjs.Topology) error {
 	return func(t *testing.T, cluster *natsjstest.Cluster, conn *natsjs.Conn, topology natsjs.Topology) error {
 		t.Helper()
@@ -243,9 +237,6 @@ func answeredBySomeoneElse(reply []byte) func(*testing.T, *natsjstest.Cluster, *
 	}
 }
 
-// TestTwoOfThreeReplicasDownGivesRetryableErrorNotOK (FR-ING-003): with the quorum gone a publish is
-// unavailable within the budget — no responders after the hidden retries, or the deadline when the
-// survivor still believes it leads — and never acknowledged.
 func TestTwoOfThreeReplicasDownGivesRetryableErrorNotOK(t *testing.T) {
 	cluster := natsjstest.Start(t, threeNodes)
 	topology := topologyOf(onePartition, threeReplicas)
@@ -270,7 +261,6 @@ func TestTwoOfThreeReplicasDownGivesRetryableErrorNotOK(t *testing.T) {
 	}
 }
 
-// survivingNode keeps the node the link uses, so the client is not also reconnecting.
 func survivingNode(t *testing.T, cluster *natsjstest.Cluster, link *natsjs.Link) int {
 	t.Helper()
 	connected := link.NATS.ConnectedServerName()

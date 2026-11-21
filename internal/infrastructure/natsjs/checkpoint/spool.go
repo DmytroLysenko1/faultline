@@ -18,9 +18,10 @@ const (
 )
 
 type spool struct {
-	name string
-	meta processing.CheckpointMeta
-	size int64
+	name  string
+	meta  processing.CheckpointMeta
+	size  int64
+	final bool
 }
 
 type spoolWriter struct {
@@ -73,7 +74,7 @@ func (s *Store) createSpool(meta *processing.CheckpointMeta) (*os.File, spool, e
 	}
 	file, err := root.Create(name)
 	if err = errors.Join(err, root.Close()); err != nil {
-		return nil, spool{}, fmt.Errorf("create spool %s: %w", name, err)
+		return nil, spool{}, fmt.Errorf("create spool %s: %w", name, errors.Join(err, s.abandon(file, name)))
 	}
 	return file, spool{
 		name: name,
@@ -131,6 +132,18 @@ func removeSpools(dir string) error {
 	}
 	if err = errors.Join(removeEach(root, entries), root.Close()); err != nil {
 		return fmt.Errorf("remove old spools: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) abandon(file *os.File, name string) error {
+	if file == nil {
+		return nil
+	}
+	err := file.Close()
+	s.removeSpool(name)
+	if err != nil {
+		return fmt.Errorf("close abandoned spool: %w", err)
 	}
 	return nil
 }

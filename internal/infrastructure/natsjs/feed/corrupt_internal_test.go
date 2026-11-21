@@ -39,7 +39,6 @@ func corruptBodyAt(t *testing.T, sequence uint64) *message {
 	return next
 }
 
-// receiveData hands out what the feed has read by now, releases it and keeps the data positions.
 func receiveData(t *testing.T, feed *Feed) []uint64 {
 	t.Helper()
 	got, err := receiveNow(t, feed)
@@ -107,8 +106,6 @@ func TestCorruptRecordGoesToTheDLQAndIsSkipped(t *testing.T) {
 	}
 }
 
-// checkAccounted holds I18 at rest with one corrupt record: every read record was delivered, a heartbeat or
-// dead-lettered.
 func checkAccounted(t *testing.T, stats *Stats) {
 	t.Helper()
 	if stats.DeadLettered != 1 || stats.Held != 0 {
@@ -549,8 +546,6 @@ func TestTheLatestCopyTellsTheWindowBack(t *testing.T) {
 	}
 }
 
-// TestAnEmptiedDLQForgetsTheWindow: an operator who empties the DLQ resets what the seed finds, so two more
-// corruptions are copied before the third stops the feed — the runbook's price of emptying it.
 func TestAnEmptiedDLQForgetsTheWindow(t *testing.T) {
 	letters := newFakeLetters()
 	synctest.Test(t, func(t *testing.T) {

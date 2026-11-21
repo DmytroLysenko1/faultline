@@ -1,11 +1,4 @@
 #!/usr/bin/env bash
-# Step 1 demo: OTel Demo in kind sends traces to faultline, and the graph faultline builds must
-# match the reference edges (design step 1, «Демо и путь деплоя», slice 7, D5).
-# With DEMO_STEP=2 (hack/demo-2.sh) democheck also waits for final RED windows on the required
-# edges and checks the step 2 accounting in pipeline.stats (design step 2, «Демо make demo-2»).
-#
-# Env: DEMO_PORT (local port of the API port-forward, default 18080); DEMO_STEP (1 or 2, default 1).
-# Exit: 0 — the graph passed hack/democheck; 1 — it did not, or a step failed.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

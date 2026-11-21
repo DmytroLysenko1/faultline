@@ -41,7 +41,6 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }
 
-// wallClock reads time.Now, so inside a synctest bubble the journal sees the bubble's fake time.
 type wallClock struct{}
 
 func (wallClock) Now() time.Time {
@@ -59,7 +58,6 @@ func topologyOf(partitions, replicas int) natsjs.Topology {
 	}
 }
 
-// frozenClock stamps records and latencies with a time long gone, never the wall clock.
 type frozenClock struct{}
 
 func (frozenClock) Now() time.Time {
@@ -102,7 +100,6 @@ func spanOf(trace ids.TraceID, n uint64) span.Span {
 	}
 }
 
-// spanOn is the first span whose trace lands on partition of two.
 func spanOn(partition uint16) span.Span {
 	n := uint64(1)
 	for record.PartitionOf(traceOf(n), twoPartitions) != partition {
@@ -111,7 +108,6 @@ func spanOn(partition uint16) span.Span {
 	return spanOf(traceOf(n), n)
 }
 
-// spansAcross makes count spans of distinct traces, spread over the partitions by their hash.
 func spansAcross(count int, first uint64) []span.Span {
 	return lo.Times(count, func(index int) span.Span {
 		n := first + uint64(index)
@@ -125,9 +121,6 @@ func spansOfPartition(spans []span.Span, partition uint16, partitions int) []spa
 	})
 }
 
-// answer is what the fake stream of one partition replies after waiting for after; hang waits for
-// the publish context instead, the way a lost quorum looks to the client; then runs just before the
-// reply.
 type answer struct {
 	after     time.Duration
 	hang      bool
@@ -139,7 +132,6 @@ type answer struct {
 	meaning   error
 }
 
-// failure is the publisher's own error: a classified one when the answer fails, a bare one otherwise.
 func (a answer) failure() error {
 	if !a.fails {
 		return errFake
@@ -155,8 +147,6 @@ type call struct {
 	bounded   bool
 }
 
-// fakePublisher answers per partition and keeps a copy of every record: the encoder reuses its
-// buffer once the publish returns.
 type fakePublisher struct {
 	lock    sync.Mutex
 	answers map[uint16]answer
@@ -220,7 +210,6 @@ func wait(ctx context.Context, reply answer) error {
 	}
 }
 
-// interrupted is how natsjs classifies a publish whose context ended.
 func interrupted(err error) error {
 	if errors.Is(err, context.Canceled) {
 		return &natsjs.PublishError{Reason: natsjs.ReasonCanceled, Cause: err}

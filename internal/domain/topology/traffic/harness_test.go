@@ -36,7 +36,6 @@ const (
 	frontendCart = handle.Edge(0)
 )
 
-// base is a window start, so offsets below read as positions inside windows.
 var base = time.Unix(1_700_000_000, 0)
 
 func testLimits() *traffic.Limits {
@@ -84,7 +83,6 @@ func endingAt(t *testing.T, end time.Time) span.Span {
 	})))
 }
 
-// begin opens a batch received at receivedAt whose latest event ended at latest.
 func (h *harness) begin(receivedAt, latest time.Time) {
 	h.t.Helper()
 	received, err := batch.New([]span.Span{endingAt(h.t, latest)}, receivedAt)

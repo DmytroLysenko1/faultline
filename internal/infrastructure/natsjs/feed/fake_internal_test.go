@@ -38,8 +38,7 @@ const (
 	lastStreamRecord  = 1000
 	firstStreamRecord = 1
 	testIdleAfter     = 35 * time.Second
-	// neverIdle keeps heartbeats out of the tests that are not about them.
-	neverIdle = 1000 * time.Hour
+	neverIdle         = 1000 * time.Hour
 )
 
 func streamCreated() time.Time {
@@ -73,8 +72,6 @@ func idleOptions() *Options {
 	return options
 }
 
-// step is one return of the consumer's Next: a record, a timeout, an error, or a reset that holds Next
-// until Stop, as nats.go does while it recreates the consumer. A rename happens inside Next, like a reset.
 type step struct {
 	rename string
 	next   *message
@@ -138,8 +135,6 @@ func (r *fakeReader) Consumer() string {
 	return r.name
 }
 
-// Stop takes stopTakes, as nats.go's Stop waits for the reset attempt and sleep in progress; a Next held by
-// a reset returns lingers after Stop.
 func (r *fakeReader) Stop() {
 	time.Sleep(r.stopTakes)
 	r.stopOnce.Do(func() { close(r.stopped) })
@@ -151,7 +146,6 @@ func (r *fakeReader) push(steps ...step) {
 	}
 }
 
-// answer is one reply of the stream's Info; takes delays it and an attempt deadline cuts it short.
 type answer struct {
 	found identity
 	err   error
@@ -165,14 +159,10 @@ type fakeStream struct {
 	purges   []uint64
 	purgeErr error
 	onInfo   func()
-	// atOpen is the stream Open found; zero for the default 1..lastStreamRecord.
-	atOpen identity
-	// live, when set, is the stream itself: Describe reads it and Purge removes records from it, records of the
-	// stream's average size.
-	live *identity
+	atOpen   identity
+	live     *identity
 }
 
-// shrink removes the records below from the live stream; the caller holds the lock.
 func (s *fakeStream) shrink(below uint64) {
 	if s.live == nil || below <= s.live.First {
 		return
@@ -198,7 +188,6 @@ func (s *fakeStream) opened() identity {
 	return s.atOpen
 }
 
-// Purge keeps every accepted bound; a stream purges monotonically, so the last one is what it holds back.
 func (s *fakeStream) Purge(_ context.Context, below uint64) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
@@ -256,8 +245,6 @@ func (s *fakeStream) described() int {
 	return s.calls
 }
 
-// fakeLease is lost on lose, or from its lostAt-th look at Lost on, to land a loss between two checks; it is
-// not valid while suspended or once lost.
 type fakeLease struct {
 	lost      chan struct{}
 	loseOnce  sync.Once
@@ -309,7 +296,6 @@ func open(t *testing.T, start *Start, options *Options, stream *fakeStream) *har
 	return reopen(t, start, options, stream, newFakeLetters())
 }
 
-// reopen opens a feed on letters a feed before it wrote, as a restarted processor finds the DLQ.
 func reopen(t *testing.T, start *Start, options *Options, stream *fakeStream, letters *fakeLetters) *harness {
 	t.Helper()
 	h := &harness{reader: newFakeReader(), stream: stream, lease: newFakeLease(), letters: letters}
@@ -348,7 +334,6 @@ func spansOf(t testing.TB, firstTrace uint64) []span.Span {
 	return spans
 }
 
-// batchAt is a record as the journal writes it, read at sequence with the leader's stamp.
 func batchAt(t *testing.T, sequence uint64, spans []span.Span, writtenAt, stamped time.Time) *message {
 	t.Helper()
 	return batchOf(t, 0, sequence, spans, writtenAt, stamped)
@@ -389,7 +374,6 @@ func at(offset time.Duration) time.Time {
 	return telemetrytest.Epoch().Add(offset)
 }
 
-// received is what Receive handed out, by position, heartbeat and ReceivedAt.
 type received struct {
 	Sequence   uint64
 	Heartbeat  bool
@@ -410,8 +394,6 @@ func summarize(deliveries []processing.Delivery) []received {
 	return got
 }
 
-// fakeLetters is the DLQ as JetStream keeps it: copies in order, a duplicate window by Msg-ID that a test can
-// let lapse, and refusals queued for the next attempts.
 type fakeLetters struct {
 	lock      sync.Mutex
 	stored    []deadLetter
@@ -476,7 +458,6 @@ func (l *fakeLetters) failLast(failures ...error) {
 	l.lastFails = append(l.lastFails, failures...)
 }
 
-// expire lets the duplicate window of the copy of sequence lapse.
 func (l *fakeLetters) expire(sequence uint64) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
@@ -487,14 +468,12 @@ func (l *fakeLetters) expire(sequence uint64) {
 	}
 }
 
-// purge is an operator emptying the DLQ: the copies go, the duplicate window stays.
 func (l *fakeLetters) purge() {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 	l.stored = nil
 }
 
-// copies is what the DLQ holds, by position and window, in order.
 func (l *fakeLetters) copies() []storedLetter {
 	l.lock.Lock()
 	defer l.lock.Unlock()
@@ -525,21 +504,15 @@ type storedLetter struct {
 	Bytes    int
 }
 
-// fakeJournal is the partition's stream as its writers see it: the last sequence the server holds, checked by
-// a conditional heartbeat before it lands; what lands reaches the consumer, as a written record does.
 type fakeJournal struct {
-	lock     sync.Mutex
-	reader   *fakeReader
-	last     uint64
-	failures []error
-	written  []writtenPulse
-	// cut has the ingester write a record right before each of the next conditional heartbeats; hidden keeps
-	// those records from the consumer.
-	cut    int
-	hidden bool
-	cutIn  func(sequence uint64, writtenAt time.Time) *message
-	// leaderLag is how far the stream leader's clock is behind the heartbeat's own time; landed keeps the
-	// monotonic moment each heartbeat landed.
+	lock      sync.Mutex
+	reader    *fakeReader
+	last      uint64
+	failures  []error
+	written   []writtenPulse
+	cut       int
+	hidden    bool
+	cutIn     func(sequence uint64, writtenAt time.Time) *message
 	leaderLag time.Duration
 	landed    []time.Time
 }
@@ -592,8 +565,6 @@ func (j *fakeJournal) landings() []time.Time {
 	return slices.Clone(j.landed)
 }
 
-// ingest is the ingester writing a batch: it takes the next sequence; the test pushes it to the reader when
-// the consumer should see it.
 func (j *fakeJournal) ingest(t *testing.T, spans []span.Span, writtenAt time.Time) *message {
 	t.Helper()
 	j.lock.Lock()
@@ -621,7 +592,6 @@ const (
 	codeSealed    = 10109
 )
 
-// unknownVersionAt is a record of a later format version with a valid checksum, as a newer ingester writes.
 func unknownVersionAt(t *testing.T, sequence uint64) *message {
 	t.Helper()
 	next := batchAt(t, sequence, spansOf(t, 0), at(0), at(0))
@@ -635,7 +605,6 @@ func reseal(data []byte) {
 	binary.LittleEndian.PutUint32(data[offsetCRC:], crc32.Checksum(data, crc32.MakeTable(crc32.Castagnoli)))
 }
 
-// writeCut lands the ingester's record in the stream; the caller holds the lock.
 func (j *fakeJournal) writeCut(writtenAt time.Time) {
 	j.last++
 	cut := j.cutIn(j.last, writtenAt)
@@ -644,7 +613,6 @@ func (j *fakeJournal) writeCut(writtenAt time.Time) {
 	}
 }
 
-// foreign is a heartbeat of a former holder that the consumer reads with pending records behind it.
 func (j *fakeJournal) foreign(t *testing.T, writtenAt time.Time, pending uint64) *message {
 	t.Helper()
 	j.lock.Lock()
@@ -654,7 +622,6 @@ func (j *fakeJournal) foreign(t *testing.T, writtenAt time.Time, pending uint64)
 		pending: pending}
 }
 
-// ingestBehind is the ingester's batch read while pending records stay behind it.
 func (j *fakeJournal) ingestBehind(t *testing.T, spans []span.Span, writtenAt time.Time, pending uint64) *message {
 	t.Helper()
 	next := j.ingest(t, spans, writtenAt)
@@ -662,7 +629,6 @@ func (j *fakeJournal) ingestBehind(t *testing.T, spans []span.Span, writtenAt ti
 	return next
 }
 
-// corrupt is a damaged record at the next sequence.
 func (j *fakeJournal) corrupt() *message {
 	j.lock.Lock()
 	defer j.lock.Unlock()
@@ -670,8 +636,6 @@ func (j *fakeJournal) corrupt() *message {
 	return garbageAt(j.last)
 }
 
-// interfere has the ingester cut in before the next heartbeats with batches of the spans the feed already
-// read: they keep the idle rule due, as late spans of a busy tenant would.
 func (j *fakeJournal) interfere(t *testing.T, records int, hidden bool) {
 	t.Helper()
 	j.lock.Lock()

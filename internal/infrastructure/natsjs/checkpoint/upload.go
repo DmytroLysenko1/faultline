@@ -31,7 +31,6 @@ const (
 
 var (
 	errForeignAck   = errors.New("checkpoint chunk acknowledged by another stream or out of order")
-	errNoTimeLeft   = errors.New("too little time left before the stop deadline to send a chunk")
 	errBucketFull   = errors.New("checkpoint image does not fit the object bucket")
 	errBucketUnread = errors.New("checkpoint object bucket could not be read")
 )
@@ -48,6 +47,8 @@ type object struct {
 	took      time.Duration
 	verified  time.Duration
 	at        time.Time
+	final     bool
+	metaSent  bool
 }
 
 func newObject(written *spool, chunk uint32) *object {
@@ -56,6 +57,7 @@ func newObject(written *spool, chunk uint32) *object {
 		nuid:      rand.Text(),
 		meta:      written.meta,
 		chunkSize: chunk,
+		final:     written.final,
 	}
 }
 
@@ -79,34 +81,36 @@ func (o *object) acknowledged(ack *jetstream.PubAck, stream string) error {
 	return nil
 }
 
-func (u *uploader) cycle(root, upload context.Context, next *spool) error {
-	if err := u.ready(root, upload, next.size); err != nil {
+func (u *uploader) cycle(upload, control context.Context, next *spool) error {
+	u.size = next.size
+	u.progress = progress{}
+	if err := u.ready(upload, control, next.size); err != nil {
 		return err
 	}
 	budgeted, cancel := context.WithTimeout(upload, u.uploadBudget(next.size))
 	defer cancel()
-	written, err := u.send(root, budgeted, next)
+	written, err := u.send(control, budgeted, next)
 	if err != nil {
 		return err
 	}
 	if err := u.check(budgeted, upload, written); err != nil {
-		return u.dropped(root, written, err)
+		return u.dropped(control, written, err)
 	}
-	return u.commit(root, written)
+	return u.commit(control, written)
 }
 
-func (u *uploader) ready(root, upload context.Context, size int64) error {
+func (u *uploader) ready(upload, control context.Context, size int64) error {
 	if !u.store.lease.Valid() {
 		return skipped(skipLeaseSuspended, errLeaseLost)
 	}
-	if err := u.resolve(root); err != nil {
-		return err
+	if err := u.resolve(control); err != nil {
+		return u.classified(err)
 	}
 	return u.fits(upload, size)
 }
 
-func (u *uploader) fits(upload context.Context, size int64) error {
-	used, err := u.bucketBytes(upload)
+func (u *uploader) fits(ctx context.Context, size int64) error {
+	used, err := u.bucketBytes(ctx)
 	if err != nil {
 		return u.classified(failed(failBucketRead, fmt.Errorf("%w: %w", errBucketUnread, err)))
 	}
@@ -118,16 +122,17 @@ func (u *uploader) fits(upload context.Context, size int64) error {
 	return nil
 }
 
-func (u *uploader) send(root, ctx context.Context, next *spool) (*object, error) {
+func (u *uploader) send(control, budgeted context.Context, next *spool) (*object, error) {
 	started := time.Now()
 	written := newObject(next, u.store.chunkBytes)
 	written.at = u.store.now()
-	err := u.sendChunks(ctx, next, written)
+	u.progress.started = started
+	err := u.sendChunks(budgeted, next, written)
 	if err == nil {
-		err = u.sendMeta(ctx, written)
+		err = u.sendMeta(budgeted, written)
 	}
 	if err != nil {
-		return nil, u.dropped(root, written, err)
+		return nil, u.dropped(control, written, err)
 	}
 	written.took = time.Since(started)
 	return written, nil
@@ -189,54 +194,48 @@ func (c *chunkSender) chunk(ctx context.Context, data []byte) error {
 	if !c.up.store.lease.Valid() {
 		return skipped(skipLeaseSuspended, errLeaseLost)
 	}
+	left := c.up.size - c.object.size
 	if err := retry.Sleep(ctx, c.pace.reserve(time.Now(), int64(len(data)))); err != nil {
-		return err
+		return stopMarked(ctx, err)
 	}
 	c.digest.Write(data)
 	c.object.size += int64(len(data))
-	ack, err := c.up.publish(ctx, &nats.Msg{Subject: c.up.store.chunkSubject(c.object.nuid), Data: data},
+	ack, err := c.up.publish(ctx, left, &nats.Msg{Subject: c.up.store.chunkSubject(c.object.nuid), Data: data},
 		jetstream.WithMsgID(fmt.Sprintf(chunkIDFormat, c.object.nuid, c.object.chunks)))
 	if err != nil {
 		return err
 	}
-	return c.object.acknowledged(ack, c.up.store.buckets.object)
+	return c.landed(ack)
+}
+
+func (c *chunkSender) landed(ack *jetstream.PubAck) error {
+	if err := c.object.acknowledged(ack, c.up.store.buckets.object); err != nil {
+		return err
+	}
+	c.up.progress.sent = c.object.size
+	c.up.progress.acked++
+	return nil
 }
 
 func (u *uploader) publish(
 	ctx context.Context,
+	left int64,
 	msg *nats.Msg, options ...jetstream.PublishOpt,
 ) (*jetstream.PubAck, error) {
 	options = append(options, jetstream.WithExpectStream(u.store.buckets.object), jetstream.WithRetryAttempts(0))
 	var ack *jetstream.PubAck
 	err := retry.Do(ctx, chunkPolicy(), func(attempt context.Context) error {
-		sent, cancel, err := u.attemptContext(attempt)
-		if err != nil {
+		if err := u.boundary(phaseUpload, left); err != nil {
 			return err
 		}
-		defer cancel()
-		ack, err = u.store.buckets.data.PublishMsg(sent, msg, options...)
-		return err
+		deadline, _ := attempt.Deadline()
+		return u.uploadWithin(ctx, time.Until(deadline), func(sent context.Context) error {
+			var err error
+			ack, err = u.store.buckets.data.PublishMsg(sent, msg, options...)
+			return err
+		})
 	})
-	return ack, err
-}
-
-func (u *uploader) attemptContext(attempt context.Context) (context.Context, context.CancelFunc, error) {
-	deadline, _ := attempt.Deadline()
-	if stopAt, stopping := u.stopDeadline(); stopping {
-		deadline = earlier(deadline, stopAt.Add(-stopReserve))
-	}
-	if !time.Now().Before(deadline) {
-		return nil, nil, errNoTimeLeft
-	}
-	sent, cancel := context.WithDeadline(context.WithoutCancel(attempt), deadline)
-	return sent, cancel, nil
-}
-
-func earlier(a, b time.Time) time.Time {
-	if b.Before(a) {
-		return b
-	}
-	return a
+	return ack, stopMarked(ctx, err)
 }
 
 func chunkPolicy() *retry.Policy {
@@ -249,7 +248,7 @@ func chunkPolicy() *retry.Policy {
 }
 
 func chunkRetryable(err error) bool {
-	return slices.Contains([]natsjs.Reason{
+	return !stopCaused(err) && slices.Contains([]natsjs.Reason{
 		natsjs.ReasonNoResponders,
 		natsjs.ReasonDisconnected,
 		natsjs.ReasonTimeout,

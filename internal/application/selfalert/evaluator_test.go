@@ -269,8 +269,6 @@ func TestAGrowingSetOfOwnersOverTheLimitWarnsAgain(t *testing.T) {
 	}
 }
 
-// TestAStalledSnapshotRaisesTheLagAlert: a pipeline that stopped publishing repeats its last
-// snapshot, and only the clock moves; that is the stall the lag alert exists for.
 func TestAStalledSnapshotRaisesTheLagAlert(t *testing.T) {
 	stalled := make([]selfalert.Sample, 0, specLagRaiseReports)
 	for range specLagRaiseReports {

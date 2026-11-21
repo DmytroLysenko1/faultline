@@ -16,7 +16,6 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/record"
 )
 
-// readRecord runs the reader the way the feed will: header first, then the body.
 func readRecord(data []byte, maxWeight int64) ([]span.Span, error) {
 	header, err := record.ReadHeader(data, testPartition, maxWeight)
 	if err != nil {
@@ -168,8 +167,6 @@ func TestEnvelopeDamageIsErrCorrupt(t *testing.T) {
 	}
 }
 
-// TestATruncatedRecordIsErrCorruptAtEveryLength cuts a valid record at every byte, with and without a fresh
-// checksum, so every field boundary of the header, tenant, string table and spans is crossed.
 func TestATruncatedRecordIsErrCorruptAtEveryLength(t *testing.T) {
 	valid, _ := encoded(t, syntheticSpans(4, 3, 3, 9))
 	for cut := range len(valid) {
@@ -189,8 +186,6 @@ func resealIfLong(data []byte) []byte {
 	return reseal(data)
 }
 
-// TestAFlippedVersionByteIsCorruptNotUnknown: the checksum is checked before the version, so a damaged
-// version byte sends the record to the DLQ instead of stopping the partition forever.
 func TestAFlippedVersionByteIsCorruptNotUnknown(t *testing.T) {
 	valid, _ := encoded(t, []span.Span{fullSpan(1)})
 	damaged := append([]byte(nil), valid...)
@@ -203,8 +198,6 @@ func TestAFlippedVersionByteIsCorruptNotUnknown(t *testing.T) {
 	}
 }
 
-// TestAFutureFormatIsUnknownNotCorrupt: with a valid checksum an unknown version, kind or flag bit is a newer
-// writer, so the reader must stop rather than skip the record as garbage.
 func TestAFutureFormatIsUnknownNotCorrupt(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -230,8 +223,6 @@ func TestAFutureFormatIsUnknownNotCorrupt(t *testing.T) {
 	}
 }
 
-// TestCountsBeyondTheWeightAllocateNothing: string and span counts are bounded by the header weight before any
-// allocation, so a record that claims a small footprint cannot make the processor allocate past its credit.
 func TestCountsBeyondTheWeightAllocateNothing(t *testing.T) {
 	tests := []struct {
 		name   string

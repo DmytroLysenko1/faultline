@@ -8,8 +8,6 @@ import (
 
 const benchSpans = 512
 
-// The journal only reads the spans it owns, so one slice serves every iteration once its
-// delivery is released.
 func BenchmarkAppendReceiveRelease512(b *testing.B) {
 	spans := spansOf(b, 0, benchSpans)
 	journal, err := memjournal.New(memjournal.Limits{

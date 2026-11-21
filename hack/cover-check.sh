@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# Per-package line-coverage gate (NFR-MAINT-001).
-# Usage: hack/cover-check.sh <coverage.out>
-# Thresholds: STRICT_PACKAGES >= COVER_STRICT_MIN, every other package >= COVER_MIN.
-# Excluded: cmd/*/main.go, generated code (internal/gen) and test-support packages (*test, like net/http/httptest).
 set -euo pipefail
 
 profile="${1:?usage: cover-check.sh <coverage.out>}"
@@ -10,8 +6,6 @@ module="$(go list -m)"
 
 : "${COVER_MIN:=70}"
 : "${COVER_STRICT_MIN:=80}"
-# Parsers, detectors, window engine, RCA (NFR-MAINT-001) plus the step-1 pairing core.
-# Step 2 adds the sketch, the normalizer, the cardinality registry and the traffic views.
 : "${STRICT_PACKAGES:=internal/domain/topology pkg/stream pkg/sketch internal/domain/telemetry/operation internal/domain/topology/cardinality internal/domain/topology/traffic internal/domain/anomaly internal/domain/logtemplate internal/domain/incident internal/infrastructure/ebpf}"
 
 if [[ ! -s "$profile" ]]; then

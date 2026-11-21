@@ -15,6 +15,7 @@ const (
 	metaIDSuffix       = ".meta"
 	rollupSubject      = "sub"
 	noEarlierOnSubject = 0
+	nothingLeftToSend  = 0
 )
 
 var errNameCollision = errors.New("another checkpoint object has this name")
@@ -55,7 +56,8 @@ func (u *uploader) sendMeta(ctx context.Context, written *object) error {
 		Data:    data,
 		Header:  nats.Header{nats.MsgRollup: []string{rollupSubject}},
 	}
-	_, err = u.publish(ctx, msg, jetstream.WithMsgID(written.metaID()),
+	written.metaSent = true
+	_, err = u.publish(ctx, nothingLeftToSend, msg, jetstream.WithMsgID(written.metaID()),
 		jetstream.WithExpectLastSequencePerSubject(noEarlierOnSubject))
 	if !sequenceConflict(err) {
 		return err
@@ -70,7 +72,12 @@ func sequenceConflict(err error) bool {
 }
 
 func (u *uploader) ownMeta(ctx context.Context, written *object) error {
-	last, err := u.store.lastMessage(ctx, u.store.metaSubject(written.name))
+	var last *jetstream.RawStreamMsg
+	err := u.uploadWithin(ctx, sweepCallBudget, func(read context.Context) error {
+		var err error
+		last, err = u.store.lastMessage(read, u.store.metaSubject(written.name))
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("read the meta of %s after a conflict: %w", written.name, err)
 	}

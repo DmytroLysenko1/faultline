@@ -138,9 +138,6 @@ const (
 	responseBudgetStep          = 16 * mib
 )
 
-// TestDefaultResponseBudgetHoldsTheWorstResponseAtDefaultLimits: the default budget is the measured
-// weight of the worst response at the default graph limits, rounded up to 16 MiB, so the default
-// config serves a full graph and the budget table stays honest.
 func TestDefaultResponseBudgetHoldsTheWorstResponseAtDefaultLimits(t *testing.T) {
 	weight := graphservice.ResponseWeight(defaultGraphMaxNodes, defaultGraphMaxEdges)
 	if weight != pinnedDefaultResponseWeight {

@@ -107,7 +107,7 @@ func (p *Pipeline) checkpointIfDue(ctx context.Context) error {
 	if !p.checkpoints.due(p.clock.Now()) {
 		return nil
 	}
-	if err := p.checkpoint(ctx); canceledByCaller(ctx, err) {
+	if err := p.checkpoint(ctx, p.checkpoints.periodic); canceledByCaller(ctx, err) {
 		return err
 	}
 	return nil
@@ -163,9 +163,9 @@ func (p *Pipeline) publish(ctx context.Context) error {
 	return nil
 }
 
-func (p *Pipeline) checkpoint(ctx context.Context) error {
+func (p *Pipeline) checkpoint(ctx context.Context, save checkpointSave) error {
 	started := p.clock.Now()
-	err := p.checkpoints.write(ctx, p.builder, started)
+	err := save(ctx, p.builder, started)
 	p.measured.Checkpoint = p.since(started)
 	return err
 }
@@ -192,7 +192,7 @@ func (p *Pipeline) drain(ctx context.Context) error {
 	if !p.checkpoints.pendingAtStop() {
 		return nil
 	}
-	if err := p.checkpoint(ctx); lostAtStop(ctx, err) {
+	if err := p.checkpoint(ctx, p.checkpoints.onStop); lostAtStop(ctx, err) {
 		return fmt.Errorf("drain: final checkpoint: %w", err)
 	}
 	return nil

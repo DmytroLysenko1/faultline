@@ -34,7 +34,6 @@ const (
 	connectTimeout  = 2 * time.Second
 	drainTimeout    = 500 * time.Millisecond
 	closeTimeout    = 5 * time.Second
-	// stopTimeout covers nats.go stopping a consumer reset: the attempt and the sleep in progress, 20 s.
 	stopTimeout     = 30 * time.Second
 	publishAttempt  = 2 * time.Second
 	publishAttempts = 30
@@ -79,7 +78,6 @@ func optionsOf(topology natsjs.Topology) *feed.Options {
 	}
 }
 
-// heldLease is a partition lease that is never lost, for tests that are not about the lease.
 type heldLease struct {
 	lost chan struct{}
 }
@@ -104,8 +102,6 @@ type live struct {
 	encoder  record.Encoder
 }
 
-// startLive is the processor's wiring on an in-process cluster with the partition's stream created; raw is
-// a connection of the test's own for the writes and the stream surgery the feed must notice.
 func startLive(t testing.TB, nodes, replicas int) *live {
 	t.Helper()
 	cluster := natsjstest.Start(t, nodes)
@@ -164,7 +160,6 @@ func (l *live) info(t testing.TB) *jetstream.StreamInfo {
 	return stream.CachedInfo()
 }
 
-// recreate deletes the partition's stream and creates it anew, as an operator's mistake would.
 func (l *live) recreate(t *testing.T) {
 	t.Helper()
 	if err := l.raw.DeleteStream(t.Context(), l.stream()); err != nil {
@@ -193,7 +188,6 @@ func spansOf(t testing.TB, firstTrace uint64) []span.Span {
 	return spans
 }
 
-// publish writes one record of spans as the journal does.
 func (l *live) publish(t testing.TB, spans []span.Span) {
 	t.Helper()
 	err := l.encoder.Encode(tenant, 0, spans, time.Now(), 0, func(data []byte, msgID string) error {
@@ -204,7 +198,6 @@ func (l *live) publish(t testing.TB, spans []span.Span) {
 	}
 }
 
-// publishData retries a write that found no leader yet, as after a leader stopped; each attempt is bounded.
 func (l *live) publishData(t testing.TB, data []byte, msgID string) error {
 	t.Helper()
 	var failure error
@@ -224,7 +217,6 @@ func (l *live) publishOnce(t testing.TB, data []byte, msgID string) error {
 	return err
 }
 
-// weightOf is the credit a record of spans takes: the weight its header carries.
 func weightOf(t testing.TB, spans []span.Span) int64 {
 	t.Helper()
 	var weight int64
@@ -250,7 +242,6 @@ func (l *live) publishMany(t testing.TB, count int, firstTrace uint64) [][]span.
 	return written
 }
 
-// open opens the partition's feed and closes it on cleanup before the connection closes.
 func (l *live) open(t testing.TB, start feed.Start, options *feed.Options) *feed.Feed {
 	t.Helper()
 	opened, err := feed.Open(t.Context(), l.conn, newHeldLease(), start, options)
@@ -271,7 +262,6 @@ func shut(t testing.TB, opened *feed.Feed) {
 	}
 }
 
-// receive takes count data deliveries, releasing each, or fails the test.
 func receive(t *testing.T, opened *feed.Feed, count int) []processing.Delivery {
 	t.Helper()
 	var got []processing.Delivery
@@ -292,7 +282,6 @@ func receive(t *testing.T, opened *feed.Feed, count int) []processing.Delivery {
 	return nil
 }
 
-// receiveUntilStopped hands out deliveries until the feed stops, and returns what came and why it stopped.
 func receiveUntilStopped(t *testing.T, opened *feed.Feed) ([]processing.Delivery, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), identityWait)
@@ -344,7 +333,6 @@ func stoppedBy(err, want error) bool {
 	return errors.Is(err, want)
 }
 
-// consumerNode is the index of the node that holds the feed's consumer, the only one on the stream.
 func (l *live) consumerNode(t *testing.T) int {
 	t.Helper()
 	stream, err := l.raw.Stream(t.Context(), l.stream())
@@ -372,7 +360,6 @@ const (
 	settleEvery  = 100 * time.Millisecond
 )
 
-// publishRaw writes bytes to the partition's subject as no journal would, to land a corrupt record.
 func (l *live) publishRaw(t testing.TB, data []byte) {
 	t.Helper()
 	if err := l.publishData(t, data, rand.Text()); err != nil {
@@ -380,7 +367,6 @@ func (l *live) publishRaw(t testing.TB, data []byte) {
 	}
 }
 
-// deadLetters is what the DLQ holds, in order.
 func (l *live) deadLetters(t testing.TB) []*jetstream.RawStreamMsg {
 	t.Helper()
 	stream, err := l.raw.Stream(t.Context(), natsjs.DeadLetterStream)
@@ -399,7 +385,6 @@ func (l *live) deadLetters(t testing.TB) []*jetstream.RawStreamMsg {
 	return letters
 }
 
-// editDeadLetters changes the DLQ's configuration by hand, as an operator would.
 func (l *live) editDeadLetters(t testing.TB, edit func(config *jetstream.StreamConfig)) {
 	t.Helper()
 	stream, err := l.raw.Stream(t.Context(), natsjs.DeadLetterStream)
@@ -413,7 +398,6 @@ func (l *live) editDeadLetters(t testing.TB, edit func(config *jetstream.StreamC
 	}
 }
 
-// settled waits for condition, a state the feed reaches on its own, within settleWithin.
 func settled(t testing.TB, what string, condition func() bool) {
 	t.Helper()
 	ticker := time.NewTicker(settleEvery)
@@ -429,7 +413,6 @@ func settled(t testing.TB, what string, condition func() bool) {
 	}
 }
 
-// redial connects the processor again, as after a restart that moved the server to a new port.
 func (l *live) redial(t testing.TB) *natsjs.Conn {
 	t.Helper()
 	conn, err := natsjs.Dial(t.Context(), &natsjs.ConnOptions{

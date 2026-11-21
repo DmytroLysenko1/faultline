@@ -188,7 +188,6 @@ func TimedPairs(tb testing.TB, firstTrace uint64, count int, end time.Time) batc
 	return TimedCalls(tb, firstTrace, count, Caller, Callee, end)
 }
 
-// TimedCalls are count calls from caller to callee that end at end and arrive at end.
 func TimedCalls(tb testing.TB, firstTrace uint64, count int, caller, callee string, end time.Time) batch.Batch {
 	tb.Helper()
 	interval := eventtime.FromUnixNanos(uint64(end.Add(-callLatency).UnixNano()), uint64(end.UnixNano()))

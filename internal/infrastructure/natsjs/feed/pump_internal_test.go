@@ -680,8 +680,6 @@ func TestADeliveryQueuedAfterTheClosedAnswerIsNotHandedOut(t *testing.T) {
 	})
 }
 
-// TestALeaseLostWhileReceiveReadsWinsOverWhatItRead: the watcher looks at Lost once, the check before the
-// read is the second look and the check after it the third, where the lease is lost.
 func TestALeaseLostWhileReceiveReadsWinsOverWhatItRead(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := openPlain(t)

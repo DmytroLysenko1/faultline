@@ -207,8 +207,6 @@ func TestAFirstStartOnATruncatedStreamReadsFromItsFirstRecordWithoutAGap(t *test
 	}
 }
 
-// TestAPurgeBeyondThePullWindowIsAGapNotALoss: records already pulled still come; the ones removed before
-// the pull reach them are counted, so every position is either handed out or in the gap.
 func TestAPurgeBeyondThePullWindowIsAGapNotALoss(t *testing.T) {
 	l := startLive(t, singleNode, oneReplica)
 	large := spansOf(t, 0)
@@ -282,8 +280,6 @@ func TestARecreatedStreamStopsTheFeedWithoutHandingOutItsRecords(t *testing.T) {
 	}
 }
 
-// TestAPumpPausedLongerThanAPullRequestResumesWithoutAReset (E5): a delivery held for 40 s stops the pump on
-// its credit, and the records behind it still come in order afterwards, from the same consumer.
 func TestAPumpPausedLongerThanAPullRequestResumesWithoutAReset(t *testing.T) {
 	l := startLive(t, singleNode, oneReplica)
 	written := l.publishMany(t, 3, 0)
@@ -307,8 +303,6 @@ func TestAPumpPausedLongerThanAPullRequestResumesWithoutAReset(t *testing.T) {
 	}
 }
 
-// receiveHolding takes the first delivery without releasing it; with a credit of one record it holds the
-// pump.
 func receiveHolding(t *testing.T, opened *feed.Feed) processing.Delivery {
 	t.Helper()
 	deliveries, err := opened.Receive(t.Context(), 1, receiveWait)
@@ -318,9 +312,6 @@ func receiveHolding(t *testing.T, opened *feed.Feed) processing.Delivery {
 	return deliveries[0]
 }
 
-// TestLosingTheConsumersNodeLosesAndRepeatsNothing (FMEA 9): the ordered consumer dies with its node, nats.go
-// notices the missing heartbeats and recreates it; the feed checks the stream again and carries on from the
-// next position.
 func TestLosingTheConsumersNodeLosesAndRepeatsNothing(t *testing.T) {
 	l := startLive(t, threeNodes, threeReplicas)
 	l.publishMany(t, leaderRecords, 0)

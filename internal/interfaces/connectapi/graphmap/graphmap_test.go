@@ -232,8 +232,6 @@ func wireSummary(kind faultlinev1.PaneKind, start time.Time, revision uint32, sa
 	return stats
 }
 
-// TestGraphCarriesTheREDOfEverySubject: a zero summary is an unset field, percentiles are set only
-// with latency samples, and the watermark only once it is known.
 func TestGraphCarriesTheREDOfEverySubject(t *testing.T) {
 	window := telemetrytest.Epoch()
 	previous := window.Add(-windowSize)

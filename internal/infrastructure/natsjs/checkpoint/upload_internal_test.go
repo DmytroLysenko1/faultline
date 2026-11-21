@@ -26,6 +26,7 @@ import (
 const (
 	msgIDHeader        = "Nats-Msg-Id: "
 	pacedRate          = 4 << 10
+	flushSlack         = 50 * time.Millisecond
 	storeFullAnswer    = `{"error":{"code":503,"err_code":10077,"description":"maximum bytes exceeded"}}`
 	inProcessAnswer    = `{"error":{"code":409,"err_code":10158,"description":"duplicate message id is in process"}}`
 	chunksBeforeLoss   = 2
@@ -76,6 +77,7 @@ func (g *gate) release() {
 
 func (w *world) holdFirst(g *gate, match func(f *natsjstest.Frame) bool) {
 	w.proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
+		w.request(f)
 		if match(f) && g.held.CompareAndSwap(false, true) {
 			<-g.open
 		}
@@ -485,7 +487,7 @@ func TestARefusedFeedCommitIsCountedAndTheNextCheckpointCommits(t *testing.T) {
 	w.assertInvariants(t, retention, 0)
 }
 
-func TestCloseDuringTheUploadTakesItBack(t *testing.T) {
+func TestCloseWithTimeForTheUploadFinishesItWithoutTheFeed(t *testing.T) {
 	w := startWorld(t)
 	sink, retention := w.started(t)
 	held := newGate(t)
@@ -498,9 +500,33 @@ func TestCloseDuringTheUploadTakesItBack(t *testing.T) {
 	w.closeWhile(t, held)
 
 	stats := w.store.Stats()
-	if objects := w.ownObjects(t); len(objects) != 0 || stats.Committed != 0 || stats.Failed["upload"] != 0 {
-		t.Errorf("objects %v, committed %d, failed uploads %d; want the upload taken back as a stop", objects,
-			stats.Committed, stats.Failed["upload"])
+	if stats.Committed != 1 || stats.CommittedThrough != firstPosition || stats.Skipped["stopped"] != 0 {
+		t.Errorf("committed %d through %d, stopped %d; want the upload finished in the time left", stats.Committed,
+			stats.CommittedThrough, stats.Skipped["stopped"])
+	}
+	if commits := retention.committed(); len(commits) != 0 {
+		t.Errorf("feed commits %v at the stop, want none", commits)
+	}
+	w.assertInvariants(t, retention, 1)
+}
+
+func TestCloseWithoutTimeForTheUploadTakesItBack(t *testing.T) {
+	w := startWorld(t)
+	sink, retention := w.started(t)
+	held := newGate(t)
+	w.holdFirst(held, isChunk)
+	if err := spoolCheckpoint(t, sink, firstPosition, checkpointImage(t)); err != nil {
+		t.Fatalf("spool: %v", err)
+	}
+	held.waitHeld(t)
+
+	w.closeWithin(t, held, tightStop)
+
+	stats := w.store.Stats()
+	if objects := w.ownObjects(t); len(objects) != 0 || stats.Committed != 0 || stats.Skipped["stopped"] != 1 ||
+		stats.Failed["upload"] != 0 {
+		t.Errorf("objects %v, committed %d, stopped %d, failed uploads %d; want the upload taken back as a stop",
+			objects, stats.Committed, stats.Skipped["stopped"], stats.Failed["upload"])
 	}
 	w.assertInvariants(t, retention, 0)
 }
@@ -529,12 +555,33 @@ func TestCloseDuringTheCASCompletesIt(t *testing.T) {
 
 func (w *world) closeWhile(t *testing.T, held *gate) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), stopWithin)
+	w.closeWithin(t, held, stopWithin)
+}
+
+func (w *world) closeWithin(t *testing.T, held *gate, within time.Duration) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), within)
 	defer cancel()
+	closedAt := time.Now()
 	w.store.Close(ctx)
 	held.release()
 	if err := w.store.Wait(ctx); err != nil {
 		t.Fatalf("Wait: %v", err)
+	}
+	w.assertQuietAfterCalls(t, closedAt.Add(within-stopMargin-stopMargin))
+}
+
+func (w *world) request(f *natsjstest.Frame) {
+	if f.Op == "PUB" || f.Op == "HPUB" {
+		w.requested.Store(time.Now().UnixNano())
+	}
+}
+
+func (w *world) assertQuietAfterCalls(t *testing.T, edge time.Time) {
+	t.Helper()
+	last := w.requested.Load()
+	if last != 0 && time.Unix(0, last).After(edge.Add(flushSlack)) {
+		t.Errorf("a request went out %s after the calls edge", time.Unix(0, last).Sub(edge))
 	}
 }
 

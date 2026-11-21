@@ -2,16 +2,17 @@ SHELL := /usr/bin/env bash
 .SHELLFLAGS := -euo pipefail -c
 .DEFAULT_GOAL := help
 
-# The user-level go env may pin an older toolchain; let go.mod's `toolchain` line decide.
 export GOTOOLCHAIN := auto
 
 BIN := $(CURDIR)/bin
 
 GOLANGCI_LINT_VERSION := v2.15.0
 BUF_VERSION := v1.70.0
+NILAWAY_VERSION := v0.0.0-20260710181136-2378218750e4
 
 GOLANGCI_LINT := $(BIN)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 BUF := $(BIN)/buf-$(BUF_VERSION)
+NILAWAY := $(BIN)/nilaway-$(NILAWAY_VERSION)
 
 KIND_CLUSTER := faultline
 KIND_CONFIG := deploy/kind/kind-config.yaml
@@ -42,6 +43,11 @@ $(BUF):
 	GOBIN=$(BIN) go install github.com/bufbuild/buf/cmd/buf@$(BUF_VERSION)
 	mv $(BIN)/buf $@
 
+$(NILAWAY):
+	@mkdir -p $(BIN)
+	GOBIN=$(BIN) go install go.uber.org/nilaway/cmd/nilaway@$(NILAWAY_VERSION)
+	mv $(BIN)/nilaway $@
+
 ##@ Development
 
 .PHONY: fmt
@@ -61,6 +67,10 @@ endif
 
 .PHONY: verify
 verify: mod-check lint test-race test-probes cover-check vuln proto-lint gen-check ## Everything CI runs
+
+.PHONY: nilaway
+nilaway: $(NILAWAY) ## Report possible nil panics (advisory, not part of verify)
+	-$(NILAWAY) -include-pkgs=github.com/DmytroLysenko1/faultline ./...
 
 .PHONY: mod-check
 mod-check: ## Fail if go.mod/go.sum are not tidy

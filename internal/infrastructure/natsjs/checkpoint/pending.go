@@ -14,16 +14,18 @@ type pendingObject struct {
 	updated  bool
 	revision uint64
 	left     []objectRef
+	metaSent bool
+	final    bool
 }
 
-func (u *uploader) resolve(root context.Context) error {
+func (u *uploader) resolve(ctx context.Context) error {
 	if len(u.pending) == 0 {
 		return nil
 	}
 	left := u.pending
 	u.pending = nil
 	for i, item := range left {
-		if err := u.decide(root, &item); err != nil {
+		if err := u.decide(ctx, &item); err != nil {
 			u.pending = append(u.pending, left[i:]...)
 			u.store.stats.pending.Store(uint64(len(u.pending)))
 			return err
@@ -36,8 +38,8 @@ func (u *uploader) resolve(root context.Context) error {
 	return nil
 }
 
-func (u *uploader) decide(root context.Context, item *pendingObject) error {
-	found, err := u.pointerNow(root)
+func (u *uploader) decide(ctx context.Context, item *pendingObject) error {
+	found, err := u.pointerNow(ctx)
 	if err != nil {
 		return failed(failBucketUnresolved, fmt.Errorf("%w: read the pointer for %s: %w", errUnresolved, item.ref.Name,
 			err))
@@ -46,7 +48,7 @@ func (u *uploader) decide(root context.Context, item *pendingObject) error {
 	if ended := epochEnded(decided, item.ref.Name); ended != nil {
 		return ended
 	}
-	u.act(root, item, found, decided)
+	u.act(ctx, item, found, decided)
 	return nil
 }
 
@@ -57,20 +59,33 @@ func (u *uploader) purgeLeft(ctx context.Context, left []objectRef, kept ...*obj
 		}) {
 			continue
 		}
-		u.takeBack(ctx, ref)
+		u.leftBehind(ref, u.takeBack(ctx, ref, true))
 	}
 }
 
-func (u *uploader) act(root context.Context, item *pendingObject, found *pointer, decided verdict) {
+func (u *uploader) leftBehind(ref objectRef, err error) {
+	switch {
+	case err == nil:
+	case stopCaused(err):
+		u.store.stats.previousLeft.Add(1)
+	default:
+		u.wait(&pendingObject{
+			ref:      ref,
+			metaSent: true,
+		})
+	}
+}
+
+func (u *uploader) act(ctx context.Context, item *pendingObject, found *pointer, decided verdict) {
 	switch decided {
 	case verdictAccepted:
-		u.accepted(root, item, found)
+		u.accepted(ctx, item, found)
 	case verdictPurge:
-		u.takeBack(root, item.ref)
+		u.takeBackOrWait(ctx, item.ref, item.metaSent)
 	case verdictFence:
-		u.fencePending(root, item, found)
+		u.fencePending(ctx, item, found)
 	case verdictReferenced:
-		u.purgeLeft(root, item.left, found.value.Current, found.value.Previous)
+		u.purgeLeft(ctx, item.left, found.value.Current, found.value.Previous)
 	default:
 		u.wait(item)
 	}
@@ -81,30 +96,16 @@ func (u *uploader) fencePending(ctx context.Context, item *pendingObject, found 
 		u.wait(item)
 		return
 	}
-	u.takeBack(ctx, item.ref)
-}
-
-func (u *uploader) takeBack(ctx context.Context, ref objectRef) {
-	if err := u.purgeRef(ctx, ref); err != nil {
-		u.leftOver(err)
-		u.wait(&pendingObject{
-			ref: ref,
-		})
-	}
-}
-
-func (u *uploader) leftOver(err error) {
-	if errors.Is(err, errLeftOver) {
-		u.store.stats.purgeLeftover.Add(1)
-	}
+	u.takeBackOrWait(ctx, item.ref, item.metaSent)
 }
 
 func (u *uploader) accepted(ctx context.Context, item *pendingObject, found *pointer) {
 	u.landed = append(u.landed, &commitRecord{
 		through: item.ref.Position,
 		at:      u.store.now(),
+		final:   item.final,
 	})
-	if !u.stopRequested() {
+	if u.retains(item.final) {
 		u.retain(ctx, item.ref.Position)
 	}
 	u.purgeLeft(ctx, item.left, found.value.Current, found.value.Previous)

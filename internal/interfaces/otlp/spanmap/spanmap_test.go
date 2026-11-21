@@ -19,12 +19,11 @@ import (
 )
 
 const (
-	unavailableCode    = 14
-	allocationRuns     = 100
-	stopAfter          = 2
-	hostileArrayValues = 10_000
-	manySpans          = 64
-	// the record, the range-over-func state and the iterator closures: paid once per request
+	unavailableCode      = 14
+	allocationRuns       = 100
+	stopAfter            = 2
+	hostileArrayValues   = 10_000
+	manySpans            = 64
 	walkSetupAllocations = 6
 )
 
@@ -60,7 +59,6 @@ func newSpan(scope ptrace.ScopeSpans, id byte) ptrace.Span {
 	return created
 }
 
-// spansShaped is one request of count spans that all look the same, so two requests differ only in length.
 func spansShaped(count int, shape func(observed ptrace.Span)) ptrace.Traces {
 	traces := ptrace.NewTraces()
 	scope := newResource(traces, "cart")
@@ -70,7 +68,6 @@ func spansShaped(count int, shape func(observed ptrace.Span)) ptrace.Traces {
 	return traces
 }
 
-// walkAllocations is what a walk of one request costs: a fixed setup plus what each span adds.
 type walkAllocations struct {
 	setup   float64
 	perSpan float64

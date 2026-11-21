@@ -23,8 +23,6 @@ const (
 	actionChoices  = 5
 )
 
-// choices is the randomness a scenario draws from: a seeded generator in the property test,
-// the fuzzer's bytes in the fuzz test.
 type choices interface {
 	IntN(n int) int
 }
@@ -158,7 +156,6 @@ func (s *scenario) release(index int) {
 	}
 }
 
-// dense: every live operation needs its own id, so ids never pass owners × limit.
 func (s *scenario) dense(id cardinality.ID) bool {
 	return id >= 0 && int(id) < s.owners*s.model.limit
 }
@@ -185,7 +182,6 @@ type observed struct {
 	Known     map[modelKey]cardinality.ID
 }
 
-// same is the cheap check run on every step; cmp.Diff only formats a divergence.
 func same(want, got *observed) bool {
 	return want.Stats == got.Stats &&
 		slices.Equal(want.OverLimit, got.OverLimit) &&

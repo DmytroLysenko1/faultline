@@ -377,8 +377,6 @@ func (j *namingJournal) counts() (names, spans int) {
 	return len(j.names), j.spans
 }
 
-// TestRoutedSpansKeepAnOperationNamePerSpan guards the heap probe below: if the normalizer folded
-// the probe's routes into one name, the probe would no longer hold one name per span.
 func TestRoutedSpansKeepAnOperationNamePerSpan(t *testing.T) {
 	tests := []struct {
 		Name string
@@ -445,8 +443,6 @@ func heldHeapPerRequest(t *testing.T, wire []byte) int64 {
 	return perRequest
 }
 
-// TestHeldRequestsStayWithinTheMemoryBudget: the most spans a request can carry is the worst
-// case; routes add operation names, but their wire bytes leave room for fewer spans.
 func TestHeldRequestsStayWithinTheMemoryBudget(t *testing.T) {
 	tests := []struct {
 		Name string

@@ -37,7 +37,6 @@ func TestPartitionOfWithOnePartitionOrLessIsZero(t *testing.T) {
 	}
 }
 
-// TestPartitionsShareTheLoadEvenly: random trace ids land within 5 % of the mean on every one of 8 partitions.
 func TestPartitionsShareTheLoadEvenly(t *testing.T) {
 	const partitions, traces = 8, 160_000
 	rng := rand.New(rand.NewPCG(3, 4))

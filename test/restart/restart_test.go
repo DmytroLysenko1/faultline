@@ -43,19 +43,14 @@ const (
 	killSketch     = 1 << 11
 )
 
-// firePeriods: early panes fire on the clock, which starts over with the restarted processor; the
-// finals must not depend on when they fired.
 var firePeriods = []time.Duration{neverFire, earlyFire}
 
-// heldLimits: publishing after every Receive, or only when the graph changes shape — then a due
-// checkpoint waits for the next publish.
 var heldLimits = []int64{publishEach, publishOnShape}
 
 func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }
 
-// killLimits keep the state small, so a hundred processors checkpoint every few seconds quickly.
 func killLimits() topology.Limits {
 	limits := topologytest.Limits()
 	limits.MaxSeries, limits.SketchEntries = killSeries, killSketch
@@ -88,9 +83,6 @@ func (p *lastPublisher) Publish(_ context.Context, snapshot *topology.Snapshot) 
 	return nil
 }
 
-// randomJournal is calls between a few services with random counts and gaps, so windows close,
-// pairs meet across batches and services and edges appear at different positions; a heartbeat far
-// ahead closes every window at the end.
 func randomJournal(t *testing.T, rng *rand.Rand) []batch.Batch {
 	t.Helper()
 	size := minBatches + rng.IntN(extraBatches)
@@ -171,10 +163,6 @@ func observed(finals []traffic.Final, publisher *lastPublisher) outcome {
 	}
 }
 
-// killed runs a processor that dies at a random Receive — or, one time in three, while it writes a
-// checkpoint — and returns, for every checkpoint it began, the finals published by then. They are
-// keyed by how many batches the processor had been handed, not by what the checkpoint claims, so a
-// checkpoint that names the wrong position restarts from finals that do not match.
 func (s *scenario) killed(t *testing.T, rng *rand.Rand, log *processingtest.RetainedLog,
 ) (*processingtest.CheckpointStore, map[uint64][]traffic.Final) {
 	t.Helper()
@@ -210,12 +198,6 @@ func killOnWrite(rng *rand.Rand, kill context.CancelFunc) func() error {
 	}
 }
 
-// TestARestartedPipelinePublishesTheSameFinalsAsAnUninterruptedOne (I14 through a restart, KT-1 at
-// the pipeline): a processor checkpoints on its cadence and is killed at a random moment, sometimes
-// in the middle of a checkpoint; the next one restores the last committed checkpoint and reads the
-// journal from right after it. The finals the first published up to that checkpoint, followed by
-// everything the second publishes, are the finals of a processor that never stopped — nothing is
-// lost to retention, nothing applied twice.
 func TestARestartedPipelinePublishesTheSameFinalsAsAnUninterruptedOne(t *testing.T) {
 	rng := rand.New(rand.NewPCG(killSeed, killSeed))
 	for index := range killScenarios {

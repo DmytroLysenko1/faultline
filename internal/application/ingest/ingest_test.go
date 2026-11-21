@@ -165,8 +165,6 @@ func diffResult(want, got ingest.AcceptResult) string {
 	return cmp.Diff(want, got, cmpopts.EquateEmpty())
 }
 
-// TestNotAttemptedIsUnavailableInOneLineAndKeepsItsCause: the OTLP handler answers it as retryable
-// with a Debug note, and the note reads as the journal's own reason.
 func TestNotAttemptedIsUnavailableInOneLineAndKeepsItsCause(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -657,8 +655,6 @@ func TestExecuteWalksTheSourceExactlyOnce(t *testing.T) {
 	}
 }
 
-// TestACommandWithoutRecordsLeavesTheJournalAlone: an empty command is an empty request, but one that
-// counts spans it does not carry is a broken adapter, and the client must not hear OK for lost spans.
 func TestACommandWithoutRecordsLeavesTheJournalAlone(t *testing.T) {
 	tests := []struct {
 		name    string

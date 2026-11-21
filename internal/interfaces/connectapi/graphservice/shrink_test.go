@@ -15,7 +15,6 @@ const (
 	shrinkEdges = 120
 )
 
-// freeBytes is the room left in the budget; it probes with TryAcquire and gives the room back.
 func freeBytes(admission *graphservice.Admission) int64 {
 	low, high := int64(0), admission.Capacity
 	for low < high {
@@ -34,9 +33,6 @@ type budgetSteps struct {
 	Reserved, Flushed, Written, WrittenTwice, Done int64
 }
 
-// TestTheFirstWriteKeepsOnlyWhatTheResponseStillHolds: once marshalled, the snapshot and the
-// marshal peak are gone; the tree and the encoded bytes stay until the write ends, and a
-// compressed response also keeps its compressed copy.
 func TestTheFirstWriteKeepsOnlyWhatTheResponseStillHolds(t *testing.T) {
 	weight := graphservice.ResponseWeight(shrinkNodes, shrinkEdges)
 	written := graphservice.WrittenWeight(shrinkNodes, shrinkEdges)

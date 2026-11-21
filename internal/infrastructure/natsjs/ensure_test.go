@@ -36,8 +36,6 @@ type streamShape struct {
 	Partitions  string
 }
 
-// shapeOf reads a stream the way an operator would; right after creation an R3 stream may still be
-// electing its leader, so the read is retried until it answers.
 func shapeOf(t *testing.T, js jetstream.JetStream, name string) streamShape {
 	t.Helper()
 	var stream jetstream.Stream
@@ -57,8 +55,6 @@ func shapeOf(t *testing.T, js jetstream.JetStream, name string) streamShape {
 	}
 }
 
-// TestEnsureTopologyCreatesAStreamPerPartitionThatKeepsEveryRecord: limits retention, new records
-// refused when full, no age limit — nothing acknowledged is dropped by the server on its own (I15).
 func TestEnsureTopologyCreatesAStreamPerPartitionThatKeepsEveryRecord(t *testing.T) {
 	cluster := natsjstest.Start(t, threeNodes)
 	topology := topologyOf(twoPartitions, threeReplicas)
@@ -104,8 +100,6 @@ func TestTwoProcessorsEnsuringTheSameTopologyAgree(t *testing.T) {
 	}
 }
 
-// TestAnOlderReleaseCannotRewriteANewerTopology: during a rollout the old processor must stop, not
-// put its smaller MaxBytes back over the new one.
 func TestAnOlderReleaseCannotRewriteANewerTopology(t *testing.T) {
 	cluster := natsjstest.Start(t, singleNode)
 	newer := topologyOf(onePartition, oneReplica)
@@ -171,8 +165,6 @@ func TestVerifyTopologyAcceptsTheStreamsTheProcessorEnsured(t *testing.T) {
 	}
 }
 
-// TestVerifyTopologyIgnoresWhatTheServerAddsAfterARestart: the server writes _nats.* metadata and
-// its defaults into every stream; comparing whole configs would stop every ingester on every start.
 func TestVerifyTopologyIgnoresWhatTheServerAddsAfterARestart(t *testing.T) {
 	cluster := natsjstest.Start(t, singleNode)
 	topology := topologyOf(onePartition, oneReplica)
@@ -188,10 +180,6 @@ func TestVerifyTopologyIgnoresWhatTheServerAddsAfterARestart(t *testing.T) {
 	}
 }
 
-// TestVerifyTopologyStopsOnlyWhatTheIngesterDependsOn: a different partition count would split
-// traces, a shorter dedup window would turn retries into duplicates, a missing stream loses records —
-// those stop the start. A grown MaxBytes, another compression or a newer version are the processor's
-// business: reported, never in the way of a rollout or a scale-up.
 func TestVerifyTopologyStopsOnlyWhatTheIngesterDependsOn(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -229,8 +217,6 @@ func TestVerifyTopologyStopsOnlyWhatTheIngesterDependsOn(t *testing.T) {
 	}
 }
 
-// TestAShortDedupWindowSaysWhatNATSHas: the ingester's start fails with a diff an operator can act
-// on, both sides filled in.
 func TestAShortDedupWindowSaysWhatNATSHas(t *testing.T) {
 	cluster := natsjstest.Start(t, singleNode)
 	ensured(t, cluster, topologyOf(onePartition, oneReplica))
@@ -287,8 +273,6 @@ func assertDrift(t *testing.T, err error, field string) {
 	}
 }
 
-// TestEnsureTopologyWaitsForTheClusterToElectALeader: a processor that starts while the cluster has no
-// metadata leader keeps trying, and creates the streams once the nodes are back.
 func TestEnsureTopologyWaitsForTheClusterToElectALeader(t *testing.T) {
 	cluster := natsjstest.Start(t, threeNodes)
 	topology := topologyOf(onePartition, threeReplicas)
@@ -356,9 +340,6 @@ func TestADriftNamesEveryDifferingField(t *testing.T) {
 	}
 }
 
-// TestEnsureTopologyRidesOutAReconnect: the node the processor dialled goes away; with no reconnect
-// buffer every call fails fast while the client moves to another node, and EnsureTopology waits
-// for it instead of failing the start.
 func TestEnsureTopologyRidesOutAReconnect(t *testing.T) {
 	cluster := natsjstest.Start(t, threeNodes)
 	conn := dialURLs(t, cluster.URLs()[:1])
@@ -373,9 +354,6 @@ func TestEnsureTopologyRidesOutAReconnect(t *testing.T) {
 	}
 }
 
-// TestADriftOnOneStreamLeavesEveryStreamAsItWas: an operator changed one partition's stream by hand;
-// the new release must stop without first moving the other partitions to its version, or the
-// rollback would find them "newer" and refuse to start too.
 func TestADriftOnOneStreamLeavesEveryStreamAsItWas(t *testing.T) {
 	cluster := natsjstest.Start(t, singleNode)
 	current := topologyOf(twoPartitions, oneReplica)
@@ -403,8 +381,6 @@ func TestADriftOnOneStreamLeavesEveryStreamAsItWas(t *testing.T) {
 	}
 }
 
-// TestAWrongTopologyCreatesNothing: a partition count set too high by mistake must not leave the
-// extra streams behind, each reserving its MaxBytes on the server, before the drift stops the start.
 func TestAWrongTopologyCreatesNothing(t *testing.T) {
 	cluster := natsjstest.Start(t, singleNode)
 	ensured(t, cluster, topologyOf(onePartition, oneReplica))
@@ -425,9 +401,6 @@ func (lostLease) Valid() bool {
 	return false
 }
 
-// TestEnsureTopologyWritesNothingWithoutTheLease: a stream configuration has no conditional update, so a
-// processor that no longer holds the topology lease must not create or update a stream — another
-// holder may be writing a different version.
 func TestEnsureTopologyWritesNothingWithoutTheLease(t *testing.T) {
 	cluster := natsjstest.Start(t, singleNode)
 	topology := topologyOf(onePartition, oneReplica)
@@ -455,7 +428,6 @@ func TestEnsureTopologyWritesNothingWithoutTheLease(t *testing.T) {
 	}
 }
 
-// expiringLease is held for its first checks only, like a lease that is lost while EnsureTopology works.
 type expiringLease struct {
 	left int
 }
@@ -465,8 +437,6 @@ func (l *expiringLease) Valid() bool {
 	return l.left >= 0
 }
 
-// TestEnsureTopologyChecksTheLeaseBeforeEveryWrite: a lease lost after the first stream was written stops
-// the second write — one check before the whole run would let a slow EnsureTopology write without it.
 func TestEnsureTopologyChecksTheLeaseBeforeEveryWrite(t *testing.T) {
 	cluster := natsjstest.Start(t, singleNode)
 	topology := topologyOf(twoPartitions, oneReplica)

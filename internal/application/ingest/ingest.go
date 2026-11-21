@@ -25,15 +25,15 @@ var (
 
 const MaxReasons = 16
 
-type notAttempted struct {
+type notAttemptedError struct {
 	cause error
 }
 
-func (n *notAttempted) Error() string {
+func (n *notAttemptedError) Error() string {
 	return cmp.Or(n.cause, ErrNotAttempted).Error()
 }
 
-func (n *notAttempted) Unwrap() []error {
+func (n *notAttemptedError) Unwrap() []error {
 	if n.cause == nil {
 		return []error{ErrUnavailable, ErrNotAttempted}
 	}
@@ -41,7 +41,7 @@ func (n *notAttempted) Unwrap() []error {
 }
 
 func NotAttempted(cause error) error {
-	return &notAttempted{
+	return &notAttemptedError{
 		cause: cause,
 	}
 }

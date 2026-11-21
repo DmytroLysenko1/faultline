@@ -18,8 +18,6 @@ const (
 	publishWithin    = 2 * time.Second
 )
 
-// TestAMessageOverTheStreamLimitIsTooLargeOnALiveServer: the server counts headers into the limit
-// and answers 10054; that must be final (INVALID_ARGUMENT), not a retry that can never succeed.
 func TestAMessageOverTheStreamLimitIsTooLargeOnALiveServer(t *testing.T) {
 	cluster := natsjstest.Start(t, 1)
 	nc, err := nats.Connect(cluster.URLs()[0])
@@ -48,8 +46,6 @@ func TestAMessageOverTheStreamLimitIsTooLargeOnALiveServer(t *testing.T) {
 	}
 }
 
-// TestEnsureRetriesOnlyWhatPassesOnItsOwn: a start may wait out a reconnect, an election or peers
-// still marked offline; a conflict, a refusal or the caller's cancel ends it at once.
 func TestEnsureRetriesOnlyWhatPassesOnItsOwn(t *testing.T) {
 	tests := []struct {
 		name string

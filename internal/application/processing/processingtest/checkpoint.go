@@ -13,6 +13,8 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 )
 
+const finalSlots = 2
+
 var (
 	errWriterFinished = errors.New("checkpoint writer already closed or aborted")
 	errReaderClosed   = errors.New("checkpoint reader already closed")
@@ -27,10 +29,6 @@ type storedCheckpoint struct {
 	data []byte
 }
 
-// CheckpointStore keeps the latest checkpoint per partition the way the real store promises: a
-// checkpoint becomes latest only after its writer closes, and only then does retention move up to
-// it. The real store uploads after Close, so an upload it loses is never an error of Close; a
-// checkpoint retention cannot follow — past the log, another partition — fails the test.
 type CheckpointStore struct {
 	tb          testing.TB
 	retention   Retention
@@ -48,6 +46,11 @@ type CheckpointStore struct {
 	failRead    error
 	failAbort   error
 	loseUploads bool
+	inFlight    int
+	finalTaken  bool
+	holding     bool
+	held        []*spoolWriter
+	closed      bool
 	onWrite     func() error
 	onBegin     func(*processing.CheckpointMeta)
 }
@@ -93,15 +96,12 @@ func (s *CheckpointStore) FailAbort(err error) {
 	s.failAbort = err
 }
 
-// LoseUploads makes closed checkpoints vanish, the way an upload or a pointer update that fails after
-// Close does: the previous checkpoint stays the latest and retention stays where it was.
 func (s *CheckpointStore) LoseUploads(lose bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.loseUploads = lose
 }
 
-// OnWrite runs before every Write of the checkpoint; an error it returns is what Write returns.
 func (s *CheckpointStore) OnWrite(hook func() error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -114,31 +114,90 @@ func (s *CheckpointStore) OnBegin(hook func(*processing.CheckpointMeta)) {
 	s.onBegin = hook
 }
 
-// Put makes a checkpoint the latest of partition as is, the way a damaged or misfiled one would be.
 func (s *CheckpointStore) Put(partition uint16, meta *processing.CheckpointMeta, data []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.latest[partition] = storedCheckpoint{meta: *meta, data: bytes.Clone(data)}
 }
 
-func (s *CheckpointStore) Begin(_ context.Context, meta *processing.CheckpointMeta,
+func (s *CheckpointStore) Begin(ctx context.Context, meta *processing.CheckpointMeta,
 ) (processing.CheckpointWriter, error) {
+	return s.begin(ctx, meta, false)
+}
+
+func (s *CheckpointStore) BeginOnStop(ctx context.Context, meta *processing.CheckpointMeta,
+) (processing.CheckpointWriter, error) {
+	return s.begin(ctx, meta, true)
+}
+
+func (s *CheckpointStore) begin(
+	ctx context.Context,
+	meta *processing.CheckpointMeta,
+	final bool,
+) (processing.CheckpointWriter, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("begin through %d: %w", meta.Position.Sequence, err)
+	}
+	s.beforeBegin(meta)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	consumed := final && !s.finalTaken
+	if err := s.refusal(meta, consumed); err != nil {
+		return nil, err
+	}
+	s.begun++
+	s.inFlight++
+	s.finalTaken = s.finalTaken || consumed
+	return &spoolWriter{store: s, meta: *meta, final: consumed}, nil
+}
+
+func (s *CheckpointStore) beforeBegin(meta *processing.CheckpointMeta) {
 	s.mu.Lock()
 	hook := s.onBegin
 	s.mu.Unlock()
 	if hook != nil {
 		hook(meta)
 	}
+}
+
+func (s *CheckpointStore) refusal(meta *processing.CheckpointMeta, consumed bool) error {
+	switch {
+	case s.closed:
+		return fmt.Errorf("begin through %d: %w", meta.Position.Sequence, processing.ErrCheckpointRefused)
+	case s.busy || s.inFlight >= slotLimit(consumed):
+		return fmt.Errorf("begin through %d: %w", meta.Position.Sequence, processing.ErrCheckpointBusy)
+	default:
+		return s.failBegin
+	}
+}
+
+func slotLimit(final bool) int {
+	if final {
+		return finalSlots
+	}
+	return 1
+}
+
+func (s *CheckpointStore) Hold() (release func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.busy {
-		return nil, fmt.Errorf("begin through %d: %w", meta.Position.Sequence, processing.ErrCheckpointBusy)
+	s.holding = true
+	return func() {
+		s.mu.Lock()
+		s.holding = false
+		held := s.held
+		s.held = nil
+		s.mu.Unlock()
+		for _, w := range held {
+			s.land(w)
+		}
 	}
-	if s.failBegin != nil {
-		return nil, s.failBegin
-	}
-	s.begun++
-	return &spoolWriter{store: s, meta: *meta}, nil
+}
+
+func (s *CheckpointStore) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
 }
 
 func (s *CheckpointStore) Latest(_ context.Context, partition uint16,
@@ -174,7 +233,6 @@ func (s *CheckpointStore) Aborted() int {
 	return s.aborted
 }
 
-// Unfinished counts writers the pipeline neither closed nor aborted.
 func (s *CheckpointStore) Unfinished() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -204,15 +262,30 @@ func (s *CheckpointStore) close(w *spoolWriter) error {
 	s.finished++
 	if s.failClose != nil || s.loseUploads {
 		defer s.mu.Unlock()
+		s.inFlight--
 		return s.failClose
 	}
+	if s.holding {
+		defer s.mu.Unlock()
+		s.held = append(s.held, w)
+		return nil
+	}
+	s.mu.Unlock()
+	s.land(w)
+	return nil
+}
+
+func (s *CheckpointStore) land(w *spoolWriter) {
+	s.mu.Lock()
 	meta := w.meta
 	meta.CheckpointVersion = topology.CheckpointVersion
 	s.latest[meta.Position.Partition] = storedCheckpoint{meta: meta, data: bytes.Clone(w.data.Bytes())}
 	s.committed = append(s.committed, meta)
+	s.inFlight--
 	s.mu.Unlock()
-	s.retain(meta.Position)
-	return nil
+	if !w.final {
+		s.retain(meta.Position)
+	}
 }
 
 func (s *CheckpointStore) retain(through processing.Position) {
@@ -229,6 +302,7 @@ func (s *CheckpointStore) abort() error {
 	defer s.mu.Unlock()
 	s.finished++
 	s.aborted++
+	s.inFlight--
 	return s.failAbort
 }
 
@@ -244,6 +318,7 @@ type spoolWriter struct {
 	meta     processing.CheckpointMeta
 	data     bytes.Buffer
 	finished bool
+	final    bool
 }
 
 func (w *spoolWriter) Write(data []byte) (int, error) {

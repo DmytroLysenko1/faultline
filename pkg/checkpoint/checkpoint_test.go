@@ -101,8 +101,6 @@ func decode(data []byte, counts ...int) ([]values, error) {
 	return decoded, r.Finish()
 }
 
-// TestValuesComeBackInOrderAcrossChunks: sections far larger than one chunk read back exactly,
-// with the version, and an empty section is still a section.
 func TestValuesComeBackInOrderAcrossChunks(t *testing.T) {
 	rng := rand.New(rand.NewPCG(1, 2))
 	tests := []struct {
@@ -210,7 +208,6 @@ func sealed(t *testing.T) []byte {
 		Times: []time.Time{{}}, Durations: []time.Duration{3}, Fixed: [][4]byte{{}}})
 }
 
-// TestDamageIsCorruptionNotAnotherState: every way bytes can go wrong is ErrCorrupt.
 func TestDamageIsCorruptionNotAnotherState(t *testing.T) {
 	data := sealed(t)
 	tests := []struct {
@@ -300,8 +297,6 @@ func TestTheWriterKeepsItsFirstError(t *testing.T) {
 	}
 }
 
-// FuzzReader: any bytes decode to an error or to values; the reader never panics and never
-// allocates more than one chunk.
 func FuzzReader(f *testing.F) {
 	f.Add(sealed(&testing.T{}), 1)
 	f.Fuzz(func(t *testing.T, data []byte, count int) {

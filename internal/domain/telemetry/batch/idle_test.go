@@ -17,7 +17,6 @@ var idleStart = time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
 
 func idleAt(offset time.Duration) time.Time { return idleStart.Add(offset) }
 
-// idleBatch is a batch received at receivedAt whose span ended at end; a zero end means the end is unknown.
 func idleBatch(t *testing.T, receivedAt, end time.Time) batch.Batch {
 	t.Helper()
 	observed := telemetrytest.NumberedSpan(t, kind.Server, 1, "checkout")
@@ -31,7 +30,6 @@ func idleBatch(t *testing.T, receivedAt, end time.Time) batch.Batch {
 	return received
 }
 
-// idleStep is one event in the journal's life: a recorded batch, or a question to the rule.
 type idleStep struct {
 	record  *batch.Batch
 	dueAt   time.Time
@@ -137,8 +135,6 @@ func TestTheRuleAnswersWhenAHeartbeatIsDue(t *testing.T) {
 	}
 }
 
-// TestAResumedRuleIsDueOneIdlePeriodAfterTheRestoredReceiveTime: a feed that restarts behind a
-// checkpoint must not wait for fresh data before its first heartbeat.
 func TestAResumedRuleIsDueOneIdlePeriodAfterTheRestoredReceiveTime(t *testing.T) {
 	rule := batch.ResumedIdleRule(idleAfter, idleAt(0))
 

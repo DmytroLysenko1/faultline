@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -403,7 +404,7 @@ func TestStakeEmptyAndDiscardWorkOnTheRealBucket(t *testing.T) {
 	l := startLive(t, singleNode)
 	l.ensureJournal(t)
 	store := l.open(t)
-	if _, _, err := store.Latest(t.Context(), 0); !errors.Is(err, processing.ErrNoCheckpoint) {
+	if err := latestErr(store.Latest(t.Context(), 0)); !errors.Is(err, processing.ErrNoCheckpoint) {
 		t.Fatalf("Latest: %v, want %v", err, processing.ErrNoCheckpoint)
 	}
 
@@ -412,7 +413,7 @@ func TestStakeEmptyAndDiscardWorkOnTheRealBucket(t *testing.T) {
 	}
 
 	next := l.open(t)
-	if _, _, err := next.Latest(t.Context(), 0); !errors.Is(err, processing.ErrNoCheckpoint) {
+	if err := latestErr(next.Latest(t.Context(), 0)); !errors.Is(err, processing.ErrNoCheckpoint) {
 		t.Fatalf("Latest after StakeEmpty: %v, want %v", err, processing.ErrNoCheckpoint)
 	}
 }
@@ -461,9 +462,16 @@ func TestLatestOverADeletedObjectBucketIsLostState(t *testing.T) {
 		t.Fatalf("delete bucket: %v", err)
 	}
 
-	_, _, err := store.Latest(t.Context(), 0)
+	err := latestErr(store.Latest(t.Context(), 0))
 
 	if !errors.Is(err, processing.ErrCheckpointUnusable) {
 		t.Fatalf("Latest: err = %v, want %v", err, processing.ErrCheckpointUnusable)
 	}
+}
+
+func latestErr(_ processing.CheckpointMeta, reader io.ReadCloser, err error) error {
+	if reader == nil {
+		return err
+	}
+	return errors.Join(err, reader.Close())
 }

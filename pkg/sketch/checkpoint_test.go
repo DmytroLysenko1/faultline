@@ -29,8 +29,6 @@ type workload struct {
 	sketches []sketch.Sketch
 }
 
-// step adds a random sample or releases a sketch: many sketches with wide value ranges fight for a
-// small arena, so blocks fragment, sketches collapse and samples drop.
 func (w *workload) step(rng *rand.Rand) {
 	target := &w.sketches[rng.IntN(len(w.sketches))]
 	if rng.IntN(pressureRelease) == 0 {
@@ -91,9 +89,6 @@ func restoreWorkload(budget int, data []byte, sketches int) (*workload, error) {
 	return restored, reader.Finish()
 }
 
-// TestARestoredArenaContinuesLikeTheOriginal: the free lists keep their order and every sketch keeps
-// its block, length and collapse mark, so the same adds after a restore fragment, collapse and drop
-// exactly as in the arena that never stopped.
 func TestARestoredArenaContinuesLikeTheOriginal(t *testing.T) {
 	rng := rand.New(rand.NewPCG(pressureSeed, pressureSeed))
 	pressured := 0
@@ -134,8 +129,6 @@ func TestARestoredArenaContinuesLikeTheOriginal(t *testing.T) {
 	}
 }
 
-// TestAnArenaRestoresIntoALargerBudget: the old blocks keep their offsets and the new half of the
-// arena joins the free lists, so every sketch reads the same and new sketches fit where they did not.
 func TestAnArenaRestoresIntoALargerBudget(t *testing.T) {
 	rng := rand.New(rand.NewPCG(pressureSeed, 2))
 	original := newWorkload(t, pressureBudget)

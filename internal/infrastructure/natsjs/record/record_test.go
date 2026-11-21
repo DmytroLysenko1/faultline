@@ -227,8 +227,6 @@ func TestEncodeReturnsThePublishError(t *testing.T) {
 	}
 }
 
-// TestConcurrentEncodesNeverShareABuffer: every publish must see exactly its own record while other goroutines
-// encode on the same encoder (run with -race: a buffer handed to two calls is a data race).
 func TestConcurrentEncodesNeverShareABuffer(t *testing.T) {
 	encoder := new(record.Encoder)
 	var wg sync.WaitGroup

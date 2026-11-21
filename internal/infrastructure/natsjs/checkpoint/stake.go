@@ -17,13 +17,21 @@ const pointerWriteBudget = 2 * time.Second
 type nextValue func(found *pointer) (*pointerValue, error)
 
 func (s *Store) Stake(ctx context.Context, restored *processing.CheckpointMeta) (processing.Staked, error) {
-	staked, err := s.stake(ctx, restored)
-	return staked, translate(err)
+	staking, err := s.enter(ctx)
+	if err != nil {
+		return processing.Staked{}, translate(err)
+	}
+	staked, err := s.stake(staking, restored)
+	return staked, translate(s.exitStake(err))
 }
 
 func (s *Store) StakeEmpty(ctx context.Context) (processing.Staked, error) {
-	staked, err := s.stakeEmpty(ctx)
-	return staked, translate(err)
+	staking, err := s.enter(ctx)
+	if err != nil {
+		return processing.Staked{}, translate(err)
+	}
+	staked, err := s.stakeEmpty(staking)
+	return staked, translate(s.exitStake(err))
 }
 
 func (s *Store) stake(ctx context.Context, restored *processing.CheckpointMeta) (processing.Staked, error) {
@@ -101,12 +109,8 @@ func sameObject(have, want *objectRef) bool {
 }
 
 func (s *Store) write(ctx context.Context, next nextValue) error {
-	if err := s.staked(); err != nil {
-		return err
-	}
 	written, keyed, err := s.writeOnce(ctx, next)
 	if err != nil {
-		s.unstake()
 		return err
 	}
 	if keyed {
@@ -205,12 +209,4 @@ func sameRef(have, want *objectRef) bool {
 		return have == want
 	}
 	return *have == *want
-}
-
-func (s *Store) unstake() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.state == stateStaked {
-		s.state = stateOpened
-	}
 }

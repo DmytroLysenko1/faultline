@@ -59,7 +59,6 @@ func timedHalf(tb testing.TB, spanKind kind.Kind, trace uint64, service string, 
 	return half
 }
 
-// timedPair is one call; the failure is on the server half, so the edge and the served node agree.
 func timedPair(t *testing.T, trace uint64, caller, callee string, end time.Time, failed bool) []span.Span {
 	t.Helper()
 	return timedPairTB(t, trace, caller, callee, end, failed)
@@ -86,7 +85,6 @@ func flush(builder *topology.Builder, from time.Time) {
 	builder.Apply(batch.Heartbeat(from.Add(redFlushAhead)))
 }
 
-// redOf keeps what a test can predict exactly; percentiles have their own tests in red and sketch.
 func redOf(stats red.WindowStats) red.WindowStats {
 	return red.WindowStats{
 		StartUnixNano:  stats.StartUnixNano,
@@ -404,8 +402,6 @@ type redCall struct {
 	Failed bool
 }
 
-// redScenario returns calls in arrival order: each call arrives at most redMaxDisplaced after
-// calls that ended later, well inside the watermark delay, so every event is on time.
 func redScenario(rng *rand.Rand) []redCall {
 	calls := make([]redCall, 1+rng.IntN(redCallsMax))
 	displaced := make(map[uint64]time.Time, len(calls))
@@ -428,7 +424,6 @@ func redScenario(rng *rand.Rand) []redCall {
 	return calls
 }
 
-// redBatches groups calls in arrival order; a batch is received after its newest call ended.
 func redBatches(t *testing.T, rng *rand.Rand, calls []redCall) []batch.Batch {
 	t.Helper()
 	var (
@@ -469,7 +464,6 @@ func windowStart(at time.Time) int64 {
 	return at.Truncate(redWindow).UnixNano()
 }
 
-// oracleRED recounts every call into its edge, its served node and their operations.
 func oracleRED(calls []redCall) map[redKey]redCounts {
 	truth := make(map[redKey]redCounts)
 	add := func(series traffic.SeriesKey, current *redCall) {
@@ -497,7 +491,6 @@ func oracleRED(calls []redCall) map[redKey]redCounts {
 	return truth
 }
 
-// lastFinals keeps the newest revision of every (series, window), as a store of finals would.
 func lastFinals(finals []traffic.Final) map[redKey]redCounts {
 	got := make(map[redKey]redCounts, len(finals))
 	for i := range finals {
@@ -528,8 +521,6 @@ func TestFinalREDMatchesTheOracle(t *testing.T) {
 	}
 }
 
-// checkFlushedAccounting: I10 — subjects were offered exactly the graph's calls and served
-// requests; I11 — every subject event went to one operation engine; I12 — nothing is held.
 func checkFlushedAccounting(t *testing.T, scenario int, snapshot *topology.Snapshot) {
 	t.Helper()
 	var graphEvents uint64
@@ -560,8 +551,6 @@ func checkFlushedAccounting(t *testing.T, scenario int, snapshot *topology.Snaps
 	}
 }
 
-// TestSnapshotMatchesSummariesByHandleNotByPosition: handles follow creation order, the snapshot
-// follows ID order; here the two orders differ for nodes and for edges.
 func TestSnapshotMatchesSummariesByHandleNotByPosition(t *testing.T) {
 	builder := newTestBuilder(t, builderLimits())
 	start := telemetrytest.Epoch()
@@ -585,9 +574,6 @@ func TestSnapshotMatchesSummariesByHandleNotByPosition(t *testing.T) {
 	}
 }
 
-// TestFinalsAreAFunctionOfTheJournal (I8): Fire only shows early panes, so the same journal gives
-// the same finals, in the same order and with the same summaries, however often Fire runs and in
-// whichever process it is replayed.
 func TestFinalsAreAFunctionOfTheJournal(t *testing.T) {
 	rng := rand.New(rand.NewPCG(redSeed, redSeed+1))
 	for scenario := range redScenarios {

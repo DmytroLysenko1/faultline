@@ -28,7 +28,6 @@ type holding struct {
 	id    cardinality.ID
 }
 
-// registryRun acquires and releases at random, so ids are freed, reused and owners go over the limit.
 type registryRun struct {
 	registry *cardinality.Registry
 	held     []holding
@@ -89,9 +88,6 @@ func restoreRegistry(limit int, data []byte) (*cardinality.Registry, error) {
 	return restored, r.Finish()
 }
 
-// TestARestoredRegistryContinuesLikeTheOriginal: live operations keep their ids and references, the
-// free ids their order and the owners over the limit their mark, so the same acquires and releases
-// hand out the same ids and refuse the same operations.
 func TestARestoredRegistryContinuesLikeTheOriginal(t *testing.T) {
 	rng := rand.New(rand.NewPCG(20261113, 3))
 	for scenario := range restoreScenarios {

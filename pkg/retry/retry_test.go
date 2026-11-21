@@ -33,7 +33,6 @@ func policy() *retry.Policy {
 	}
 }
 
-// answers replies with each error in turn and keeps when each attempt began and how long it could run.
 type answers struct {
 	replies   []error
 	started   []time.Duration

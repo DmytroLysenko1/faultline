@@ -143,8 +143,6 @@ type snapshotChecker struct {
 	lastRevision  uint64
 }
 
-// contentOf is everything a revision stands for: graph counts and the live and final summaries.
-// The watermark and the stats are diagnostics and are left out (I2).
 func contentOf(snapshot *topology.Snapshot) string {
 	var content strings.Builder
 	for i := range snapshot.Nodes {

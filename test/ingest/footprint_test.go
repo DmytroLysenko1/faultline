@@ -18,8 +18,6 @@ const (
 	uniqueNameDigits       = 8
 )
 
-// uniqueNamesRequest gives every span its own resource with a service name of the longest
-// accepted length, so the journal charges a distinct string per span.
 func uniqueNamesRequest() ptraceotlp.ExportRequest {
 	traces := ptrace.NewTraces()
 	sizer := ptrace.ProtoMarshaler{}
@@ -34,9 +32,6 @@ func uniqueNamesRequest() ptraceotlp.ExportRequest {
 	return ptraceotlp.NewExportRequestFromTraces(traces)
 }
 
-// TestTheLargestRequestsFitTheBatchFootprintBound: the pipeline holds at most
-// journal_max_bytes − MaxBatchFootprint, so the journal can always take one more request; the
-// bound must cover both the most spans and the most distinct strings a request can carry.
 func TestTheLargestRequestsFitTheBatchFootprintBound(t *testing.T) {
 	tests := []struct {
 		Name string

@@ -174,9 +174,6 @@ func (n *node) match(items []string) (string, bool) {
 	return n.param.match(items[1:])
 }
 
-// worstWalk bounds match statically: a path follows at most one literal child
-// and then the parameter child at every node, so rejecting rules whose worst
-// walk is too long keeps every match cheap without a runtime cut-off.
 func (n *node) worstWalk() int {
 	if n == nil {
 		return 0

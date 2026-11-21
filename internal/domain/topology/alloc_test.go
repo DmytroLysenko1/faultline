@@ -20,8 +20,6 @@ const (
 
 var steadyNames = [steadyServices]string{"frontend", "cart", "checkout", "payment"}
 
-// steadyBatches is traffic that keeps closing windows: fresh traces on known edges and operations,
-// received in order, so after the warm-up every structure has its largest size.
 func steadyBatches(tb testing.TB, count int) []batch.Batch {
 	tb.Helper()
 	start := telemetrytest.Epoch()
@@ -58,8 +56,6 @@ func steadyBuilder(tb testing.TB) (*topology.Builder, []batch.Batch) {
 	return builder, batches[steadyWarmBatches:]
 }
 
-// TestApplyAndFireDoNotAllocateOnceWarm: the builder buffers, the matcher's pending slots, the graph
-// and traffic are reused, so a warm builder allocates nothing per event, closing windows included.
 func TestApplyAndFireDoNotAllocateOnceWarm(t *testing.T) {
 	builder, batches := steadyBuilder(t)
 	next := 0
@@ -73,8 +69,6 @@ func TestApplyAndFireDoNotAllocateOnceWarm(t *testing.T) {
 	}
 }
 
-// BenchmarkBuilderApplyPerSpan replays only fresh batches: an old one would go back in time and
-// repeat traces, which measures the duplicate path and stops the windows.
 func BenchmarkBuilderApplyPerSpan(b *testing.B) {
 	builder, batches := steadyBuilder(b)
 	spans, next := 0, 0

@@ -14,7 +14,6 @@ const (
 	referenceObjects = "reference_objects"
 )
 
-// bucketShape is what of a bucket's stream the KV and object store clients of nats.go rely on.
 type bucketShape struct {
 	Storage           jetstream.StorageType
 	Replicas          int
@@ -37,8 +36,6 @@ func shapeOfStream(config *jetstream.StreamConfig) bucketShape {
 	}
 }
 
-// The buckets are created as streams so that reads go to the leader; everything else must be what nats.go itself
-// would create, or its KV and object store clients would not work on them.
 func TestTheBucketsAreWhatNATSWouldCreateButReadAtTheLeader(t *testing.T) {
 	js := connect(t, natsjstest.Start(t, 1).URLs()[0])
 	options := testOptions()

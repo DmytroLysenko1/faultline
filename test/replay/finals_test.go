@@ -19,10 +19,8 @@ import (
 )
 
 const (
-	finalsGoldenPath = "test/demo/otel-demo/replay-finals.golden.json"
-	flushAhead       = time.Hour
-	// maxEntriesPerSeries is B4: real traffic needs units to tens of sketch entries per subject
-	// series across its live windows; the arena budget assumes it.
+	finalsGoldenPath    = "test/demo/otel-demo/replay-finals.golden.json"
+	flushAhead          = time.Hour
 	maxEntriesPerSeries = 16
 	fireEveryFew        = 7
 	oneOperationEach    = 1
@@ -100,7 +98,6 @@ func (c *finalsCollector) Final(final *traffic.Final) {
 	})
 }
 
-// replayFinals replays the dump, then a heartbeat far ahead closes every window.
 func replayFinals(t *testing.T, limits *topology.Limits, afterApply func(*topology.Builder)) (*finalsCollector,
 	*topology.Snapshot,
 ) {
@@ -147,8 +144,6 @@ func fireEvery(records int) func(*topology.Builder) {
 	}
 }
 
-// TestReplayFinalsMatchTheGolden is checkpoint 1: the final panes of the demo dump are a function
-// of the journal (I8). Fire shows early panes, so every cadence must still give the same finals.
 func TestReplayFinalsMatchTheGolden(t *testing.T) {
 	quiet, _ := replayFinals(t, defaultLimits(), noFire)
 	want := readFinalsGolden(t, quiet.got)
@@ -179,8 +174,6 @@ func TestReplayFinalsMatchTheGolden(t *testing.T) {
 	}
 }
 
-// TestReplayFinalsHoldTheSummaryInvariants checks every final against the value-object rules, so
-// a swapped percentile or a failure count above the requests fails beyond the rows that differ.
 func TestReplayFinalsHoldTheSummaryInvariants(t *testing.T) {
 	collector, _ := replayFinals(t, defaultLimits(), noFire)
 	for i := range collector.finals {
@@ -197,8 +190,6 @@ type finalKey struct {
 	Start  int64
 }
 
-// acceptedByFinals sums the requests of the last final of every (series, window) per engine:
-// subjects on one side, operations and overflow on the other.
 func acceptedByFinals(finals []traffic.Final) (subjects, operations uint64) {
 	last := make(map[finalKey]uint64, len(finals))
 	for i := range finals {
@@ -221,9 +212,6 @@ type accounting struct {
 	SketchInUse, Operations                        int
 }
 
-// TestReplayFinalsAccountForEveryEvent: after the flush every event the graph counted went to one
-// subject engine and one operation engine (I10, I11), the finals add up to the accepted events,
-// and nothing is held (I12). Tight limits push operations into overflow series.
 func TestReplayFinalsAccountForEveryEvent(t *testing.T) {
 	tight := defaultLimits()
 	tight.MaxOperationsPerService = oneOperationEach
@@ -284,8 +272,6 @@ func servedAndCalled(snapshot *topology.Snapshot) uint64 {
 	return events
 }
 
-// TestReplaySketchEntriesPerSeriesStaySmall checks B4 on the demo dump at its peak: 4.4 entries
-// per subject series were measured, the bound leaves room for busier demo traffic.
 func TestReplaySketchEntriesPerSeriesStaySmall(t *testing.T) {
 	var peak float64
 	replayFinals(t, defaultLimits(), func(builder *topology.Builder) {

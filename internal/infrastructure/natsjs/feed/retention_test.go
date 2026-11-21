@@ -26,7 +26,6 @@ func at(sequence uint64) processing.Position {
 	return processing.Position{Sequence: sequence}
 }
 
-// heartbeatAfter waits for the feed to hand out a heartbeat and returns its position.
 func heartbeatAfter(t *testing.T, opened *feed.Feed) uint64 {
 	t.Helper()
 	deadline := time.Now().Add(heartbeatWait)
@@ -52,7 +51,6 @@ func quickOptions(l *live) *feed.Options {
 	return options
 }
 
-// readAndCommit reads the two records written and purges them, as a processor does after a checkpoint.
 func readAndCommit(t *testing.T, l *live) {
 	t.Helper()
 	l.publishMany(t, 2, 0)
@@ -186,8 +184,6 @@ func TestARecreatedStreamStopsTheFeedWithoutPurging(t *testing.T) {
 	}
 }
 
-// TestPurgeKeepsTheReplayTailBoundedByBytes: a large backlog goes in steps of about 256 MiB, so the records a
-// restart replays shrink by a step every checkpoint interval, and two steps empty this stream.
 func TestPurgeKeepsTheReplayTailBoundedByBytes(t *testing.T) {
 	l := startLive(t, singleNode, oneReplica)
 	for range bigRecords {
@@ -209,8 +205,6 @@ func TestPurgeKeepsTheReplayTailBoundedByBytes(t *testing.T) {
 	}
 }
 
-// TestASlowProcessorTurnsIntoBackpressureNotLoss (FMEA 8): a full stream refuses new records instead of
-// dropping old ones, and Commit is what makes room.
 func TestASlowProcessorTurnsIntoBackpressureNotLoss(t *testing.T) {
 	l := startLive(t, singleNode, oneReplica)
 	l.topology.MaxBytesPerPartition = smallStream

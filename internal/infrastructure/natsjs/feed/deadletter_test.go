@@ -153,7 +153,6 @@ func TestDLQOutageStallsVisiblyOnNATS(t *testing.T) {
 	}
 }
 
-// publishDeadLetter fills the DLQ with a copy of another partition.
 func (l *live) publishDeadLetter(t *testing.T) {
 	t.Helper()
 	if _, err := l.raw.Publish(t.Context(), l.topology.DeadLetterSubject(1), []byte(garbage)); err != nil {
@@ -233,8 +232,6 @@ func TestClosedFeedConnectionStopsTheDeadLetterHold(t *testing.T) {
 	}
 }
 
-// TestSystemicCorruptionHaltsInsteadOfDrainingOnNATS: the window survives a restart through the copy's
-// Dead-Letter-Stream-Created, which must equal the stream's own Created as NATS reports it.
 func TestSystemicCorruptionHaltsInsteadOfDrainingOnNATS(t *testing.T) {
 	l := startLive(t, singleNode, oneReplica)
 	for index, corrupt := range []bool{false, true, false, true, false} {

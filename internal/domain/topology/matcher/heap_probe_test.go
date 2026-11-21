@@ -131,8 +131,6 @@ func calleeHalf(t *testing.T, index int) span.Span {
 	})
 }
 
-// TestWorstCaseHeapKeepsNoStringsOfPairedHalves: once a burst of halves has paired, the matcher keeps its
-// slots for the next burst, but not the services and operation names of the halves that left.
 func TestWorstCaseHeapKeepsNoStringsOfPairedHalves(t *testing.T) {
 	grown := telemetrytest.HeapGrowth(func() any {
 		pairing, err := matcher.New(limitsOf(worstStringLimit))

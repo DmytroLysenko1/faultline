@@ -7,8 +7,6 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/record"
 )
 
-// Record sizes: 1 span, 64 (a 512-span collector batch split over P = 8), 512, 2048 (one batch, P = 1);
-// the E0 load shape — 500 services × 200 operations.
 var benchSizes = []int{1, 64, 512, 2048}
 
 func BenchmarkEncode(b *testing.B) {

@@ -293,7 +293,6 @@ func BenchmarkSummarize(b *testing.B) {
 	}
 }
 
-// withinRelativeError accepts a sketch estimate within the DDSketch bound α·v + ½ ns.
 func withinRelativeError(want, got time.Duration) bool {
 	bound := time.Duration(sketchAlpha*float64(want)) + time.Nanosecond
 	return got >= want-bound && got <= want+bound

@@ -16,11 +16,11 @@ type translation struct {
 	layer error
 }
 
-type detachedCause struct {
+type detachedError struct {
 	text string
 }
 
-func (d detachedCause) Error() string {
+func (d detachedError) Error() string {
 	return d.text
 }
 
@@ -63,6 +63,9 @@ func translate(err error) error {
 	if found := slices.IndexFunc(translations(), func(t translation) bool { return errors.Is(err, t.cause) }); found >= 0 {
 		return errors.Join(translations()[found].layer, err)
 	}
+	if stopCaused(err) {
+		return unavailable(err)
+	}
 	if slices.ContainsFunc(passedThrough(), func(own error) bool { return errors.Is(err, own) }) {
 		return err
 	}
@@ -72,7 +75,7 @@ func translate(err error) error {
 func unavailable(err error) error {
 	timedOut := errors.Is(err, nats.ErrTimeout) || errors.Is(err, context.DeadlineExceeded)
 	if errors.Is(err, io.EOF) {
-		err = detachedCause{
+		err = detachedError{
 			text: err.Error(),
 		}
 	}

@@ -37,8 +37,6 @@ func admissionWeight() int64 {
 	return graphservice.ResponseWeight(admissionNodes, 0)
 }
 
-// gatedQuery keeps the first admitted request open after its response is written, as a slow write
-// would, until the test opens the gate; every later request passes at once.
 type gatedQuery struct {
 	entered chan struct{}
 	gate    chan struct{}
@@ -110,8 +108,6 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }
 
-// TestAResponseLargerThanTheWholeBudgetIsNotRetryable: no wait frees room for it, so a retry hint
-// would make clients retry forever; the startup validator keeps it from happening at the limits.
 func TestAResponseLargerThanTheWholeBudgetIsNotRetryable(t *testing.T) {
 	err := call(t.Context(), admittedServer(t, &gatedQuery{}, admissionWeight()-1))
 	if codeOf(err) != connect.CodeFailedPrecondition || hasRetryInfo(err) {
@@ -128,8 +124,6 @@ func TestEveryResponseReleasesItsWeight(t *testing.T) {
 	}
 }
 
-// TestAHeldReservationTurnsAwayTheNextResponse: one response at a time fits; the next one is
-// refused while the first is still being written, and admitted once it is done.
 func TestAHeldReservationTurnsAwayTheNextResponse(t *testing.T) {
 	query := &gatedQuery{entered: make(chan struct{}), gate: make(chan struct{})}
 	var opened sync.Once

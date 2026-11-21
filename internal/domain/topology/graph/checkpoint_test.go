@@ -31,8 +31,6 @@ func randomService(rng *rand.Rand) resource.ServiceRef {
 	return telemetrytest.Service(fmt.Sprintf("svc-%d", rng.IntN(servicePool)))
 }
 
-// randomChange touches every part of Apply: new services past the node limit, calls past the edge
-// limit, served and unanswered spans of known and unknown services.
 func randomChange(rng *rand.Rand, at time.Time) graph.Change {
 	change := graph.Change{ReceivedAt: at}
 	for range rng.IntN(4) {
@@ -103,8 +101,6 @@ func restoreGraph(limits graph.Limits, data []byte) (*graph.Graph, error) {
 	return restored, r.Finish()
 }
 
-// TestARestoredGraphContinuesLikeTheOriginal: nodes and edges keep their handles and counters and the
-// view its revision, so the same changes give the same handles, views and overflow counts.
 func TestARestoredGraphContinuesLikeTheOriginal(t *testing.T) {
 	rng := rand.New(rand.NewPCG(20261113, 1))
 	for scenario := range restoreScenarios {

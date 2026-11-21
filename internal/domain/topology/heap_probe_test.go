@@ -66,8 +66,6 @@ const (
 	snapshotProbeFanOut   = 5
 )
 
-// TestSnapshotHeapIsTheViewModel: a snapshot holds one copy of every node and edge with its
-// summaries and nothing more; the traffic summaries are read in place.
 func TestSnapshotHeapIsTheViewModel(t *testing.T) {
 	limits := topologytest.Limits()
 	limits.MaxNodes, limits.MaxEdges = snapshotProbeServices, snapshotProbeServices*snapshotProbeFanOut

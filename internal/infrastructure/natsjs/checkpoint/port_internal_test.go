@@ -19,7 +19,7 @@ const writeLeaseChecks = 2
 
 func TestAnEmptyStakeRacedByAnotherCreateIsAMovedPointer(t *testing.T) {
 	w := startWorld(t)
-	if _, _, err := w.store.Latest(t.Context(), testPartition); !errors.Is(err, processing.ErrNoCheckpoint) {
+	if err := latestErr(w.store.Latest(t.Context(), testPartition)); !errors.Is(err, processing.ErrNoCheckpoint) {
 		t.Fatalf("Latest: %v", err)
 	}
 	var raced atomic.Bool
@@ -90,6 +90,7 @@ func TestLatestTellsAFirstStartFromLostState(t *testing.T) {
 			tt.arrange(t, w)
 
 			_, reader, err := w.store.Latest(t.Context(), testPartition)
+			closeOnCleanup(t, reader)
 
 			if !errors.Is(err, tt.wantErr) || reader != nil {
 				t.Fatalf("Latest: err = %v, reader %v; want %v", err, reader, tt.wantErr)

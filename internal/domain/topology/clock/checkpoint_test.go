@@ -28,8 +28,6 @@ func restoreClock(write func(w *checkpoint.Writer)) (clock.Monotonic, error) {
 	return restored, r.Finish()
 }
 
-// TestARestoredClockKeepsItsEpochAndNeverGoesBack: a reading from before the restore still keeps the
-// latest moment, exactly as in the clock that never stopped.
 func TestARestoredClockKeepsItsEpochAndNeverGoesBack(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -66,7 +66,6 @@ func closeConn(t *testing.T, conn *natsjs.Conn) {
 	}
 }
 
-// rawConn is the test's own connection, beside the code under test.
 func rawConn(t *testing.T, cluster *natsjstest.Cluster) *nats.Conn {
 	t.Helper()
 	nc, err := nats.Connect(cluster.URLs()[0])
@@ -112,7 +111,6 @@ func publishOnce(t *testing.T, publisher *natsjs.Publisher, partition uint16, da
 	return publisher.Publish(ctx, partition, data, msgID)
 }
 
-// eventually waits for what another process or the client library does on its own schedule.
 func eventually(t *testing.T, what string, condition func() bool) {
 	t.Helper()
 	ticker := time.NewTicker(eventuallyPoll)

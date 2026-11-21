@@ -23,8 +23,6 @@ const (
 	retainedPause    = 10 * time.Millisecond
 )
 
-// TestApplyDoesNotKeepAReleasedBatchAlive: once the windows of a batch have closed, nothing the
-// builder reuses still points at the batch's operation names, so the journal's release frees them.
 func TestApplyDoesNotKeepAReleasedBatchAlive(t *testing.T) {
 	builder := newTestBuilder(t, builderLimits())
 	start := telemetrytest.Epoch()

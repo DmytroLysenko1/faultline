@@ -114,8 +114,6 @@ func TestPendingQueueKeepsArrivalOrderAcrossRemovalsAndReuse(t *testing.T) {
 	}
 }
 
-// TestPendingQueueReusesItsSlotsWithoutAllocating: churn within the capacity only reuses freed
-// slots, so the queue never grows past the slots it was given up front.
 func TestPendingQueueReusesItsSlotsWithoutAllocating(t *testing.T) {
 	queue := newPendingQueue(queueCapacity)
 	churn := []queueStep{

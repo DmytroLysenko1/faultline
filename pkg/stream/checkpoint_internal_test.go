@@ -71,9 +71,6 @@ func firstLiveBucket(t *testing.T, w *Windows[int, uint64]) *bucket {
 	return nil
 }
 
-// TestAWindowOffTheHorizonIsRefused: a window that is in its slot but a whole ring away from the
-// horizon (review: Locate then panics with a ring collision), a wrong final mark or live windows
-// without a known mark are all refused at restore, never left for Locate to find.
 func TestAWindowOffTheHorizonIsRefused(t *testing.T) {
 	tests := []struct {
 		name   string

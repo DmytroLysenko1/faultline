@@ -45,8 +45,6 @@ type liveJournal struct {
 	journal  *journal.Journal
 }
 
-// startJournal is the ingester's wiring on an in-process R3 cluster: Dial, EnsureTopology, the
-// partition publisher, the journal — and on cleanup the journal closes before its connection.
 func startJournal(tb testing.TB, topology natsjs.Topology) *liveJournal {
 	tb.Helper()
 	cluster := natsjstest.Start(tb, threeNodes)
@@ -114,8 +112,6 @@ func (l *liveJournal) stored(t *testing.T, partition uint16) uint64 {
 	return stream.CachedInfo().State.Msgs
 }
 
-// TestARequestIsStoredOncePerPartitionAndItsRetryIsADuplicate: the whole path on three replicas —
-// OK only after every PubAck, and a client retry adds nothing.
 func TestARequestIsStoredOncePerPartitionAndItsRetryIsADuplicate(t *testing.T) {
 	live := startJournal(t, liveTopology(fourPartitions))
 	spans := spansAcross(requestSpans, 1)
@@ -137,9 +133,6 @@ func TestARequestIsStoredOncePerPartitionAndItsRetryIsADuplicate(t *testing.T) {
 	}
 }
 
-// TestAFullPartitionFailsTheRequestAndTheRetryDoesNotDuplicateTheRest (FMEA 12): one partition is
-// full, the other stores its record; the request is overloaded, and the client's retry of the whole
-// request stores nothing twice.
 func TestAFullPartitionFailsTheRequestAndTheRetryDoesNotDuplicateTheRest(t *testing.T) {
 	live := startJournal(t, liveTopology(twoPartitions))
 	live.fill(t, 1)
@@ -161,7 +154,6 @@ func TestAFullPartitionFailsTheRequestAndTheRetryDoesNotDuplicateTheRest(t *test
 	}
 }
 
-// outcomes are the counters a live test can predict; latencies depend on the machine.
 type outcomes struct {
 	Published  uint64
 	Duplicates uint64
@@ -173,8 +165,6 @@ func outcomesOf(journalOf *journal.Journal) outcomes {
 	return outcomes{Published: stats.Published, Duplicates: stats.Duplicates, Full: stats.Failed[natsjs.ReasonStreamFull]}
 }
 
-// fill shrinks one partition's stream to a single message's worth and fills it with foreign bytes,
-// halving them on every refusal, so not even a byte is left for a record.
 func (l *liveJournal) fill(t *testing.T, partition uint16) {
 	t.Helper()
 	js := l.rawJetStream(t)
@@ -203,8 +193,6 @@ func (l *liveJournal) fill(t *testing.T, partition uint16) {
 	}
 }
 
-// TestTwoOfThreeReplicasDownIsUnavailableNotOK (FR-ING-003): without a quorum the request is
-// retryable, answered within the publish budget, and never acknowledged.
 func TestTwoOfThreeReplicasDownIsUnavailableNotOK(t *testing.T) {
 	live := startJournal(t, liveTopology(twoPartitions))
 	connected := live.conn.Publish.NATS.ConnectedServerName()

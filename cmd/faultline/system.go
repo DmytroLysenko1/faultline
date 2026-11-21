@@ -139,7 +139,8 @@ func assemble(cfg *Config, logger *slog.Logger, seams wiring) (*system, error) {
 	server, counters := provideIngest(stored.journal, cfg.RouteRules, logger)
 	pipeline, err := providePipeline(seams.feedOf(stored), stored, cfg)
 	if err != nil {
-		return nil, err
+		stored.journal.Close()
+		return nil, errors.Join(err, api.Close())
 	}
 	return &system{
 		journal:   stored.journal,
@@ -209,8 +210,6 @@ func providePipeline(feed spanFeed, stored storage, cfg *Config) (*processing.Pi
 	return pipeline, nil
 }
 
-// pipelineCadence builds the Fire cadence from the same period traffic sizes its early panes by,
-// and keeps the held batches small enough for the journal to take the largest request.
 func pipelineCadence(cfg *Config) processing.Cadence {
 	return processing.Cadence{
 		FirePeriod:   cfg.Topology.EarlyFirePeriod,

@@ -222,9 +222,6 @@ func TestAKilledHolderIsTakenOverOnceItsKeyExpiresAndItsLateReleaseLeavesTheNewK
 	}
 }
 
-// TestARenewedKeyExpiresTheTTLAfterItsLastRenewal: renewals keep the key past the TTL of its creation;
-// once they stop reaching NATS the key expires a TTL after the last one, the old holder's lease is
-// lost, and another processor takes the partition.
 func TestARenewedKeyExpiresTheTTLAfterItsLastRenewal(t *testing.T) {
 	cluster := natsjstest.Start(t, singleNode)
 	cut := dial(t, cluster)

@@ -53,9 +53,6 @@ func TestSteadyStateBatchesDoNotAllocate(t *testing.T) {
 	}
 }
 
-// TestFirstBatchWithLateEventsInEveryFinalWindowDoesNotAllocate takes the fewest mallocs of a few attempts: the
-// count is the whole process's, so a GC cycle or a runtime goroutine now and then adds one that is not the batch's,
-// while an allocation of the batch itself shows in every attempt.
 func TestFirstBatchWithLateEventsInEveryFinalWindowDoesNotAllocate(t *testing.T) {
 	allocs := firstBatchMallocs(t)
 	for range measureAttempts - 1 {
@@ -91,7 +88,6 @@ func firstBatchMallocs(t *testing.T) uint64 {
 	})
 }
 
-// mallocsDuring first finishes the GC cycle the setup may have started, so it does not end inside run.
 func mallocsDuring(run func()) uint64 {
 	var before, after runtime.MemStats
 	runtime.GC()

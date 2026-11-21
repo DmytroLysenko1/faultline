@@ -166,7 +166,7 @@ func TestAPointerThatKeepsMovingDuringTheLookupIsAMovedPointerNotCorruption(t *t
 		return natsjstest.Forward()
 	})
 
-	_, _, err := w.store.Latest(t.Context(), testPartition)
+	err := latestErr(w.store.Latest(t.Context(), testPartition))
 
 	if !errors.Is(err, processing.ErrCheckpointMoved) || errors.Is(err, processing.ErrCheckpointUnusable) {
 		t.Fatalf("Latest: err = %v after %d lookups, want %v and not corruption", err, lookups.Load(),
@@ -187,7 +187,7 @@ func TestAnObjectThatNeverMatchesItsPointerIsCorruptAfterThreeReads(t *testing.T
 		return natsjstest.Forward()
 	})
 
-	_, _, err := w.store.Latest(t.Context(), testPartition)
+	err := latestErr(w.store.Latest(t.Context(), testPartition))
 
 	if !errors.Is(err, processing.ErrCheckpointUnusable) || lookups.Load() != pointerRereads {
 		t.Fatalf("Latest: err = %v after %d lookups, want %v after %d", err, lookups.Load(),
@@ -248,7 +248,7 @@ func TestDiscardAfterAPassingFailureOfLatestIsRefused(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), failedLatestWithin)
 	defer cancel()
-	if _, _, err := w.store.Latest(ctx, testPartition); !errors.Is(err, processing.ErrCheckpointUnavailable) {
+	if err := latestErr(w.store.Latest(ctx, testPartition)); !errors.Is(err, processing.ErrCheckpointUnavailable) {
 		t.Fatalf("Latest: %v, want %v", err, processing.ErrCheckpointUnavailable)
 	}
 	w.proxy.Intercept(nil)

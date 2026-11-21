@@ -44,9 +44,6 @@ func restoreOne(data []byte) error {
 	return r.Finish()
 }
 
-// TestASketchCheckpointCannotPointPastTheArena: every value a sketch carries is checked against
-// what the arena can hold (review: a bin past the mapping table passed restore and panicked in
-// Percentiles on the next emit).
 func TestASketchCheckpointCannotPointPastTheArena(t *testing.T) {
 	tests := []struct {
 		name   string

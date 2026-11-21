@@ -14,8 +14,6 @@ func apiError(code jetstream.ErrorCode, description string) error {
 	return fmt.Errorf("nats: %w", &jetstream.APIError{Code: 503, ErrorCode: code, Description: description})
 }
 
-// TestEveryFailureHasOneReasonAndKeepsItsCause: classify never returns nil and names exactly one reason,
-// which the journal turns into the answer of the ingest port.
 func TestEveryFailureHasOneReasonAndKeepsItsCause(t *testing.T) {
 	tests := []struct {
 		name       string

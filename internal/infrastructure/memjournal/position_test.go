@@ -37,8 +37,6 @@ func positionsOf(deliveries []processing.Delivery) []positioned {
 	return got
 }
 
-// TestPositionsCountEveryRecordInJournalOrder: heartbeats are records too, so a checkpoint position
-// names one place in the journal whatever mix of batches and heartbeats led to it.
 func TestPositionsCountEveryRecordInJournalOrder(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		journal := idleJournal(t, roomyBatches)
@@ -63,8 +61,6 @@ func TestPositionsCountEveryRecordInJournalOrder(t *testing.T) {
 	})
 }
 
-// TestConcurrentAppendsGetConsecutivePositionsInReceivedAtOrder: writers race, yet positions are
-// 1..n without gaps or repeats, and a later position never has an earlier ReceivedAt.
 func TestConcurrentAppendsGetConsecutivePositionsInReceivedAtOrder(t *testing.T) {
 	journal := newJournal(t, memjournal.Limits{MaxBytes: roomyBytes, MaxBatches: concurrentWriters * appendsEach})
 	batches := make([][]span.Span, 0, concurrentWriters*appendsEach)

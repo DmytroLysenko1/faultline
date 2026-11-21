@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# Compares the installed demo tools with hack/versions.env (design step 1, slice 7, D5).
-# A mismatch is a warning, not a failure: a developer's newer kubectl should not block the demo,
-# but the difference stays visible next to any demo failure.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -13,16 +13,16 @@ import (
 
 var errPublishTimeout = errors.New("publish ran out of its budget")
 
-type ingestFailure struct {
+type ingestError struct {
 	meaning error
 	cause   error
 }
 
-func (f *ingestFailure) Error() string {
+func (f *ingestError) Error() string {
 	return f.cause.Error()
 }
 
-func (f *ingestFailure) Unwrap() []error {
+func (f *ingestError) Unwrap() []error {
 	return []error{f.meaning, f.cause}
 }
 
@@ -31,7 +31,7 @@ func toIngest(err error) error {
 	if errors.Is(err, meaning) || (errors.Is(meaning, ingest.ErrUnavailable) && hasFinalMeaning(err)) {
 		return err
 	}
-	return &ingestFailure{
+	return &ingestError{
 		meaning: meaning,
 		cause:   err,
 	}
@@ -104,7 +104,7 @@ func withoutDeadline(failure error) error {
 	if !errors.Is(failure, context.DeadlineExceeded) {
 		return failure
 	}
-	return &ingestFailure{
+	return &ingestError{
 		meaning: ingest.ErrUnavailable,
 		cause:   fmt.Errorf("%w: %s", errPublishTimeout, failure.Error()),
 	}

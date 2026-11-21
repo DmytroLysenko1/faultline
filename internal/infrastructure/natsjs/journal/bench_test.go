@@ -16,8 +16,6 @@ const (
 	largeRequest     = 2048
 )
 
-// BenchmarkAppend is a whole request on three replicas, the input to the E0.4/H8 re-measure: every
-// iteration gets new span ids, so each record is new to the dedup window and really stored.
 func BenchmarkAppend(b *testing.B) {
 	for _, partitions := range []int{onePartition, eightPartitions} {
 		for _, spans := range []int{smallRequest, largeRequest} {

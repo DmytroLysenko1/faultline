@@ -34,9 +34,6 @@ func longestName(n int) string {
 	return prefix + strings.Repeat("x", operation.MaxNameBytes-len(prefix))
 }
 
-// fullTraffic keeps one View copy on top of the model, as a snapshot would. It fills every
-// subject, every operation series with the longest names and the overflow engine, and fires
-// early so every subject has a live summary.
 func fullTraffic(t *testing.T, limits *traffic.Limits) any {
 	t.Helper()
 	h := newHarness(t, limits)

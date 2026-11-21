@@ -65,8 +65,6 @@ const (
 	redLatency = 3 * time.Millisecond
 )
 
-// withRED fills the summaries the way a running server does: a live window with latency samples,
-// a final one without them (no percentiles), an edge final after one late pane.
 func withRED(built *faultlinev1.Graph) *faultlinev1.Graph {
 	window := built.GetGeneratedAt().AsTime().Truncate(redWindow)
 	stats := func(

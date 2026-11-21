@@ -48,7 +48,6 @@ func (c *fakeClock) Now() time.Time {
 	return c.now
 }
 
-// answer is what one Receive returns after waiting `waited` on the fake clock.
 type answer struct {
 	deliveries []*processingtest.Delivery
 	waited     time.Duration
@@ -172,7 +171,6 @@ func (s *scenario) pair(t *testing.T) *processingtest.Delivery {
 	return created
 }
 
-// timedPair ends at the start of the run plus at, so traffic gives it a window and Fire a live pane.
 func (s *scenario) timedPair(t *testing.T, at time.Duration) *processingtest.Delivery {
 	t.Helper()
 	created := processingtest.NewDelivery(processingtest.TimedPairs(t, s.nextTrace, 1, telemetrytest.Epoch().Add(at)))
@@ -317,8 +315,6 @@ func TestReceiveWaitsAtMostUntilTheNextFire(t *testing.T) {
 	}
 }
 
-// TestPublishesOnlyOnStructureFireAndDrain: calls on a known edge wait for the next Fire, which
-// shows them with their early panes; the drain publishes what is still held.
 func TestPublishesOnlyOnStructureFireAndDrain(t *testing.T) {
 	var batches scenario
 	tick := firePeriod / 4
@@ -346,8 +342,6 @@ func TestPublishesOnlyOnStructureFireAndDrain(t *testing.T) {
 	}
 }
 
-// TestAHeartbeatClosesWindowsWithoutItsOwnPublish: a pulse is a journal record, not a reason to
-// publish; the windows it closes reach readers with the next Fire, within one period.
 func TestAHeartbeatClosesWindowsWithoutItsOwnPublish(t *testing.T) {
 	var batches scenario
 	tick := firePeriod / 4
@@ -650,8 +644,6 @@ func corrupt(snapshot *topology.Snapshot) {
 	}
 }
 
-// TestTimingsLeaveOutTheWaitAndKeepTheDrainPublish: the time Receive waits is idle, not work; the
-// publish of the drain is the last work of the run and lands in the last take.
 func TestTimingsLeaveOutTheWaitAndKeepTheDrainPublish(t *testing.T) {
 	var batches scenario
 	clock := &fakeClock{now: telemetrytest.Epoch()}
@@ -727,8 +719,6 @@ func (f *takingFeed) Receive(context.Context, int, time.Duration) ([]processing.
 	return asDeliveries(next.deliveries), nil
 }
 
-// TestEveryIterationTimesOnlyTheWorkItDid: an iteration that fires and publishes times all four
-// parts; the next one, which only applies, times no Fire and no Publish of its own.
 func TestEveryIterationTimesOnlyTheWorkItDid(t *testing.T) {
 	var batches scenario
 	clock := &tickingClock{now: telemetrytest.Epoch()}
@@ -761,3 +751,58 @@ func TestEveryIterationTimesOnlyTheWorkItDid(t *testing.T) {
 		t.Errorf("timed parts per iteration (-want +got):\n%s", diff)
 	}
 }
+
+type timedSink struct {
+	store    *processingtest.CheckpointStore
+	clock    *fakeClock
+	takes    time.Duration
+	periodic int
+	onStop   int
+}
+
+func (s *timedSink) Begin(ctx context.Context, meta *processing.CheckpointMeta) (processing.CheckpointWriter, error) {
+	s.periodic++
+	return s.store.Begin(ctx, meta)
+}
+
+func (s *timedSink) BeginOnStop(
+	ctx context.Context,
+	meta *processing.CheckpointMeta,
+) (processing.CheckpointWriter, error) {
+	s.onStop++
+	s.clock.now = s.clock.now.Add(s.takes)
+	return s.store.BeginOnStop(ctx, meta)
+}
+
+func TestTheDrainCheckpointGoesThroughTheStopBeginAndIsTimed(t *testing.T) {
+	var batches scenario
+	clock := &fakeClock{now: telemetrytest.Epoch()}
+	feed := &scriptedFeed{
+		clock:   clock,
+		answers: []answer{waitedFor(idleWait, batches.pair(t))},
+	}
+	sink := &timedSink{store: processingtest.NewCheckpointStore(t, nil), clock: clock, takes: drainCheckpoint}
+	withCheckpoints := cadence(roomyHeld)
+	withCheckpoints.CheckpointInterval = time.Hour
+	pipeline, err := processing.NewPipeline(feed, processingtest.NewBuilder(t), &recordingStore{clock: clock}, sink,
+		clock, withCheckpoints)
+	if err != nil {
+		t.Fatalf("NewPipeline: %v", err)
+	}
+	if err := pipeline.Run(t.Context()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got := struct {
+		Periodic, OnStop int
+		Timings          processing.Timings
+	}{sink.periodic, sink.onStop, pipeline.TakeTimings()}
+	want := struct {
+		Periodic, OnStop int
+		Timings          processing.Timings
+	}{0, 1, processing.Timings{Iteration: drainCheckpoint, Checkpoint: drainCheckpoint}}
+	if diff := gocmp.Diff(want, got); diff != "" {
+		t.Errorf("drain checkpoint (-want +got):\n%s", diff)
+	}
+}
+
+const drainCheckpoint = 70 * time.Millisecond

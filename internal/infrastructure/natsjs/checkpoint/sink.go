@@ -3,7 +3,6 @@ package checkpoint
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -15,7 +14,7 @@ import (
 const (
 	defaultStop = 6 * time.Second
 	stopMargin  = 500 * time.Millisecond
-	spoolSlots  = 1
+	spoolSlots  = 2
 )
 
 type retention interface {
@@ -23,25 +22,40 @@ type retention interface {
 	Commit(ctx context.Context, through processing.Position) error
 }
 
+type spoolKind uint8
+
+const (
+	periodicSpool spoolKind = iota
+	stopSpool
+)
+
 type Sink struct {
 	up *uploader
 }
 
 type uploader struct {
-	store        *Store
-	feed         retention
-	spools       chan spool
-	stopping     chan struct{}
-	exited       chan struct{}
-	cancel       context.CancelFunc
-	cancelUpload context.CancelFunc
-	busy         bool
-	accepting    bool
-	stopAt       time.Time
-	stopTimer    *time.Timer
-	landed       []*commitRecord
-	pending      []pendingObject
-	feedClosed   bool
+	store          *Store
+	feed           retention
+	spools         chan spool
+	stopping       chan struct{}
+	exited         chan struct{}
+	cancels        [edges]func()
+	timers         [edges]*time.Timer
+	slots          int
+	finalTaken     bool
+	finalHandedOff bool
+	accepting      bool
+	stopAt         time.Time
+	landed         []*commitRecord
+	pending        []pendingObject
+	feedClosed     bool
+	finalCommitted bool
+	queued         *spool
+	phase          uploadPhase
+	left           int64
+	size           int64
+	measured       rates
+	progress       progress
 }
 
 func (s *Store) Start(ctx context.Context, feed retention) (*Sink, error) {
@@ -61,17 +75,31 @@ func (s *Store) start(ctx context.Context, feed retention) (*uploader, error) {
 		return nil, err
 	}
 	s.state = stateStarted
-	root, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	upload, cancelUpload := context.WithCancel(root)
-	s.up = newUploader(s, feed, cancel, cancelUpload)
-	go s.up.run(root, upload)
+	upload, control, cancels := stopEdges(ctx)
+	s.up = newUploader(s, feed, cancels)
+	go s.up.run(upload, control)
 	return s.up, nil
+}
+
+func stopEdges(ctx context.Context) (context.Context, context.Context, [edges]func()) {
+	root, cancelRoot := context.WithCancel(context.WithoutCancel(ctx))
+	upload, cancelUpload := context.WithCancelCause(root)
+	control, cancelControl := context.WithCancelCause(root)
+	return upload, control, [edges]func(){
+		edgeUpload: func() {
+			cancelUpload(errStopUpload)
+		},
+		edgeControl: func() {
+			cancelControl(errStopControl)
+		},
+		edgeRoot: cancelRoot,
+	}
 }
 
 func (s *Store) startable() error {
 	switch s.state {
 	case stateStaked:
-		return nil
+		return s.notStaking()
 	case stateClosed:
 		return errStoreClosed
 	default:
@@ -79,40 +107,67 @@ func (s *Store) startable() error {
 	}
 }
 
-func newUploader(store *Store, feed retention, cancel, cancelUpload context.CancelFunc) *uploader {
+func newUploader(store *Store, feed retention, cancels [edges]func()) *uploader {
 	return &uploader{
-		store:        store,
-		feed:         feed,
-		spools:       make(chan spool, spoolSlots),
-		stopping:     make(chan struct{}),
-		exited:       make(chan struct{}),
-		cancel:       cancel,
-		cancelUpload: cancelUpload,
-		accepting:    true,
+		store:     store,
+		feed:      feed,
+		spools:    make(chan spool, spoolSlots),
+		stopping:  make(chan struct{}),
+		exited:    make(chan struct{}),
+		cancels:   cancels,
+		accepting: true,
 	}
 }
 
-func (s *Sink) Begin(_ context.Context, meta *processing.CheckpointMeta) (processing.CheckpointWriter, error) {
-	writer, err := s.up.begin(meta)
+func (s *Sink) Begin(ctx context.Context, meta *processing.CheckpointMeta) (processing.CheckpointWriter, error) {
+	return s.begin(ctx, meta, periodicSpool)
+}
+
+func (s *Sink) BeginOnStop(ctx context.Context, meta *processing.CheckpointMeta) (processing.CheckpointWriter, error) {
+	return s.begin(ctx, meta, stopSpool)
+}
+
+func (s *Sink) begin(
+	ctx context.Context,
+	meta *processing.CheckpointMeta,
+	kind spoolKind,
+) (processing.CheckpointWriter, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	writer, err := s.up.begin(meta, kind)
 	if err != nil {
 		return nil, translate(err)
 	}
 	return writer, nil
 }
 
-func (u *uploader) begin(meta *processing.CheckpointMeta) (*spoolWriter, error) {
-	if meta.Position.Partition != u.store.options.Partition {
-		return nil, fmt.Errorf("%w: store of partition %d got a checkpoint of %d", processing.ErrForeignCheckpoint,
-			u.store.options.Partition, meta.Position.Partition)
-	}
-	if err := u.reserve(); err != nil {
+func (u *uploader) begin(meta *processing.CheckpointMeta, kind spoolKind) (*spoolWriter, error) {
+	if err := u.ownPartition(meta); err != nil {
 		return nil, err
 	}
+	final, err := u.reserve(kind)
+	if err != nil {
+		return nil, err
+	}
+	return u.openSpool(meta, final)
+}
+
+func (u *uploader) ownPartition(meta *processing.CheckpointMeta) error {
+	if meta.Position.Partition == u.store.options.Partition {
+		return nil
+	}
+	return fmt.Errorf("%w: store of partition %d got a checkpoint of %d", processing.ErrForeignCheckpoint,
+		u.store.options.Partition, meta.Position.Partition)
+}
+
+func (u *uploader) openSpool(meta *processing.CheckpointMeta, final bool) (*spoolWriter, error) {
 	file, written, err := u.store.createSpool(u.completed(meta))
 	if err != nil {
 		u.free()
 		return nil, err
 	}
+	written.final = final
 	return &spoolWriter{
 		up:     u,
 		file:   file,
@@ -121,14 +176,28 @@ func (u *uploader) begin(meta *processing.CheckpointMeta) (*spoolWriter, error) 
 	}, nil
 }
 
-func (u *uploader) reserve() error {
+func (u *uploader) reserve(kind spoolKind) (bool, error) {
 	valid := u.store.lease.Valid()
 	u.store.mu.Lock()
 	defer u.store.mu.Unlock()
 	if !u.taking() {
-		return u.refusal()
+		return false, u.refusal()
 	}
-	if u.busy {
+	final := u.takesStopSlot(kind)
+	if err := u.slotRefusal(final, valid); err != nil {
+		return false, err
+	}
+	u.slots++
+	u.finalTaken = u.finalTaken || final
+	return final, nil
+}
+
+func (u *uploader) takesStopSlot(kind spoolKind) bool {
+	return kind == stopSpool && !u.finalTaken
+}
+
+func (u *uploader) slotRefusal(final, valid bool) error {
+	if u.slots >= slotLimit(final) {
 		u.store.stats.skip(skipBusy)
 		return fmt.Errorf("%w: the previous checkpoint is uploading", processing.ErrCheckpointBusy)
 	}
@@ -136,8 +205,14 @@ func (u *uploader) reserve() error {
 		u.store.stats.skip(skipLeaseSuspended)
 		return fmt.Errorf("%w: the partition lease is suspended", processing.ErrCheckpointBusy)
 	}
-	u.busy = true
 	return nil
+}
+
+func slotLimit(final bool) int {
+	if final {
+		return spoolSlots
+	}
+	return 1
 }
 
 func (u *uploader) taking() bool {
@@ -164,13 +239,21 @@ func (u *uploader) completed(meta *processing.CheckpointMeta) *processing.Checkp
 }
 
 func (u *uploader) handOff(written *spool) error {
+	if err := u.passOn(written); err != nil {
+		u.store.removeSpool(written.name)
+		return err
+	}
+	return nil
+}
+
+func (u *uploader) passOn(written *spool) error {
 	u.store.mu.Lock()
 	defer u.store.mu.Unlock()
 	if !u.taking() {
-		u.store.removeSpool(written.name)
-		u.busy = false
+		u.slots--
 		return u.refusal()
 	}
+	u.finalHandedOff = u.finalHandedOff || written.final
 	u.spools <- *written
 	return nil
 }
@@ -183,14 +266,7 @@ func (u *uploader) release(written *spool) {
 func (u *uploader) free() {
 	u.store.mu.Lock()
 	defer u.store.mu.Unlock()
-	u.busy = false
-}
-
-func (u *uploader) stop(deadline time.Time) {
-	u.stopAt = deadline
-	u.stopTimer = time.AfterFunc(time.Until(deadline), u.cancel)
-	close(u.stopping)
-	u.cancelUpload()
+	u.slots--
 }
 
 func (u *uploader) stopDeadline() (time.Time, bool) {
@@ -199,32 +275,17 @@ func (u *uploader) stopDeadline() (time.Time, bool) {
 	return u.stopAt, !u.stopAt.IsZero()
 }
 
-func (u *uploader) run(root, upload context.Context) {
+func (u *uploader) run(upload, control context.Context) {
 	defer u.exit()
-	for {
-		if !u.next(root, upload) {
-			u.leave(root)
-			return
-		}
+	for u.next(upload, control) {
 	}
-}
-
-func (u *uploader) leave(root context.Context) {
-	if !u.stopRequested() || u.ended() {
-		return
-	}
-	err := u.resolve(root)
-	u.publishCommits()
-	if outcome, known := errors.AsType[*cycleError](err); known && outcome.kind == kindTerminal {
-		outcome.apply(u)
-		return
-	}
-	u.store.stats.leftAtStop.Add(uint64(len(u.pending)))
+	u.leave(upload, control)
 }
 
 func (u *uploader) publishCommits() {
-	for _, record := range u.landed {
-		u.store.stats.commit(record)
+	for _, each := range u.landed {
+		u.store.stats.commit(each)
+		u.finalCommitted = u.finalCommitted || each.final
 	}
 	u.landed = nil
 }
@@ -235,7 +296,7 @@ func (u *uploader) ended() bool {
 	return u.store.failed != nil
 }
 
-func (u *uploader) next(root, upload context.Context) bool {
+func (u *uploader) next(upload, control context.Context) bool {
 	if u.stopRequested() {
 		return false
 	}
@@ -243,12 +304,21 @@ func (u *uploader) next(root, upload context.Context) bool {
 	case <-u.stopping:
 		return false
 	case next := <-u.spools:
-		return !u.handle(root, upload, new(next))
+		return u.taken(upload, control, new(next))
 	}
 }
 
-func (u *uploader) handle(root, upload context.Context, next *spool) bool {
-	err := u.cycle(root, upload, next)
+func (u *uploader) taken(upload, control context.Context, next *spool) bool {
+	if u.stopRequested() {
+		u.queueAtStop(next)
+		return false
+	}
+	return !u.handle(upload, control, next)
+}
+
+func (u *uploader) handle(upload, control context.Context, next *spool) bool {
+	err := u.cycle(upload, control, next)
+	u.phase = phaseIdle
 	u.release(next)
 	u.publishCommits()
 	ended := u.record(err)
@@ -266,25 +336,44 @@ func (u *uploader) stopRequested() bool {
 }
 
 func (u *uploader) exit() {
+	terminal, left := u.closeIntake()
+	for i := range left {
+		u.notStarted(&left[i])
+	}
+	if u.finalUnsettled() {
+		u.store.stats.skip(skipFinalSkipped)
+	}
+	u.cancelThrough(edgeRoot)
+	u.signalExit(terminal)
+}
+
+func (u *uploader) closeIntake() (bool, []spool) {
 	u.store.mu.Lock()
+	defer u.store.mu.Unlock()
 	u.accepting = false
-	queued := u.drain()
-	terminal := u.store.failed != nil
-	if u.stopTimer != nil {
-		u.stopTimer.Stop()
+	u.stopTimers()
+	left := u.queuedSpools()
+	if u.queued != nil {
+		left = append(left, *u.queued)
 	}
-	u.store.mu.Unlock()
-	for _, left := range queued {
-		u.store.removeSpool(left.name)
-	}
-	u.cancel()
+	return u.store.failed != nil, left
+}
+
+func (u *uploader) signalExit(terminal bool) {
 	if terminal {
 		close(u.store.done)
 	}
 	close(u.exited)
 }
 
-func (u *uploader) drain() []spool {
+func (u *uploader) notStarted(left *spool) {
+	u.release(left)
+	if !left.final {
+		u.store.stats.skip(skipNotStarted)
+	}
+}
+
+func (u *uploader) queuedSpools() []spool {
 	var queued []spool
 	for {
 		select {

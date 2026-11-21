@@ -22,16 +22,12 @@ const (
 	routeScheme  = "nats-route"
 )
 
-// Cluster is NATS JetStream inside the test process: one node, or a Raft cluster whose nodes can be
-// stopped and restarted with their stores, so replica loss and leader changes are real.
 type Cluster struct {
 	tb      testing.TB
 	Servers []*server.Server
 	options []*server.Options
 }
 
-// Start registers the servers' shutdown right after their store, so cleanup stops every started node
-// before the store is removed, even when a later node fails to start.
 func Start(tb testing.TB, nodes int, configure ...func(*server.Options)) *Cluster {
 	tb.Helper()
 	cluster := &Cluster{tb: tb}
@@ -72,8 +68,6 @@ func nodeOptions(store string, node int, ports []int) *server.Options {
 	return options
 }
 
-// clusterPorts reserves a route port per node up front: a clustered node only listens for routes once
-// JetStream is up, and JetStream waits for its peers, so the ports must be known before any starts.
 func clusterPorts(tb testing.TB, nodes int) []int {
 	tb.Helper()
 	ports := make([]int, nodes)
@@ -116,21 +110,17 @@ func (c *Cluster) Stop(node int) {
 	c.Servers[node].WaitForShutdown()
 }
 
-// Restart brings a stopped node back with its store and routes it to the nodes still running.
 func (c *Cluster) Restart(node int) {
 	c.tb.Helper()
 	c.run(node)
 	c.awaitReady(node)
 }
 
-// AwaitLeader waits until a running node leads the JetStream metadata group and sees every running
-// node as a peer — before that a replicated stream has nowhere to be placed.
 func (c *Cluster) AwaitLeader() {
 	c.tb.Helper()
 	c.await("a JetStream metadata leader", c.hasLeader)
 }
 
-// await polls what the servers do on their own schedule, until readyTimeout.
 func (c *Cluster) await(what string, condition func() bool) {
 	c.tb.Helper()
 	deadline := time.Now().Add(readyTimeout)
@@ -182,8 +172,6 @@ func (c *Cluster) running() int {
 	return count
 }
 
-// stopAll shuts down every server ever created, running or not: Shutdown is safe on a server that
-// never finished starting, and a skipped one would outlive the test and write into a removed store.
 func (c *Cluster) stopAll() {
 	for _, created := range c.Servers {
 		if created != nil {
@@ -197,7 +185,6 @@ func up(running *server.Server) bool {
 	return running != nil && running.Running()
 }
 
-// Held is a topology lease that is always held, for tests that are not about the lease.
 type Held struct{}
 
 func (Held) Valid() bool {

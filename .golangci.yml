@@ -7,29 +7,24 @@ run:
 linters:
   default: none
   enable:
-    # --- context correctness (the doctrine's "context — закон", deterministic) ---
-    - contextcheck    # a function must propagate the parent ctx, not break the chain
-    - containedctx    # no context.Context stored inside a struct field
-    - fatcontext      # no context created/derived inside a loop body (leak + perf)
-    - noctx           # no HTTP/SQL call without a ctx-carrying variant
-    # govet below includes `lostcancel`: WithCancel/WithTimeout whose cancel() is never called
+    - contextcheck
+    - containedctx
+    - fatcontext
+    - noctx
 
-    # --- resource & goroutine leaks ---
-    - bodyclose       # http.Response.Body always closed
-    - rowserrcheck    # sql.Rows.Err() checked
-    - sqlclosecheck   # sql.Rows/Stmt closed
-    - makezero        # append to a make([]T, n) slice (silent zero-value bug)
-    # goroutine leaks are NOT a linter — enforce with goleak.VerifyTestMain in tests
-    # (see CLAUDE.md TESTING). No static linter catches a leaked goroutine.
+    - bodyclose
+    - rowserrcheck
+    - sqlclosecheck
+    - makezero
 
-    # --- error discipline (stdlib errors, %w, sentinel) ---
-    - errcheck        # no ignored errors
-    - errorlint       # %w wrapping, errors.Is/As over == / type assertion
-    - nilerr          # `if err != nil { return nil }` — swallowed error
-    - err113          # dynamic errors via errors.New at call site (allow-list %w wraps)
+    - errcheck
+    - errorlint
+    - nilerr
+    - err113
+    - errname
+    - wrapcheck
 
-    # --- correctness / dead code / perf ---
-    - govet           # includes lostcancel, copylocks, loopclosure, printf, ...
+    - govet
     - staticcheck
     - ineffassign
     - unused
@@ -38,23 +33,51 @@ linters:
     - prealloc
     - unconvert
     - copyloopvar
-    - exhaustive      # a switch over an enum names every value or has a default
+    - exhaustive
     - gocritic
 
-    # --- function budgets: at most 30 lines, complexity at most 5, lines at most 128 characters ---
     - funlen
     - gocyclo
     - gocognit
     - lll
 
-    # --- security & hygiene ---
     - gosec
-    - forbidigo       # ban fmt.Print*/log.* — structured logging only
-    - depguard        # ban archived/forbidden deps
+    - forbidigo
+    - depguard
     - misspell
-    - mnd             # no magic numbers in production code
+    - mnd
 
   settings:
+    wrapcheck:
+      ignore-package-globs:
+        - github.com/DmytroLysenko1/faultline/*
+      ignore-sigs:
+        - .Errorf(
+        - errors.New(
+        - errors.Unwrap(
+        - errors.Join(
+        - .Wrap(
+        - .Wrapf(
+        - .WithMessage(
+        - .WithMessagef(
+        - .WithStack(
+        - connect.NewError(
+        - .Err() error
+        - (io.Writer).Write(
+        - (*bytes.Buffer).Write(
+        - (*bufio.Writer).WriteString(
+        - (*bufio.Writer).Flush(
+        - fmt.Fprintf(
+        - (io.Reader).Read(
+        - io.ReadFull(
+        - os.Stat(
+        - os.Open(
+        - os.ReadFile(
+        - net.SplitHostPort(
+        - (net/http.ResponseWriter).Write(
+        - (*golang.org/x/sync/semaphore.Weighted).Acquire(
+        - (google.golang.org/grpc/encoding.CodecV2).
+        - github.com/nats-io/nats.go/jetstream.
     exhaustive:
       default-signifies-exhaustive: true
     funlen:
@@ -79,7 +102,6 @@ linters:
               desc: stdlib testing only
             - pkg: github.com/onsi/gomega
               desc: stdlib testing only
-        # Layer rules (NFR-MAINT-002, CLAUDE.md "Правила зависимостей").
         layer-domain:
           files:
             - "**/internal/domain/**"
@@ -102,7 +124,6 @@ linters:
               desc: transport stays in interfaces
             - pkg: go.opentelemetry.io
               desc: OTLP/pdata types stay in interfaces; self-tracing lives in infrastructure/selftrace and the API adapter
-        # pkg holds reusable engines without business logic; the domain may use them, they never see internal.
         pkg-pure:
           files:
             - "**/pkg/**"
@@ -149,7 +170,6 @@ linters:
               desc: application drives RED through topology.Builder; the window and sketch engines stay in the domain
             - pkg: github.com/DmytroLysenko1/faultline/pkg/sketch
               desc: application drives RED through topology.Builder; the window and sketch engines stay in the domain
-        # Step 2: operation limits and RED cells sit below matcher, graph and traffic.
         topology-lower-layers:
           files:
             - "**/internal/domain/topology/cardinality/**"
@@ -161,7 +181,6 @@ linters:
               desc: cardinality and red sit below matcher, graph and traffic
             - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/matcher
               desc: cardinality and red sit below matcher, graph and traffic
-        # Spans on the ingest path would loop back through a Collector into faultline (step 1, slice 5b-3, D6).
         no-self-tracing-on-ingest:
           files:
             - "**/internal/application/**"
@@ -197,7 +216,6 @@ linters:
           deny:
             - pkg: github.com/DmytroLysenko1/faultline/internal/application/ingest
               desc: only natsjs/journal/meaning.go gives a failure its ingest meaning (toIngest)
-        # I16: NATS types stay behind natsjs; the core and the other adapters never see them.
         nats-stays-in-natsjs:
           files:
             - "**/internal/**"
@@ -217,6 +235,23 @@ linters:
               desc: the embedded NATS server runs only inside tests (natsjstest)
             - pkg: github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/natsjstest
               desc: the test harness would pull the embedded NATS server into the binary
+        test-harness-stays-in-tests:
+          files:
+            - "$all"
+            - "!$test"
+            - "!**/internal/**/*test/**"
+            - "!**/test/**"
+          deny:
+            - pkg: github.com/DmytroLysenko1/faultline/internal/application/processing/processingtest
+              desc: test harnesses stay in tests
+            - pkg: github.com/DmytroLysenko1/faultline/internal/infrastructure/journaltest
+              desc: test harnesses stay in tests
+            - pkg: github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest
+              desc: test harnesses stay in tests
+            - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/topologytest
+              desc: test harnesses stay in tests
+            - pkg: github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/otlptest
+              desc: test harnesses stay in tests
         layer-infrastructure:
           files:
             - "**/internal/infrastructure/**"
@@ -231,7 +266,6 @@ linters:
           deny:
             - pkg: github.com/DmytroLysenko1/faultline/internal/infrastructure
               desc: driving adapters call application only; wiring lives in cmd/
-        # faultctl is a network client of the API: it sees only generated wire types.
         layer-cli:
           files:
             - "**/internal/cli/**"
@@ -244,7 +278,6 @@ linters:
               desc: CLI talks to the server over the API, not to adapters
             - pkg: github.com/DmytroLysenko1/faultline/internal/interfaces
               desc: CLI is a separate binary; server adapters are not its dependency
-        # Use cases do not import each other: shared rules belong in domain.
         usecase-ingest:
           files:
             - "**/internal/application/ingest/**"
@@ -314,7 +347,13 @@ linters:
         linters:
           - forbidigo
         text: the checkpoint store translates its errors
-      # Tests build large table literals and helper closures; relax size/complexity/sec there.
+      - path: (_test\.go$|/[a-z]+test/|^test/|^hack/)
+        linters:
+          - wrapcheck
+      - path: (_test\.go$|/[a-z]+test/)
+        linters:
+          - gocritic
+        text: hugeParam
       - path: _test\.go
         linters:
           - funlen

@@ -16,8 +16,6 @@ var (
 	ErrBeyondTheLog    = errors.New("position is past the end of the log")
 )
 
-// RetainedLog is a partition of a journal that keeps every record until retention drops it, so a
-// restarted processor can read it again from any retained position.
 type RetainedLog struct {
 	partition     uint16
 	batches       []batch.Batch
@@ -53,9 +51,6 @@ func (l *RetainedLog) Open(from processing.Position) (*LogReader, error) {
 	return &LogReader{log: l, next: from.Sequence}, nil
 }
 
-// LogReader feeds a pipeline from its position. PerReceive caps a Receive below the pipeline's
-// limit, Clock advances once per Receive, and Kill — called at the KillAfter-th Receive — cancels the
-// pipeline's context the way SIGKILL ends a processor: no drain, no final checkpoint.
 type LogReader struct {
 	log        *RetainedLog
 	next       uint64

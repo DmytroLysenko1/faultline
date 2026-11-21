@@ -55,8 +55,6 @@ func (p *lastPublisher) Publish(ctx context.Context, snapshot *topology.Snapshot
 	return nil
 }
 
-// steadyJournal is size batches of calls a second and a half apart, then a heartbeat far ahead
-// that closes every window.
 func steadyJournal(t *testing.T, size int) []batch.Batch {
 	t.Helper()
 	batches := make([]batch.Batch, 0, size+1)
@@ -68,9 +66,6 @@ func steadyJournal(t *testing.T, size int) []batch.Batch {
 	return append(batches, batch.Heartbeat(end.Add(heartbeatAhead)))
 }
 
-// processor is one pipeline over a retained log: every Receive hands out PerReceive batches and
-// moves the clock a second; it publishes after every Receive and never fires early panes, so what
-// it publishes is a function of the log alone.
 type processor struct {
 	reader    *processingtest.LogReader
 	publisher *lastPublisher
@@ -144,9 +139,6 @@ func totalCalls(p *processor) uint64 {
 	return processingtest.TotalCalls(p.publisher.last)
 }
 
-// TestACheckpointCoversExactlyWhatWasPublished: a checkpoint starts only after the snapshot with
-// every applied batch is published and released, and names the last of them, so a restart neither
-// skips nor repeats a batch.
 func TestACheckpointCoversExactlyWhatWasPublished(t *testing.T) {
 	log := processingtest.NewRetainedLog(partition, steadyJournal(t, tenBatches))
 	store := processingtest.NewCheckpointStore(t, log)
@@ -188,16 +180,17 @@ func coverageProblems(p *processor, log *processingtest.RetainedLog, meta *proce
 	return problems
 }
 
-// TestCheckpointsFollowTheInterval: one batch a second and a three-second interval checkpoint after
-// the third, sixth and ninth batch, and the stop writes the last one.
+const lastPeriodic = 9
+
 func TestCheckpointsFollowTheInterval(t *testing.T) {
 	p, store, log := stepping(t, tenBatches, everyThird)
 
 	p.run(t)
 
 	assertCommitted(t, store, []uint64{3, 6, 9, tenBatches})
-	if got := log.FirstRetained(); got != tenBatches+1 {
-		t.Errorf("first retained = %d, want %d: the journal keeps what the last checkpoint covers", got, tenBatches+1)
+	if got := log.FirstRetained(); got != lastPeriodic+1 {
+		t.Errorf("first retained = %d, want %d: the final checkpoint of the drain leaves retention alone", got,
+			lastPeriodic+1)
 	}
 	want := processing.CheckpointStats{
 		Spooled: 4, SpooledThrough: processing.Position{Partition: partition, Sequence: tenBatches},
@@ -207,8 +200,6 @@ func TestCheckpointsFollowTheInterval(t *testing.T) {
 	}
 }
 
-// TestCheckpointIsSkippedWhileThePreviousUploads: a busy store skips the checkpoint instead of
-// queueing it; processing goes on and the next interval writes everything applied by then.
 func TestCheckpointIsSkippedWhileThePreviousUploads(t *testing.T) {
 	p, store, _ := stepping(t, tenBatches, everyThird)
 	attempts := 0
@@ -240,9 +231,6 @@ func (f *failOnce) first() bool {
 	return f.attempts == 1
 }
 
-// TestAFailedCheckpointIsCountedAndProcessingContinues: whatever step fails, the previous checkpoint
-// stays the latest, retention does not move, the half-written spool is aborted, and the next
-// interval checkpoints everything applied by then.
 func TestAFailedCheckpointIsCountedAndProcessingContinues(t *testing.T) {
 	type want struct {
 		aborted int
@@ -291,8 +279,8 @@ func TestAFailedCheckpointIsCountedAndProcessingContinues(t *testing.T) {
 			p.run(t)
 
 			assertFailedOnce(t, p, store, []uint64{6, 9, tenBatches}, tt.want.aborted, tt.want.err)
-			if got := log.FirstRetained(); got != tenBatches+1 {
-				t.Errorf("first retained = %d, want %d", got, tenBatches+1)
+			if got := log.FirstRetained(); got != lastPeriodic+1 {
+				t.Errorf("first retained = %d, want %d", got, lastPeriodic+1)
 			}
 		})
 	}
@@ -329,21 +317,17 @@ func assertFailedOnce(t *testing.T, p *processor, store *processingtest.Checkpoi
 	}
 }
 
-// TestProcessorStopWritesAFinalCheckpoint: a processor that drains its feed checkpoints what it
-// applied even before the interval, so the next one starts from there and retention drops it.
 func TestProcessorStopWritesAFinalCheckpoint(t *testing.T) {
 	p, store, log := stepping(t, 5, time.Hour)
 
 	p.run(t)
 
 	assertCommitted(t, store, []uint64{5})
-	if got := log.FirstRetained(); got != 6 {
-		t.Errorf("first retained = %d, want 6", got)
+	if got := log.FirstRetained(); got != 1 {
+		t.Errorf("first retained = %d, want 1", got)
 	}
 }
 
-// TestACheckpointIsNotRepeatedWithoutNewBatches: the stop after a checkpoint of the last batch has
-// nothing new to cover, so it writes nothing — a second upload of the same state would only cost.
 func TestACheckpointIsNotRepeatedWithoutNewBatches(t *testing.T) {
 	p, store, _ := stepping(t, 3, receiveStep)
 
@@ -365,8 +349,6 @@ func TestAStopWithNothingNewWritesNoCheckpoint(t *testing.T) {
 	}
 }
 
-// TestAPublishFailureWritesNoCheckpoint: the state was never published, so it must not become the
-// state a restart continues from.
 func TestAPublishFailureWritesNoCheckpoint(t *testing.T) {
 	p, store, log := stepping(t, tenBatches, receiveStep)
 	p.publisher.fail = errPublishBroken
@@ -409,9 +391,7 @@ func TestNewPipelineRefusesACheckpointCadenceItCannotKeep(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var sink interface {
-				Begin(context.Context, *processing.CheckpointMeta) (processing.CheckpointWriter, error)
-			}
+			var sink processingtest.CheckpointSink
 			if tt.store != nil {
 				sink = tt.store
 			}
@@ -427,7 +407,6 @@ func TestNewPipelineRefusesACheckpointCadenceItCannotKeep(t *testing.T) {
 	}
 }
 
-// TestACheckpointIsTimed: the pause a checkpoint costs the pipeline is reported with its timings.
 func TestACheckpointIsTimed(t *testing.T) {
 	p, store, _ := stepping(t, 3, receiveStep)
 	store.OnWrite(func() error {
@@ -443,7 +422,6 @@ func TestACheckpointIsTimed(t *testing.T) {
 	}
 }
 
-// TestCheckpointStatsCanBeReadWhileThePipelineRuns: metrics read stats from another goroutine.
 func TestCheckpointStatsCanBeReadWhileThePipelineRuns(t *testing.T) {
 	p, _, _ := stepping(t, tenBatches, receiveStep)
 	done := make(chan struct{})
@@ -468,8 +446,6 @@ func TestCheckpointStatsCanBeReadWhileThePipelineRuns(t *testing.T) {
 	}
 }
 
-// TestAFailedCheckpointIsRetriedAtTheStop: the last batch was applied, its checkpoint failed and
-// nothing new came; the stop still owes that checkpoint and writes it.
 func TestAFailedCheckpointIsRetriedAtTheStop(t *testing.T) {
 	p, store, _ := stepping(t, 3, everyThird)
 	once := &failOnce{}
@@ -505,8 +481,6 @@ func TestAnAbortThatFailsIsReportedWithTheWriteError(t *testing.T) {
 	}
 }
 
-// TestALostFinalCheckpointFailsTheStop: the processor stops without the checkpoint it owed, so the
-// caller learns of it; the journal still holds everything after the previous one.
 func TestALostFinalCheckpointFailsTheStop(t *testing.T) {
 	p, store, log := stepping(t, 5, everyThird)
 	attempts := 0
@@ -542,8 +516,6 @@ func TestABusyStoreAtTheStopOnlySkipsTheFinalCheckpoint(t *testing.T) {
 	}
 }
 
-// TestACheckpointCutByTheCallerStopsWithoutAFailure: a shutdown that cancels the context mid-write
-// aborts the spool and ends Run; it is not a checkpoint failure to alert on.
 func TestACheckpointCutByTheCallerStopsWithoutAFailure(t *testing.T) {
 	p, store, _ := stepping(t, tenBatches, everyThird)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -569,8 +541,6 @@ func TestACheckpointCutByTheCallerStopsWithoutAFailure(t *testing.T) {
 	}
 }
 
-// TestAnUploadLostAfterCloseLeavesThePreviousCheckpoint: the pipeline spooled it, the store never
-// committed it — a restart continues from the one before, and the journal kept everything after it.
 func TestAnUploadLostAfterCloseLeavesThePreviousCheckpoint(t *testing.T) {
 	p, store, log := stepping(t, tenBatches, everyThird)
 	attempts := 0
@@ -590,8 +560,6 @@ func TestAnUploadLostAfterCloseLeavesThePreviousCheckpoint(t *testing.T) {
 	}
 }
 
-// straySink answers Begin the way the contract does not promise: a writer with an error, or
-// nothing at all.
 type straySink struct {
 	writer  *abortCounter
 	err     error
@@ -609,11 +577,20 @@ func (a *abortCounter) Abort() error {
 	return nil
 }
 
-func (s *straySink) Begin(context.Context, *processing.CheckpointMeta) (processing.CheckpointWriter, error) {
+func (s *straySink) Begin(ctx context.Context, _ *processing.CheckpointMeta) (processing.CheckpointWriter, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if s.nothing {
 		return nil, nil
 	}
 	return s.writer, s.err
+}
+
+func (s *straySink) BeginOnStop(ctx context.Context, meta *processing.CheckpointMeta) (processing.CheckpointWriter,
+	error,
+) {
+	return s.Begin(ctx, meta)
 }
 
 func TestAStoreThatBreaksTheBeginContractLeavesNoSpoolAndFails(t *testing.T) {
@@ -656,8 +633,6 @@ func TestAStoreThatBreaksTheBeginContractLeavesNoSpoolAndFails(t *testing.T) {
 	}
 }
 
-// TestACancelDuringTheDrainIsAQuietStop: the caller gave up on the drain; that is a stop it asked
-// for, not a failure to report.
 func TestACancelDuringTheDrainIsAQuietStop(t *testing.T) {
 	p, store, _ := stepping(t, 0, everyThird)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -673,9 +648,6 @@ func TestACancelDuringTheDrainIsAQuietStop(t *testing.T) {
 	}
 }
 
-// TestAClockThatJumpsBackCostsOneEarlyCheckpoint: after a jump back the deadline lies an hour
-// ahead; waiting for it would leave the journal unretained for that hour, so the next publish
-// checkpoints and the cadence restarts from the new time.
 func TestAClockThatJumpsBackCostsOneEarlyCheckpoint(t *testing.T) {
 	p, store, _ := stepping(t, tenBatches, everyThird)
 	jumped := false
@@ -691,8 +663,6 @@ func TestAClockThatJumpsBackCostsOneEarlyCheckpoint(t *testing.T) {
 	assertCommitted(t, store, []uint64{3, 4, 7, tenBatches})
 }
 
-// TestASpoolLeftByACutCheckpointIsReported: the caller cut the checkpoint and the half-written spool
-// could not be removed; the stop stays quiet, but the leftover is a failure to see.
 func TestASpoolLeftByACutCheckpointIsReported(t *testing.T) {
 	p, store, _ := stepping(t, tenBatches, everyThird)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -711,5 +681,24 @@ func TestASpoolLeftByACutCheckpointIsReported(t *testing.T) {
 	stats := p.pipeline.CheckpointStats()
 	if stats.Failed != 1 || !errors.Is(stats.LastFailure, errAbortStuck) {
 		t.Errorf("stats = %+v, want one failure carrying the abort error", stats)
+	}
+}
+
+func TestTheFinalCheckpointOfTheDrainGetsPastOneStillInFlight(t *testing.T) {
+	p, store, log := stepping(t, tenBatches, everyThird)
+	release := store.Hold()
+
+	p.run(t)
+	release()
+
+	assertCommitted(t, store, []uint64{3, tenBatches})
+	want := processing.CheckpointStats{
+		Spooled: 2, Skipped: 2, SpooledThrough: processing.Position{Partition: partition, Sequence: tenBatches},
+	}
+	if diff := gocmp.Diff(want, p.pipeline.CheckpointStats(), cmpopts.EquateErrors()); diff != "" {
+		t.Errorf("checkpoint stats (-want +got):\n%s", diff)
+	}
+	if got := log.FirstRetained(); got != 3+1 {
+		t.Errorf("first retained = %d, want 4: only the periodic checkpoint moves retention", got)
 	}
 }

@@ -76,7 +76,6 @@ func claimedWith(t *testing.T, store *fakeStore, options *Options) *Lease {
 	return lease
 }
 
-// running starts Run and returns how to stop it: cancel its context and wait for what it returned.
 func running(t *testing.T, lease *Lease) (stop func() error, returned <-chan error) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
@@ -119,10 +118,6 @@ func TestARenewingHolderStaysValidAndKeepsItsKey(t *testing.T) {
 	})
 }
 
-// TestALeaseThatCannotRenewIsInvalidAfterLostAfterAndLostAfterTheTTL: whatever keeps renewals from
-// succeeding — a KV that never answers, a gone bucket, another holder, a stale read of an own write —
-// Valid ends LostAfter after the last successful renewal was sent and the lease is lost at the TTL,
-// when the key has expired on the server.
 func TestALeaseThatCannotRenewIsInvalidAfterLostAfterAndLostAfterTheTTL(t *testing.T) {
 	tests := []struct {
 		Name    string
@@ -319,8 +314,6 @@ func TestOptionsRefuseTimingsThatCannotKeepOneHolder(t *testing.T) {
 	}
 }
 
-// TestValidEndsBeforeTheReleaseDeletesTheKey: a delete that hangs must not leave the lease valid —
-// whatever checks Valid while the release waits would act after the key may already be gone.
 func TestValidEndsBeforeTheReleaseDeletesTheKey(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		store := newFakeStore(productionTTL)
@@ -369,7 +362,6 @@ func TestAStaleReadOfAnOlderOwnWriteIsNotAdopted(t *testing.T) {
 	})
 }
 
-// countingDeletes is the store's delete at a revision that also counts its calls.
 func countingDeletes(store *fakeStore) (deleteAt, *atomic.Int32) {
 	calls := new(atomic.Int32)
 	return func(ctx context.Context, key string, revision uint64) error {
@@ -396,7 +388,6 @@ func TestAStaleReadOfTheCurrentOwnWriteAfterATakeOverIsNotTakenForALostWrite(t *
 			t.Errorf("Run: %v", err)
 		}
 
-		// the first renewal fails at RenewEvery, the rest are retried every RetryEvery until Run stops
 		failedRenewals := uint64(1 + (takenOverFor-productionRenew)/productionRetry)
 		want := Stats{
 			Epoch:           firstRevision,
@@ -431,8 +422,6 @@ func TestALeaseIsRunOnce(t *testing.T) {
 	})
 }
 
-// TestAClaimThatEndsAfterItsCreateLandedDeletesTheKey: a create whose answer was lost when ctx ended
-// would otherwise block the partition for a TTL on behalf of a process that never got the lease.
 func TestAClaimThatEndsAfterItsCreateLandedDeletesTheKey(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		store := newFakeStore(productionTTL)
@@ -456,7 +445,6 @@ type logged struct {
 	Message string `json:"msg"`
 }
 
-// recorder keeps what the lease logs, written by Run's goroutine and read by the test.
 type recorder struct {
 	lock   sync.Mutex
 	output bytes.Buffer
@@ -483,9 +471,6 @@ func (r *recorder) logged(t *testing.T) []logged {
 	return records
 }
 
-// TestAKVOutageAroundLostAfterKeepsTheLease: a KV that stops answering for less than LostAfter leaves
-// the lease valid; one for longer suspends it — side effects stop — and the first renewal after the
-// outage resumes it with the same epoch, because the key was never expired or taken.
 func TestAKVOutageAroundLostAfterKeepsTheLease(t *testing.T) {
 	tests := []struct {
 		Name string
@@ -552,9 +537,6 @@ func TestALongerBucketMaxAgeIsTheThresholdOfLoss(t *testing.T) {
 	})
 }
 
-// TestAClaimRetakesItsOwnKeyAfterItsUpdateFailed: the create landed with its answer lost, and the
-// update that would have taken it failed; the next attempt must take the key at the revision it
-// already knows instead of waiting for its own key to expire.
 func TestAClaimRetakesItsOwnKeyAfterItsUpdateFailed(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		store := newFakeStore(productionTTL)
@@ -570,9 +552,6 @@ func TestAClaimRetakesItsOwnKeyAfterItsUpdateFailed(t *testing.T) {
 	})
 }
 
-// TestValidCountsFromWhenTheRenewalWasSentNotAnswered: the server extends the key from the write, which
-// happens no later than the answer arrives; counting from the answer would stretch Valid past the key
-// by the answer's delay.
 func TestValidCountsFromWhenTheRenewalWasSentNotAnswered(t *testing.T) {
 	tests := []struct {
 		Name     string

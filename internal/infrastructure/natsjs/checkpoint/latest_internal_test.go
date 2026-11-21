@@ -143,6 +143,7 @@ func TestLatestRefusesWhatItCannotTrust(t *testing.T) {
 			defer cancel()
 
 			_, reader, err := w.store.Latest(ctx, testPartition)
+			closeOnCleanup(t, reader)
 
 			if !errors.Is(err, tt.wantErr) || reader != nil {
 				t.Fatalf("Latest: err = %v, reader %v; want %v and no reader", err, reader, tt.wantErr)
@@ -158,12 +159,12 @@ func TestLatestOfAnotherPartitionIsRefusedWithoutAskingNATS(t *testing.T) {
 	w := startWorld(t)
 	requests := w.count(isRequest)
 
-	_, _, err := w.store.Latest(t.Context(), testPartition+1)
+	err := latestErr(w.store.Latest(t.Context(), testPartition+1))
 
 	if !errors.Is(err, processing.ErrForeignCheckpoint) || requests.Load() != 0 {
 		t.Fatalf("err = %v after %d requests, want %v and none", err, requests.Load(), processing.ErrForeignCheckpoint)
 	}
-	if _, _, err := w.store.Latest(t.Context(), testPartition); !errors.Is(err, processing.ErrNoCheckpoint) ||
+	if err := latestErr(w.store.Latest(t.Context(), testPartition)); !errors.Is(err, processing.ErrNoCheckpoint) ||
 		requests.Load() == 0 {
 		t.Fatalf("own Latest: err = %v after %d requests; the request counter sees nothing", err, requests.Load())
 	}
@@ -173,7 +174,7 @@ func TestLatestOfAClosedStoreIsRefused(t *testing.T) {
 	w := startWorld(t)
 	w.store.Close(t.Context())
 
-	_, _, err := w.store.Latest(t.Context(), testPartition)
+	err := latestErr(w.store.Latest(t.Context(), testPartition))
 
 	if !errors.Is(err, processing.ErrCheckpointRefused) {
 		t.Fatalf("err = %v, want %v", err, processing.ErrCheckpointRefused)
@@ -185,7 +186,7 @@ func TestACanceledRestoreStaysCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	_, _, err := w.store.Latest(ctx, testPartition)
+	err := latestErr(w.store.Latest(ctx, testPartition))
 
 	if !errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want only %v", err, context.Canceled)

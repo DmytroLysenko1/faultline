@@ -1,5 +1,3 @@
-// Package journaltest is the contract every span feed keeps for the processing pipeline: memjournal and
-// natsjs/feed run the same checks.
 package journaltest
 
 import (
@@ -25,17 +23,14 @@ const (
 	traceStride    = 100
 	maxReceives    = 50
 	serviceName    = "checkout"
-	// Credit is what a journal under the contract may hold in unreleased deliveries, unless a case needs less.
-	Credit        = 64 << 20
-	creditBatches = 2
+	Credit         = 64 << 20
+	creditBatches  = 2
 )
 
 type Feed interface {
 	Receive(ctx context.Context, limit int, maxWait time.Duration) ([]processing.Delivery, error)
 }
 
-// Journal is one implementation under the contract: Append writes one batch behind Feed, Close closes the
-// feed the way its owner does at shutdown, LimitErr is the refusal of a limit below one.
 type Journal struct {
 	Feed     Feed
 	Append   func(t *testing.T, spans []span.Span)
@@ -43,7 +38,6 @@ type Journal struct {
 	LimitErr error
 }
 
-// Open opens a journal whose unreleased deliveries hold at most credit bytes, their footprint.
 type Open func(t *testing.T, credit int64) *Journal
 
 func RunFeedContract(t *testing.T, open Open) {
@@ -104,8 +98,6 @@ func belowOne(t *testing.T, journal *Journal) {
 	}
 }
 
-// creditBack fills the credit with held deliveries: the next batch comes only once they are released, as
-// the ingester's appends wait on memjournal's credit and the pump of natsjs/feed waits on its own.
 func creditBack(t *testing.T, open Open) {
 	weight := footprintOf(t, batchOf(t, 0))
 	journal := open(t, creditBatches*weight)
@@ -172,8 +164,6 @@ func batchOf(t *testing.T, firstTrace uint64) []span.Span {
 	return spans
 }
 
-// receiveBatches takes data deliveries, heartbeats aside, until count arrived, and releases them; each
-// Receive keeps the limit.
 func receiveBatches(t *testing.T, feed Feed, count int) []processing.Delivery {
 	t.Helper()
 	got := receiveHeld(t, feed, count)
@@ -227,7 +217,6 @@ func limited(t *testing.T, deliveries []processing.Delivery) []processing.Delive
 	})
 }
 
-// checkInOrder holds positions that strictly grow, ReceivedAt that never goes back and the spans as written.
 func checkInOrder(t *testing.T, got []processing.Delivery, written [][]span.Span) {
 	t.Helper()
 	if len(got) != len(written) {

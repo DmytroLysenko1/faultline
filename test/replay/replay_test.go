@@ -112,8 +112,6 @@ func replay(t *testing.T, limits *topology.Limits, lines []ptrace.Traces) *topol
 	return builder.Snapshot()
 }
 
-// replayInto feeds the dump through ingest and the builder, calling afterApply after every journal
-// record, and returns the builder with the journal time of the last record.
 func replayInto(t *testing.T, limits *topology.Limits, lines []ptrace.Traces, afterApply func(*topology.Builder),
 	options ...topology.Option,
 ) (*topology.Builder, time.Time) {

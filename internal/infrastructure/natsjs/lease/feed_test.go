@@ -27,8 +27,6 @@ const (
 	firstPosition     = 1
 )
 
-// The lease and the feed meet only in cmd, so this pins their contract with the real types: a holder whose key
-// was taken suspends commits from LostAfter, and its feed stops with ErrLeaseLost once the key's TTL has run.
 func TestAFeedWhoseLeaseKeyIsTakenSuspendsCommitsThenStopsWithTheLeaseLost(t *testing.T) {
 	cluster := natsjstest.Start(t, singleNode)
 	conn := dial(t, cluster)
@@ -63,8 +61,6 @@ func TestAFeedWhoseLeaseKeyIsTakenSuspendsCommitsThenStopsWithTheLeaseLost(t *te
 	}
 }
 
-// runUntilTheTestEnds renews held and answers what Run returned; Run is stopped and waited for before the test
-// ends.
 func runUntilTheTestEnds(t *testing.T, held *lease.Lease) <-chan error {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
@@ -113,8 +109,6 @@ func takeTheKey(t *testing.T, cluster *natsjstest.Cluster) {
 	}
 }
 
-// waitUntilInvalid answers once held is no longer valid, which comes LostAfter after its last renewal and before
-// the key's TTL ends it for good.
 func waitUntilInvalid(t *testing.T, held *lease.Lease) {
 	t.Helper()
 	deadline := time.Now().Add(fastTTL)

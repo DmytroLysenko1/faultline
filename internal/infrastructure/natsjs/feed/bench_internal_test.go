@@ -23,7 +23,6 @@ const (
 	largeRecord    = 1 << 20
 )
 
-// endlessReader hands out the same record at ever growing positions, without allocating.
 type endlessReader struct {
 	data     []byte
 	sequence atomic.Uint64
@@ -47,8 +46,6 @@ func (r *endlessReader) Stop() {
 	close(r.stopped)
 }
 
-// BenchmarkDelivery counts what the feed itself allocates per record — the pump's header read, credit, decode
-// and delivery, and Receive with Release as the pipeline calls it — with no NATS client or server underneath.
 func BenchmarkDelivery(b *testing.B) {
 	for _, size := range []int{smallRecord, largeRecord} {
 		b.Run(fmt.Sprintf("%dKiB", size>>10), func(b *testing.B) {

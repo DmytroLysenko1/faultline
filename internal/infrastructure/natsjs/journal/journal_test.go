@@ -65,8 +65,6 @@ func TestNewRefusesOptionsItCannotKeep(t *testing.T) {
 	}
 }
 
-// TestEveryPartitionGetsOneRecordOfItsOwnSpansInRequestOrder: the processor of a partition must see
-// every span of its traces and none of another's, in the order the client sent them.
 func TestEveryPartitionGetsOneRecordOfItsOwnSpansInRequestOrder(t *testing.T) {
 	publisher := acking()
 	spans := spansAcross(requestSpans, 1)
@@ -109,8 +107,6 @@ func TestARequestOnOnePartitionOfManyMakesOneRecordThere(t *testing.T) {
 	}
 }
 
-// TestTheSameRequestMakesTheSameMessageIDs: a client retry, written seconds later, must hit the
-// dedup window of the records the first attempt stored.
 func TestTheSameRequestMakesTheSameMessageIDs(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		publisher := acking()
@@ -143,7 +139,6 @@ func idsByPartition(calls []call) map[uint16][]string {
 	return ids
 }
 
-// TestAnEmptyRequestPublishesNothing: nothing to store is stored, whatever the caller's context.
 func TestAnEmptyRequestPublishesNothing(t *testing.T) {
 	publisher := acking()
 	ctx, cancel := cancelled(t.Context())
@@ -156,8 +151,6 @@ func TestAnEmptyRequestPublishesNothing(t *testing.T) {
 	}
 }
 
-// TestNoPathAnswersOKWithoutAPubAck (I13): whichever partition fails, for whatever reason, the
-// request is not acknowledged, and the failure keeps its ingest meaning.
 func TestNoPathAnswersOKWithoutAPubAck(t *testing.T) {
 	for reason := range natsjs.Reason(natsjs.ReasonCount) {
 		for failing := range uint16(fourPartitions) {
@@ -188,8 +181,6 @@ func TestNoPathAnswersOKWithoutAPubAck(t *testing.T) {
 
 var ingestSentinels = []error{ingest.ErrOverloaded, ingest.ErrBatchTooLarge, ingest.ErrUnavailable}
 
-// meaningOfReason is the one ingest meaning each reason must carry: the OTLP handler maps the first it
-// finds. Every reason is listed, so a new one fails here until someone decides what the client hears.
 func meaningOfReason() map[natsjs.Reason]error {
 	return map[natsjs.Reason]error{
 		natsjs.ReasonUnexpected:            ingest.ErrUnavailable,
@@ -217,8 +208,6 @@ func sentinelsOf(reason natsjs.Reason) []string {
 	return []string{meaning.Error()}
 }
 
-// TestAFailedPublishReadsInTheLogAsThePublisherSaidIt: the ingest meaning rides along without changing
-// the text, so the error field of otlp.export.* stays one line that names the reason.
 func TestAFailedPublishReadsInTheLogAsThePublisherSaidIt(t *testing.T) {
 	for reason := range natsjs.Reason(natsjs.ReasonCount) {
 		t.Run(reason.String(), func(t *testing.T) {
@@ -245,8 +234,6 @@ func matchedSentinels(err error) []string {
 	return matched
 }
 
-// TestTheMostFinalFailureDecidesTheAnswer: a retry cannot fix a request too large, and an overloaded
-// journal asks the client to back off — both say more than unavailable, even when they come last.
 func TestTheMostFinalFailureDecidesTheAnswer(t *testing.T) {
 	unavailable := answer{fails: true, reason: natsjs.ReasonNoResponders}
 	full := answer{fails: true, reason: natsjs.ReasonStreamFull}
@@ -278,8 +265,6 @@ func TestTheMostFinalFailureDecidesTheAnswer(t *testing.T) {
 	}
 }
 
-// TestACallerWhoGivesUpGetsItsOwnCancelNotUnavailable: a client that cancelled must hear CANCELLED;
-// mapped to unavailable it would be counted as a journal outage and retried.
 func TestACallerWhoGivesUpGetsItsOwnCancelNotUnavailable(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		journalOf := newJournal(t, answering(map[uint16]answer{0: {hang: true}}), onePartition)
@@ -298,8 +283,6 @@ func TestACallerWhoGivesUpGetsItsOwnCancelNotUnavailable(t *testing.T) {
 	})
 }
 
-// TestEveryRecordAcknowledgedIsOKThoughTheCallerGaveUpMeanwhile: the records are stored; answering
-// the cancel instead would break "nil exactly when every record has its PubAck".
 func TestEveryRecordAcknowledgedIsOKThoughTheCallerGaveUpMeanwhile(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -346,10 +329,6 @@ func cancelled(parent context.Context) (context.Context, context.CancelFunc) {
 	return ctx, cancel
 }
 
-// TestThePublishDeadlineLeavesTheCallerTimeToHearTheAnswer: the publish ends 100 ms before the
-// caller's deadline, so the caller hears why instead of its own deadline; without a deadline, or with
-// a long one, a publish gets PublishTimeout. The journal's clock is frozen in the past: the caller's
-// deadline is wall time and must be measured as such.
 func TestThePublishDeadlineLeavesTheCallerTimeToHearTheAnswer(t *testing.T) {
 	tests := []struct {
 		name string
@@ -393,8 +372,6 @@ func withBudget(parent context.Context, budget time.Duration) (context.Context, 
 	return context.WithTimeout(parent, budget)
 }
 
-// TestAPublishThatRunsOutOfItsBudgetIsUnavailableBeforeTheCallersDeadline: a lost quorum must be
-// answered as retryable while the client still listens, not as the client's own deadline.
 func TestAPublishThatRunsOutOfItsBudgetIsUnavailableBeforeTheCallersDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		journalOf := newJournal(t, answering(map[uint16]answer{0: {hang: true}}), onePartition)
@@ -417,9 +394,6 @@ func TestAPublishThatRunsOutOfItsBudgetIsUnavailableBeforeTheCallersDeadline(t *
 	})
 }
 
-// TestAFullPartitionOutranksAHungOneAtThePublishDeadline: the answer waits for the hung partition's
-// budget, so the full one is not hidden behind a timeout, and still comes before the caller's
-// deadline.
 func TestAFullPartitionOutranksAHungOneAtThePublishDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		journalOf := newJournal(t, answering(map[uint16]answer{
@@ -439,7 +413,6 @@ func TestAFullPartitionOutranksAHungOneAtThePublishDeadline(t *testing.T) {
 	})
 }
 
-// TestACallerWhoGivesUpOnManyPartitionsGetsItsOwnCancel: the parallel path answers the cancel too.
 func TestACallerWhoGivesUpOnManyPartitionsGetsItsOwnCancel(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		hung := answer{hang: true}
@@ -456,8 +429,6 @@ func TestACallerWhoGivesUpOnManyPartitionsGetsItsOwnCancel(t *testing.T) {
 	})
 }
 
-// TestTooLittleTimeLeftIsRefusedBeforeAnythingIsPublished: a publish that cannot finish might still
-// be stored after the client heard a failure, so it is not started.
 func TestTooLittleTimeLeftIsRefusedBeforeAnythingIsPublished(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		publisher := acking()
@@ -477,8 +448,6 @@ func TestTooLittleTimeLeftIsRefusedBeforeAnythingIsPublished(t *testing.T) {
 	})
 }
 
-// TestPartitionsArePublishedInParallel: four partitions answering in a second each take one second,
-// not four, or a request over many partitions would outlive its deadline.
 func TestPartitionsArePublishedInParallel(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		slow := answer{after: answerDelay}
@@ -495,8 +464,6 @@ func TestPartitionsArePublishedInParallel(t *testing.T) {
 	})
 }
 
-// TestABatchTooLargeForOneRecordIsRefusedWithoutItsPublish: a retry would be just as large, so the
-// client hears too large even though another partition was stored.
 func TestABatchTooLargeForOneRecordIsRefusedWithoutItsPublish(t *testing.T) {
 	publisher := acking()
 	huge := spanOn(1)
@@ -518,8 +485,6 @@ func TestABatchTooLargeForOneRecordIsRefusedWithoutItsPublish(t *testing.T) {
 	}
 }
 
-// TestCloseWaitsForAppendsInFlightAndRefusesNewOnes: the connection must not close under a publish
-// awaiting its PubAck, and nothing may start after it.
 func TestCloseWaitsForAppendsInFlightAndRefusesNewOnes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		publisher := answering(map[uint16]answer{0: {after: answerDelay}})
@@ -573,8 +538,6 @@ func TestCloseGivesUpWhenItsContextEnds(t *testing.T) {
 	})
 }
 
-// TestStatsCountEveryPublishAndAppend: what operators alert on — failures by reason, duplicates
-// from retries, and how long PubAcks and whole requests take.
 func TestStatsCountEveryPublishAndAppend(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		journalOf := newJournal(t, answering(map[uint16]answer{
@@ -600,8 +563,6 @@ func TestStatsCountEveryPublishAndAppend(t *testing.T) {
 	})
 }
 
-// TestAFailureThePublisherDidNotClassifyIsCountedAsUnexpected: a decorated or future publisher may
-// return any error; it must show up as a failure, never as a published record.
 func TestAFailureThePublisherDidNotClassifyIsCountedAsUnexpected(t *testing.T) {
 	tests := []struct {
 		name string
@@ -631,8 +592,6 @@ func TestAFailureThePublisherDidNotClassifyIsCountedAsUnexpected(t *testing.T) {
 	}
 }
 
-// TestADecoratedPublisherKeepsTheFinalMeaningOfItsReason: a decorator that adds its own meaning around a
-// full or too large publish must not hide what the client has to do: back off, or stop retrying.
 func TestADecoratedPublisherKeepsTheFinalMeaningOfItsReason(t *testing.T) {
 	type args struct {
 		reason natsjs.Reason
@@ -666,8 +625,6 @@ func TestADecoratedPublisherKeepsTheFinalMeaningOfItsReason(t *testing.T) {
 	}
 }
 
-// TestCloseCalledAgainShareOneWaiterAndReportsADrainedJournal: retried Closes add no goroutines, and
-// once the appends are done every Close says so, even with its context already over.
 func TestCloseCalledAgainShareOneWaiterAndReportsADrainedJournal(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		journalOf := newJournal(t, answering(map[uint16]answer{0: {after: answerDelay}}), onePartition)
@@ -696,8 +653,6 @@ func TestCloseCalledAgainShareOneWaiterAndReportsADrainedJournal(t *testing.T) {
 	})
 }
 
-// TestLatencyBoundsStrictlyIncrease: a bound dropped from the fixed-size literal would compile as a
-// zero bucket and file every slow publish in the wrong place.
 func TestLatencyBoundsStrictlyIncrease(t *testing.T) {
 	bounds := journal.LatencyBounds()
 	previous := time.Duration(0)
@@ -720,8 +675,6 @@ func bucketOf(t *testing.T, took time.Duration) int {
 	return len(bounds)
 }
 
-// TestConcurrentAppendsAreEachAnsweredOnTheirOwn: the ingester calls Append from every gRPC
-// handler at once.
 func TestConcurrentAppendsAreEachAnsweredOnTheirOwn(t *testing.T) {
 	publisher := acking()
 	journalOf := newJournal(t, publisher, fourPartitions)

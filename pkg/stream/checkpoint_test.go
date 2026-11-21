@@ -18,8 +18,6 @@ const (
 	windowsSection   = checkpoint.Tag(1)
 )
 
-// cellCodec keeps the request counts; latency sketches belong to the arena, which pkg/sketch
-// checkpoints on its own, so a restored cell starts with an empty sketch.
 type cellCodec struct {
 	capacity int
 }
@@ -92,10 +90,6 @@ func continueWith(r *run, batches []batch, last batch) afterRestart {
 	}
 }
 
-// TestRestoredWindowsContinueLikeTheOriginal: after a restore from a checkpoint taken between
-// batches, the same batches give the same on-time, late and early panes with the same revisions,
-// close the same series and count the same placements — in the original's capacity and in a
-// larger one, where the grown series ids are handed out only after the saved free ones.
 func TestRestoredWindowsContinueLikeTheOriginal(t *testing.T) {
 	rng := rand.New(rand.NewPCG(restoreSeed, restoreSeed))
 	for scenario := range restoreScenarios {

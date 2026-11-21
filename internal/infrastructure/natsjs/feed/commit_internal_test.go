@@ -144,8 +144,6 @@ func TestPurgeIsChunked(t *testing.T) {
 	}
 }
 
-// TestAPurgeStepStartsAtTheStreamsFirstRecord: records an operator purged meanwhile do not count against the
-// step, or a purge would remove nothing until the steps caught up.
 func TestAPurgeStepStartsAtTheStreamsFirstRecord(t *testing.T) {
 	truncated := identity{Created: streamCreated(), First: 600, Last: lastStreamRecord,
 		Bytes: (lastStreamRecord - 599) * recordBytes, Msgs: lastStreamRecord - 599}

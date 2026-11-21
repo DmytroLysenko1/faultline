@@ -31,8 +31,6 @@ func deadLetterShape(replicas int, duplicates time.Duration) streamShape {
 	}
 }
 
-// TestEnsureTopologyCreatesTheDeadLetterQueue: copies are never pushed out by newer ones and stay a week; the
-// stream answers reads at its leader, so a seed never reads a lagging replica.
 func TestEnsureTopologyCreatesTheDeadLetterQueue(t *testing.T) {
 	cluster := natsjstest.Start(t, threeNodes)
 
@@ -96,8 +94,6 @@ func TestAHandShortenedDeadLetterDedupWindowIsPutBack(t *testing.T) {
 	}
 }
 
-// TestDeadLetterTopologyFailureKeepsPartitions: a DLQ that drifted is its own error after the partitions are
-// ensured, so a processor with no corrupt record still starts.
 func TestDeadLetterTopologyFailureKeepsPartitions(t *testing.T) {
 	cluster := natsjstest.Start(t, singleNode)
 	topology := topologyOf(twoPartitions, oneReplica)

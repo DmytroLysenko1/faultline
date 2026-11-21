@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Checks the Linux kernel that Docker/kind run on: eBPF CO-RE needs BTF, the agent needs
-# kernel >= 5.15 and cgroup v2 (requirements.md, section 6.2).
 set -euo pipefail
 
 readonly MIN_MAJOR=5

@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# Shared helpers of the demo scripts (design step 1, slice 7, D1).
-# Source after hack/versions.env; the caller sets `script` (the log prefix).
-# Every kubectl and helm call names the demo cluster's context: the developer's current
-# context may point at a real cluster.
 
 cluster=faultline-demo
 context="kind-${cluster}"
