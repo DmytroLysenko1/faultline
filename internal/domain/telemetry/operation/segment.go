@@ -3,10 +3,7 @@ package operation
 import "strings"
 
 const (
-	digits         = "0123456789"
-	hexDigits      = digits + "abcdefABCDEF"
-	letters        = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	tokenAlphabet  = letters + digits + "+=_-."
+	tokenMarks     = "+=_-."
 	uuidShape      = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 	encodedAt      = "%40"
 	shortHexLength = 7
@@ -44,7 +41,7 @@ func isOpaqueIdentifier(segment string) bool {
 
 func isNumber(segment string) bool {
 	number := strings.TrimPrefix(segment, "-")
-	return startsWithDigit(number) && endsWithDigit(number) && onlyOf(number, digits+".")
+	return startsWithDigit(number) && endsWithDigit(number) && onlyOf(number, isNumberByte)
 }
 
 func hasDigitRun(segment string, length int) bool {
@@ -63,8 +60,8 @@ func hasDigitRun(segment string, length int) bool {
 }
 
 func endsWithNumber(segment string) bool {
-	word := strings.TrimRight(segment, digits)
-	return word != segment && len(word) > 1 && strings.ContainsAny(word[len(word)-1:], "-_")
+	word := strings.TrimRightFunc(segment, isDigitRune)
+	return word != segment && len(word) > 1 && isWordSeparator(word[len(word)-1])
 }
 
 func isEmail(segment string) bool {
@@ -72,13 +69,13 @@ func isEmail(segment string) bool {
 }
 
 func isHexIdentifier(segment string) bool {
-	if !onlyOf(segment, hexDigits) {
+	if !onlyOf(segment, isHexDigit) {
 		return false
 	}
 	if len(segment) >= longHexLength {
 		return true
 	}
-	return len(segment) >= shortHexLength && strings.ContainsAny(segment, digits) && !onlyOf(segment, digits)
+	return len(segment) >= shortHexLength && hasDigitRun(segment, 1) && !onlyOf(segment, isDigit)
 }
 
 func containsUUID(segment string) bool {
@@ -103,11 +100,11 @@ func matchesUUIDShape(shape, b byte) bool {
 	if shape == '-' {
 		return b == '-'
 	}
-	return strings.IndexByte(hexDigits, b) >= 0
+	return isHexDigit(b)
 }
 
 func isToken(segment string) bool {
-	return len(segment) >= tokenLength && onlyOf(segment, tokenAlphabet) && characterSwitches(segment) >= tokenSwitches
+	return len(segment) >= tokenLength && onlyOf(segment, isTokenByte) && characterSwitches(segment) >= tokenSwitches
 }
 
 func characterSwitches(segment string) int {
@@ -128,8 +125,13 @@ func isLetterDigitBoundary(previous, current byte) bool {
 	return (isLetter(previous) && isDigit(current)) || (isDigit(previous) && isLetter(current))
 }
 
-func onlyOf(segment, alphabet string) bool {
-	return strings.Trim(segment, alphabet) == ""
+func onlyOf(segment string, allowed func(b byte) bool) bool {
+	for i := range len(segment) {
+		if !allowed(segment[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func startsWithDigit(segment string) bool {
@@ -154,4 +156,28 @@ func isLower(b byte) bool {
 
 func isUpper(b byte) bool {
 	return 'A' <= b && b <= 'Z'
+}
+
+func isDigitRune(r rune) bool {
+	return '0' <= r && r <= '9'
+}
+
+func isHexDigit(b byte) bool {
+	return isDigit(b) || ('a' <= b && b <= 'f') || ('A' <= b && b <= 'F')
+}
+
+func isNumberByte(b byte) bool {
+	return isDigit(b) || b == '.'
+}
+
+func isWordSeparator(b byte) bool {
+	return b == '-' || b == '_'
+}
+
+func isAlphanumeric(b byte) bool {
+	return isLetter(b) || isDigit(b)
+}
+
+func isTokenByte(b byte) bool {
+	return isAlphanumeric(b) || strings.IndexByte(tokenMarks, b) >= 0
 }

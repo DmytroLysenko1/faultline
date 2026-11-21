@@ -64,5 +64,9 @@ func isParameter(segment string) bool {
 }
 
 func isParameterName(parameter string) bool {
-	return onlyOf(parameter, letters+digits+"_")
+	return onlyOf(parameter, isParameterByte)
+}
+
+func isParameterByte(b byte) bool {
+	return isAlphanumeric(b) || b == '_'
 }

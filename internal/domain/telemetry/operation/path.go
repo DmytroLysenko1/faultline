@@ -7,7 +7,7 @@ const (
 	identifier      = "{id}"
 	overflowSegment = "…"
 	schemeSeparator = "://"
-	schemeAlphabet  = letters + digits + "+.-"
+	schemeMarks     = "+.-"
 )
 
 type segments struct {
@@ -63,7 +63,7 @@ func pathOfURL(url string) string {
 }
 
 func isScheme(scheme string) bool {
-	return scheme != "" && isLetter(scheme[0]) && onlyOf(scheme, schemeAlphabet)
+	return scheme != "" && isLetter(scheme[0]) && onlyOf(scheme, isSchemeByte)
 }
 
 func (f *Facts) path() (string, bool) {
@@ -76,4 +76,8 @@ func (f *Facts) path() (string, bool) {
 		return pathOfURL(f.URL), true
 	}
 	return "", false
+}
+
+func isSchemeByte(b byte) bool {
+	return isAlphanumeric(b) || strings.IndexByte(schemeMarks, b) >= 0
 }
