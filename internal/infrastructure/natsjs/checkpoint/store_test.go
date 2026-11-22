@@ -119,11 +119,17 @@ func (l *live) ensureJournal(t *testing.T) {
 
 func (l *live) created(t *testing.T) time.Time {
 	t.Helper()
-	stream, err := l.js.Stream(t.Context(), l.options.Topology.Stream(0))
-	if err != nil {
-		t.Fatalf("journal stream: %v", err)
-	}
-	return stream.CachedInfo().Created
+	name := l.options.Topology.Stream(0)
+	var created time.Time
+	natsjstest.Eventually(t, "the info of stream "+name, func(ctx context.Context) error {
+		stream, err := l.js.Stream(ctx, name)
+		if err != nil {
+			return err
+		}
+		created = stream.CachedInfo().Created
+		return nil
+	})
+	return created
 }
 
 func (l *live) putWithCLI(t *testing.T, name string, image []byte, meta *processing.CheckpointMeta) *jetstream.ObjectInfo {
@@ -359,10 +365,8 @@ func TestStakingOnTheRealBucketPurgesAStaleObjectOfAnOlderEpoch(t *testing.T) {
 	l.ensureJournal(t)
 	store := l.open(t)
 	created := l.created(t)
-	meta := checkpointMeta(created)
-	l.raisePointer(t, l.putWithCLI(t, "1-42", image(smallImage), &meta), created)
-	stale := checkpointMeta(created)
-	l.putWithCLI(t, "1-30", image(smallImage), &stale)
+	l.raisePointer(t, l.putWithCLI(t, "1-42", image(smallImage), new(checkpointMeta(created))), created)
+	l.putWithCLI(t, "1-30", image(smallImage), new(checkpointMeta(created)))
 	restored, reader, err := store.Latest(t.Context(), 0)
 	if err != nil {
 		t.Fatalf("Latest: %v", err)
@@ -425,8 +429,7 @@ func TestAReadThroughALeaderChangeOfTheBucketStillRestores(t *testing.T) {
 	store := l.open(t)
 	created := l.created(t)
 	want := image(bigImage)
-	meta := checkpointMeta(created)
-	l.raisePointer(t, l.putWithCLI(t, "1-42", want, &meta), created)
+	l.raisePointer(t, l.putWithCLI(t, "1-42", want, new(checkpointMeta(created))), created)
 	_, reader, err := store.Latest(t.Context(), 0)
 	if err != nil {
 		t.Fatalf("Latest: %v", err)
@@ -476,8 +479,7 @@ func TestDiscardOnTheRealBucketEmptiesThePointerAndKeepsThePreviousObject(t *tes
 	l.ensureJournal(t)
 	store := l.open(t)
 	created := l.created(t)
-	meta := checkpointMeta(created)
-	info := l.putWithCLI(t, "1-42", image(smallImage), &meta)
+	info := l.putWithCLI(t, "1-42", image(smallImage), new(checkpointMeta(created)))
 	l.raisePointer(t, info, created)
 	_, reader, err := store.Latest(t.Context(), 0)
 	if err != nil {
@@ -509,8 +511,7 @@ func TestLatestOverADeletedObjectBucketIsLostState(t *testing.T) {
 	l.ensureJournal(t)
 	store := l.open(t)
 	created := l.created(t)
-	meta := checkpointMeta(created)
-	l.raisePointer(t, l.putWithCLI(t, "1-42", image(smallImage), &meta), created)
+	l.raisePointer(t, l.putWithCLI(t, "1-42", image(smallImage), new(checkpointMeta(created))), created)
 	if err := l.js.DeleteStream(t.Context(), "OBJ_faultline_checkpoints_p0"); err != nil {
 		t.Fatalf("delete bucket: %v", err)
 	}

@@ -23,6 +23,8 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/natsjstest"
 )
 
+const natsResetPendingAcks = "github.com/nats-io/nats.go/jetstream.(*jetStream).resetPendingAcksOnReconnect"
+
 const (
 	testPartition  = 0
 	testEpoch      = 7
@@ -49,7 +51,7 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m)
+	goleak.VerifyTestMain(m, goleak.IgnoreTopFunction(natsResetPendingAcks))
 }
 
 type storedObject struct {
@@ -220,27 +222,30 @@ func createJournal(t *testing.T, js jetstream.JetStream, options *Options) {
 	t.Helper()
 	name := options.Topology.Stream(options.Partition)
 	config := jetstream.StreamConfig{Name: name, Subjects: []string{journalSubject}}
-	ctx, cancel := context.WithTimeout(t.Context(), worldTimeout)
-	defer cancel()
-	for {
+	natsjstest.Eventually(t, "journal stream "+name, func(ctx context.Context) error {
 		_, err := js.CreateStream(ctx, config)
-		if err == nil {
-			return
-		}
-		if ctx.Err() != nil {
-			t.Fatalf("journal stream: %v", err)
-		}
-		time.Sleep(settlePoll)
-	}
+		return err
+	})
+	natsjstest.AwaitStreamLeader(t, js, name)
 }
 
 func (w *world) streamCreated(t *testing.T) time.Time {
 	t.Helper()
-	stream, err := w.operator.Stream(t.Context(), w.options.Topology.Stream(w.options.Partition))
-	if err != nil {
-		t.Fatalf("journal: %v", err)
-	}
-	return stream.CachedInfo().Created
+	return streamCreatedAt(t, w.operator, w.options.Topology.Stream(w.options.Partition))
+}
+
+func streamCreatedAt(t *testing.T, js jetstream.JetStream, name string) time.Time {
+	t.Helper()
+	var created time.Time
+	natsjstest.Eventually(t, "the info of stream "+name, func(ctx context.Context) error {
+		stream, err := js.Stream(ctx, name)
+		if err != nil {
+			return err
+		}
+		created = stream.CachedInfo().Created
+		return nil
+	})
+	return created
 }
 
 func (w *world) putObject(t *testing.T, epoch, position uint64, data []byte) *objectRef {

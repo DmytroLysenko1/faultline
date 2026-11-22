@@ -105,11 +105,17 @@ func (l *liveJournal) rawJetStream(t *testing.T) jetstream.JetStream {
 
 func (l *liveJournal) stored(t *testing.T, partition uint16) uint64 {
 	t.Helper()
-	stream, err := l.rawJetStream(t).Stream(t.Context(), l.topology.Stream(partition))
-	if err != nil {
-		t.Fatalf("stream %d: %v", partition, err)
-	}
-	return stream.CachedInfo().State.Msgs
+	js := l.rawJetStream(t)
+	var msgs uint64
+	natsjstest.Eventually(t, "the state of stream "+l.topology.Stream(partition), func(ctx context.Context) error {
+		stream, err := js.Stream(ctx, l.topology.Stream(partition))
+		if err != nil {
+			return err
+		}
+		msgs = stream.CachedInfo().State.Msgs
+		return nil
+	})
+	return msgs
 }
 
 func TestARequestIsStoredOncePerPartitionAndItsRetryIsADuplicate(t *testing.T) {

@@ -344,7 +344,7 @@ func TestEnsureTopologyRidesOutAReconnect(t *testing.T) {
 	cluster := natsjstest.Start(t, threeNodes)
 	conn := dialURLs(t, cluster.URLs()[:1])
 	cluster.Stop(0)
-	ctx, cancel := context.WithTimeout(t.Context(), eventuallyWithin)
+	ctx, cancel := context.WithTimeout(t.Context(), natsjstest.SettleWithin)
 	defer cancel()
 
 	err := conn.EnsureTopology(ctx, topologyOf(onePartition, oneReplica), natsjstest.Held{})

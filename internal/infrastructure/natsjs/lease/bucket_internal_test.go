@@ -14,6 +14,8 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/natsjstest"
 )
 
+const kvStreamPrefix = "KV_"
+
 const (
 	embeddedTTL      = 6 * time.Second
 	embeddedStep     = 200 * time.Millisecond
@@ -139,7 +141,9 @@ func TestNATSAnswersWhatTheFakeAnswers(t *testing.T) {
 		t.Run(strconv.Itoa(nodes)+" nodes", func(t *testing.T) {
 			opening, cancel := context.WithTimeout(t.Context(), embeddedBound)
 			defer cancel()
-			kv, _ := embeddedBucket(t, opening, natsjstest.Start(t, nodes).URLs()[0], nodes)
+			url := natsjstest.Start(t, nodes).URLs()[0]
+			kv, _ := embeddedBucket(t, opening, url, nodes)
+			natsjstest.AwaitStreamLeader(t, natsjstest.JetStream(t, url), kvStreamPrefix+kv.Bucket())
 			for i, tt := range tests {
 				t.Run(tt.name, func(t *testing.T) {
 					ctx, cancel := context.WithTimeout(t.Context(), embeddedBound)
