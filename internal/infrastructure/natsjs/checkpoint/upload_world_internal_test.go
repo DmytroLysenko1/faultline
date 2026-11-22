@@ -81,7 +81,7 @@ func (w *world) startedAfter(t *testing.T, prepare func()) (*Sink, *fakeRetentio
 	if err := latestErr(w.store.Latest(t.Context(), testPartition)); !errors.Is(err, processing.ErrNoCheckpoint) {
 		t.Fatalf("Latest: %v", err)
 	}
-	if _, err := w.store.StakeEmpty(t.Context()); err != nil {
+	if _, err := w.store.Stake(t.Context()); err != nil {
 		t.Fatalf("StakeEmpty: %v", err)
 	}
 	w.store.chunkBytes = uploadChunk

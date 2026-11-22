@@ -302,6 +302,27 @@ func (w *world) pointer(t *testing.T) (*pointerValue, uint64) {
 
 func (w *world) restorable(t *testing.T) (*objectRef, processing.CheckpointMeta) {
 	t.Helper()
+	ref, meta, reader := w.latestObject(t)
+	if _, err := io.Copy(io.Discard, reader); err != nil {
+		t.Fatalf("read the latest: %v", err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	return ref, meta
+}
+
+func (w *world) found(t *testing.T) *objectRef {
+	t.Helper()
+	ref, _, reader := w.latestObject(t)
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	return ref
+}
+
+func (w *world) latestObject(t *testing.T) (*objectRef, processing.CheckpointMeta, io.ReadCloser) {
+	t.Helper()
 	ref := w.putObject(t, olderEpoch, restoredAt, imageOf(imageBytes))
 	w.setPointer(t, &pointerValue{Version: pointerVersion, Epoch: olderEpoch,
 		StreamCreated: w.streamCreated(t).Format(createdLayout), Current: ref})
@@ -309,10 +330,7 @@ func (w *world) restorable(t *testing.T) (*objectRef, processing.CheckpointMeta)
 	if err != nil {
 		t.Fatalf("Latest: %v", err)
 	}
-	if err := reader.Close(); err != nil {
-		t.Fatalf("close: %v", err)
-	}
-	return ref, meta
+	return ref, meta, reader
 }
 
 func isPointerWrite(f *natsjstest.Frame) bool {

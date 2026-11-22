@@ -18,7 +18,7 @@ func TestStakeTakesThePointerForTheNewEpochAndKeepsWhatTheOperatorWrote(t *testi
 	w := startWorld(t)
 	ref, meta := w.restorable(t)
 
-	staked, err := w.store.Stake(t.Context(), &meta)
+	staked, err := w.store.Stake(t.Context())
 
 	if err != nil {
 		t.Fatalf("Stake: %v", err)
@@ -66,11 +66,11 @@ func TestStakeRefusesAPointerThatMovedAfterLatest(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := startWorld(t)
-			ref, meta := w.restorable(t)
+			ref, _ := w.restorable(t)
 			tt.arrange(t, w, ref)
 			before, _ := w.pointer(t)
 
-			_, err := w.store.Stake(t.Context(), &meta)
+			_, err := w.store.Stake(t.Context())
 
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("Stake: err = %v, want %v", err, tt.wantErr)
@@ -82,26 +82,26 @@ func TestStakeRefusesAPointerThatMovedAfterLatest(t *testing.T) {
 	}
 }
 
-func TestStakeNeedsTheCheckpointLatestReturned(t *testing.T) {
+func TestAnUnreadObjectCannotBeStaked(t *testing.T) {
 	w := startWorld(t)
-	_, meta := w.restorable(t)
-	meta.Position.Sequence++
+	w.found(t)
 
-	_, err := w.store.Stake(t.Context(), &meta)
+	_, err := w.store.Stake(t.Context())
 
 	if !errors.Is(err, processing.ErrCheckpointRefused) {
-		t.Fatalf("Stake: err = %v, want %v", err, processing.ErrCheckpointRefused)
+		t.Fatalf("Stake of an object Latest found but nobody read: err = %v, want %v", err,
+			processing.ErrCheckpointRefused)
 	}
 }
 
 func TestASecondStakeIsOutOfOrder(t *testing.T) {
 	w := startWorld(t)
-	_, meta := w.restorable(t)
-	if _, err := w.store.Stake(t.Context(), &meta); err != nil {
+	_, _ = w.restorable(t)
+	if _, err := w.store.Stake(t.Context()); err != nil {
 		t.Fatalf("first Stake: %v", err)
 	}
 
-	_, err := w.store.Stake(t.Context(), &meta)
+	_, err := w.store.Stake(t.Context())
 
 	if !errors.Is(err, processing.ErrCheckpointRefused) {
 		t.Fatalf("second Stake: err = %v, want %v", err, processing.ErrCheckpointRefused)
@@ -110,7 +110,7 @@ func TestASecondStakeIsOutOfOrder(t *testing.T) {
 
 func TestAStakeRacedByAnotherWriterIsAMovedPointer(t *testing.T) {
 	w := startWorld(t)
-	ref, meta := w.restorable(t)
+	ref, _ := w.restorable(t)
 	raced := &pointerValue{Version: pointerVersion, Epoch: olderEpoch, Current: ref, DiscardedAt: 3}
 	var once atomic.Bool
 	w.proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
@@ -120,7 +120,7 @@ func TestAStakeRacedByAnotherWriterIsAMovedPointer(t *testing.T) {
 		return natsjstest.Forward()
 	})
 
-	_, err := w.store.Stake(t.Context(), &meta)
+	_, err := w.store.Stake(t.Context())
 
 	if !errors.Is(err, processing.ErrCheckpointMoved) {
 		t.Fatalf("Stake: err = %v, want %v", err, processing.ErrCheckpointMoved)
@@ -132,13 +132,13 @@ func TestAStakeRacedByAnotherWriterIsAMovedPointer(t *testing.T) {
 
 func TestAStakeRefusedIsNotStakedAndMayBeRetried(t *testing.T) {
 	w := startWorld(t)
-	_, meta := w.restorable(t)
+	_, _ = w.restorable(t)
 	w.once(isPointerWrite, natsjstest.Drop())
-	if _, err := w.store.Stake(t.Context(), &meta); err == nil {
+	if _, err := w.store.Stake(t.Context()); err == nil {
 		t.Fatal("first Stake passed although its write never landed")
 	}
 
-	_, err := w.store.Stake(t.Context(), &meta)
+	_, err := w.store.Stake(t.Context())
 
 	if got, _ := w.pointer(t); err != nil || got.Epoch != testEpoch {
 		t.Fatalf("retried Stake: err = %v, epoch %d; want success at %d", err, got.Epoch, testEpoch)
@@ -170,7 +170,7 @@ func TestStakeEmptyStartsAFreshPartition(t *testing.T) {
 				t.Fatalf("Latest: %v, want %v", err, processing.ErrNoCheckpoint)
 			}
 
-			staked, err := w.store.StakeEmpty(t.Context())
+			staked, err := w.store.Stake(t.Context())
 
 			if err != nil {
 				t.Fatalf("StakeEmpty: %v", err)
@@ -193,7 +193,7 @@ func TestStakeEmptyNeverWritesOverACheckpointThatAppeared(t *testing.T) {
 	ref := w.putObject(t, olderEpoch, 3, imageOf(9))
 	w.setPointer(t, &pointerValue{Version: pointerVersion, Epoch: olderEpoch, Current: ref})
 
-	_, err := w.store.StakeEmpty(t.Context())
+	_, err := w.store.Stake(t.Context())
 
 	if got, _ := w.pointer(t); !errors.Is(err, processing.ErrCheckpointMoved) || got.Current == nil {
 		t.Fatalf("StakeEmpty: err = %v, pointer %+v; want %v and the zombie checkpoint kept", err, got,
@@ -204,7 +204,7 @@ func TestStakeEmptyNeverWritesOverACheckpointThatAppeared(t *testing.T) {
 func TestStakeEmptyNeedsLatestWithoutACheckpoint(t *testing.T) {
 	w := startWorld(t)
 
-	_, err := w.store.StakeEmpty(t.Context())
+	_, err := w.store.Stake(t.Context())
 
 	if !errors.Is(err, processing.ErrCheckpointRefused) {
 		t.Fatalf("StakeEmpty before Latest: err = %v, want %v", err, processing.ErrCheckpointRefused)
@@ -219,7 +219,7 @@ func TestStakeEmptyRefusesAnEmptyPointerRewrittenAfterLatest(t *testing.T) {
 	}
 	w.setPointer(t, &pointerValue{Version: pointerVersion, Epoch: olderEpoch, DiscardedAt: 5})
 
-	_, err := w.store.StakeEmpty(t.Context())
+	_, err := w.store.Stake(t.Context())
 
 	if got, _ := w.pointer(t); !errors.Is(err, processing.ErrCheckpointMoved) || got.Epoch != olderEpoch {
 		t.Fatalf("StakeEmpty: err = %v, epoch %d; want %v and nothing written", err, got.Epoch,
@@ -234,7 +234,7 @@ func TestACreateThatNeverLandedIsAMovedPointer(t *testing.T) {
 	}
 	w.once(isPointerWrite, natsjstest.Drop())
 
-	_, err := w.store.StakeEmpty(t.Context())
+	_, err := w.store.Stake(t.Context())
 
 	if _, exists := w.rawPointer(t); !errors.Is(err, processing.ErrCheckpointMoved) || exists {
 		t.Fatalf("StakeEmpty: err = %v, key %t; want %v and no key", err, exists, processing.ErrCheckpointMoved)
@@ -270,7 +270,7 @@ func TestAnEmptyStartNeedsLatestToHaveFoundNothing(t *testing.T) {
 			w.proxy.Intercept(nil)
 			before, existed := w.rawPointer(t)
 
-			_, err := w.store.StakeEmpty(t.Context())
+			_, err := w.store.Stake(t.Context())
 
 			after, exists := w.rawPointer(t)
 			unchanged := exists == existed && bytes.Equal(before, after)
@@ -291,7 +291,7 @@ func TestStakeNeedsACheckpointLatestCouldOpen(t *testing.T) {
 		t.Fatalf("Latest: %v, want %v", err, processing.ErrCheckpointUnusable)
 	}
 
-	_, err := w.store.Stake(t.Context(), &processing.CheckpointMeta{})
+	_, err := w.store.Stake(t.Context())
 
 	if got, _ := w.pointer(t); !errors.Is(err, processing.ErrCheckpointRefused) || got.Epoch != olderEpoch {
 		t.Fatalf("Stake: err = %v, epoch %d; want %v and the pointer kept", err, got.Epoch,

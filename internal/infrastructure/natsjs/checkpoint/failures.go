@@ -32,6 +32,7 @@ func translations() []translation {
 		{cause: errCheckpointMissing, layer: processing.ErrCheckpointUnusable},
 		{cause: errStreamRecreated, layer: processing.ErrCheckpointUnusable},
 		{cause: errCorrupt, layer: processing.ErrCheckpointUnusable},
+		{cause: errReadIncomplete, layer: processing.ErrCheckpointUnusable},
 		{cause: errEpochRegressed, layer: processing.ErrCheckpointRefused},
 		{cause: errStoreState, layer: processing.ErrCheckpointRefused},
 		{cause: errStoreClosed, layer: processing.ErrCheckpointRefused},

@@ -30,7 +30,7 @@ func TestAnEmptyStakeRacedByAnotherCreateIsAMovedPointer(t *testing.T) {
 		return natsjstest.Forward()
 	})
 
-	_, err := w.store.StakeEmpty(t.Context())
+	_, err := w.store.Stake(t.Context())
 
 	if got, _ := w.pointer(t); !errors.Is(err, processing.ErrCheckpointMoved) || got.Epoch != olderEpoch {
 		t.Fatalf("StakeEmpty: err = %v, epoch %d; want %v and the other writer's pointer", err, got.Epoch,
@@ -118,7 +118,7 @@ func TestAMetaGoneBeforeItWasReadDoesNotStopTheSweep(t *testing.T) {
 	w := startWorld(t)
 	stale := w.putObject(t, olderEpoch, 20, imageOf(9))
 	other := w.putObject(t, olderEpoch, 21, imageOf(9))
-	_, meta := w.restorable(t)
+	_, _ = w.restorable(t)
 	subject := []byte(`"last_by_subj":"` + w.metaSubject(stale.Name) + `"`)
 	var gone atomic.Bool
 	w.proxy.Intercept(func(f *natsjstest.Frame) natsjstest.Verdict {
@@ -128,7 +128,7 @@ func TestAMetaGoneBeforeItWasReadDoesNotStopTheSweep(t *testing.T) {
 		return natsjstest.Forward()
 	})
 
-	if _, err := w.store.Stake(t.Context(), &meta); err != nil {
+	if _, err := w.store.Stake(t.Context()); err != nil {
 		t.Fatalf("Stake: %v", err)
 	}
 
@@ -156,11 +156,11 @@ func (w *world) purgeSubject(t *testing.T, subject string) {
 func TestASweepStopsWithoutAValidLeaseAndIsNoFailure(t *testing.T) {
 	w := startWorld(t)
 	stale := w.putObject(t, olderEpoch, 20, imageOf(9))
-	_, meta := w.restorable(t)
+	_, _ = w.restorable(t)
 	before := w.subjects(t)
 	w.store.lease = &validTimes{left: writeLeaseChecks}
 
-	if _, err := w.store.Stake(t.Context(), &meta); err != nil {
+	if _, err := w.store.Stake(t.Context()); err != nil {
 		t.Fatalf("Stake: %v", err)
 	}
 

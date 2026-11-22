@@ -33,10 +33,10 @@ func (w *world) once(match func(f *natsjstest.Frame) bool, then natsjstest.Verdi
 
 func TestAStakeWhoseAnswerWasLostCountsAsDoneWhenThePointerIsOurs(t *testing.T) {
 	w := startWorld(t)
-	_, meta := w.restorable(t)
+	_, _ = w.restorable(t)
 	w.once(isPointerWrite, natsjstest.LoseReply())
 
-	_, err := w.store.Stake(t.Context(), &meta)
+	_, err := w.store.Stake(t.Context())
 
 	if got, _ := w.pointer(t); err != nil || got.Epoch != testEpoch || w.proxy.AnswersAltered() != 1 {
 		t.Fatalf("Stake: err = %v, pointer epoch %d, %d answers lost; want success at %d after one lost answer", err,
@@ -46,10 +46,10 @@ func TestAStakeWhoseAnswerWasLostCountsAsDoneWhenThePointerIsOurs(t *testing.T) 
 
 func TestAStakeThatNeverLandedIsAMovedPointer(t *testing.T) {
 	w := startWorld(t)
-	_, meta := w.restorable(t)
+	_, _ = w.restorable(t)
 	w.once(isPointerWrite, natsjstest.Drop())
 
-	_, err := w.store.Stake(t.Context(), &meta)
+	_, err := w.store.Stake(t.Context())
 
 	if got, _ := w.pointer(t); !errors.Is(err, processing.ErrCheckpointMoved) || got.Epoch != olderEpoch {
 		t.Fatalf("Stake: err = %v, pointer epoch %d; want %v and the old epoch", err, got.Epoch,
@@ -197,7 +197,7 @@ func TestAnObjectThatNeverMatchesItsPointerIsCorruptAfterThreeReads(t *testing.T
 
 func TestALeaseLostWhileThePointerIsReadStopsTheWrite(t *testing.T) {
 	w := startWorld(t)
-	_, meta := w.restorable(t)
+	_, _ = w.restorable(t)
 	_, before := w.pointer(t)
 	w.store.lease = &validTimes{left: 1}
 	var writes atomic.Int32
@@ -208,7 +208,7 @@ func TestALeaseLostWhileThePointerIsReadStopsTheWrite(t *testing.T) {
 		return natsjstest.Forward()
 	})
 
-	_, err := w.store.Stake(t.Context(), &meta)
+	_, err := w.store.Stake(t.Context())
 
 	if _, after := w.pointer(t); !errors.Is(err, processing.ErrLeaseLost) || after != before || writes.Load() != 0 {
 		t.Fatalf("Stake: err = %v, revision %d→%d, %d writes; want %v and no write", err, before, after,
@@ -293,7 +293,7 @@ func TestStakingSweepsOnlyWhatNoHolderCanStillNeed(t *testing.T) {
 			w := startWorld(t)
 			stale := w.putObject(t, olderEpoch, 20, imageOf(9))
 			later := w.putObject(t, testEpoch+1, 50, imageOf(9))
-			ref, meta := w.restorable(t)
+			ref, _ := w.restorable(t)
 			orphan := w.store.chunkSubject("ORPHAN")
 			if _, err := w.operator.Publish(t.Context(), orphan, imageOf(9)); err != nil {
 				t.Fatalf("publish orphan: %v", err)
@@ -301,7 +301,7 @@ func TestStakingSweepsOnlyWhatNoHolderCanStillNeed(t *testing.T) {
 			published := w.lastTime(t, orphan)
 			w.store.now = func() time.Time { return published.Add(w.options.orphanAge() + tt.later) }
 
-			if _, err := w.store.Stake(t.Context(), &meta); err != nil {
+			if _, err := w.store.Stake(t.Context()); err != nil {
 				t.Fatalf("Stake: %v", err)
 			}
 

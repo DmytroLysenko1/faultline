@@ -42,6 +42,7 @@ func (s *Store) latestFor(ctx context.Context, partition uint16) (processing.Che
 		return processing.CheckpointMeta{}, nil, err
 	}
 	defer s.release()
+	s.nextGeneration()
 	meta, reader, err := s.latestOf(ctx)
 	s.settle(err)
 	return meta, reader, err

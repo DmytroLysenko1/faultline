@@ -16,29 +16,29 @@ const pointerWriteBudget = 2 * time.Second
 
 type nextValue func(found *pointer) (*pointerValue, error)
 
-func (s *Store) Stake(ctx context.Context, restored *processing.CheckpointMeta) (processing.Staked, error) {
+func (s *Store) Stake(ctx context.Context) (processing.Staked, error) {
 	staking, err := s.enter(ctx)
 	if err != nil {
 		return processing.Staked{}, translate(err)
 	}
-	staked, err := s.stake(staking, restored)
+	staked, err := s.stake(staking)
 	return staked, translate(s.exitStake(err))
 }
 
-func (s *Store) StakeEmpty(ctx context.Context) (processing.Staked, error) {
-	staking, err := s.enter(ctx)
-	if err != nil {
-		return processing.Staked{}, translate(err)
-	}
-	staked, err := s.stakeEmpty(staking)
-	return staked, translate(s.exitStake(err))
-}
-
-func (s *Store) stake(ctx context.Context, restored *processing.CheckpointMeta) (processing.Staked, error) {
+func (s *Store) stake(ctx context.Context) (processing.Staked, error) {
 	known := s.remembered()
-	if known.verdict != outcomeRestorable || restored == nil || restored.Position != known.meta.Position {
-		return processing.Staked{}, fmt.Errorf("%w: stake needs the checkpoint Latest returned", errStoreState)
+	switch known.verdict {
+	case outcomeRestorable:
+		return s.restake(ctx, &known)
+	case outcomeEmpty:
+		return s.stakeEmpty(ctx, &known)
+	case outcomeRefused, outcomeUnusable, outcomeFound:
 	}
+	return processing.Staked{}, fmt.Errorf("%w: stake needs a checkpoint Latest found and read to its end, or none",
+		errStoreState)
+}
+
+func (s *Store) restake(ctx context.Context, known *address) (processing.Staked, error) {
 	if err := s.write(ctx, s.restakeOf(known.current)); err != nil {
 		return processing.Staked{}, err
 	}
@@ -49,11 +49,7 @@ func (s *Store) stake(ctx context.Context, restored *processing.CheckpointMeta) 
 	}, nil
 }
 
-func (s *Store) stakeEmpty(ctx context.Context) (processing.Staked, error) {
-	known := s.remembered()
-	if known.verdict != outcomeEmpty {
-		return processing.Staked{}, fmt.Errorf("%w: stake empty needs Latest without a checkpoint", errStoreState)
-	}
+func (s *Store) stakeEmpty(ctx context.Context, known *address) (processing.Staked, error) {
 	if err := s.write(ctx, s.emptyOf(known.revision)); err != nil {
 		return processing.Staked{}, err
 	}

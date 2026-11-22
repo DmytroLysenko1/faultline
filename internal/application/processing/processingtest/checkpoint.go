@@ -53,6 +53,7 @@ type CheckpointStore struct {
 	closed      bool
 	onWrite     func() error
 	onBegin     func(*processing.CheckpointMeta)
+	resume      resumeState
 }
 
 func NewCheckpointStore(tb testing.TB, retention Retention) *CheckpointStore {
@@ -204,15 +205,23 @@ func (s *CheckpointStore) Latest(_ context.Context, partition uint16,
 ) (processing.CheckpointMeta, io.ReadCloser, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.resume.begin(partition)
 	if s.failLatest != nil {
+		s.resume.verdict = verdictOf(s.failLatest)
 		return processing.CheckpointMeta{}, nil, s.failLatest
 	}
 	stored, found := s.latest[partition]
 	if !found {
+		s.resume.verdict = verdictEmpty
 		return processing.CheckpointMeta{}, nil, fmt.Errorf("partition %d: %w", partition, processing.ErrNoCheckpoint)
 	}
+	s.resume.foundCheckpoint(&stored)
 	s.openReaders++
-	return stored.meta, &checkpointReader{store: s, Reader: bytes.NewReader(stored.data)}, nil
+	return stored.meta, &checkpointReader{
+		store:      s,
+		data:       bytes.NewReader(stored.data),
+		generation: s.resume.generation,
+	}, nil
 }
 
 func (s *CheckpointStore) Committed() []processing.CheckpointMeta {
@@ -345,9 +354,23 @@ func (w *spoolWriter) Abort() error {
 }
 
 type checkpointReader struct {
-	*bytes.Reader
-	store  *CheckpointStore
-	closed bool
+	data       *bytes.Reader
+	store      *CheckpointStore
+	generation uint64
+	settled    sync.Once
+	closed     bool
+}
+
+func (r *checkpointReader) Read(out []byte) (int, error) {
+	if err := r.store.readFailure(r.generation); err != nil {
+		r.settle(verdictOf(err))
+		return 0, err
+	}
+	read, err := r.data.Read(out)
+	if errors.Is(err, io.EOF) {
+		r.settle(verdictRestorable)
+	}
+	return read, err
 }
 
 func (r *checkpointReader) Close() error {
@@ -355,5 +378,12 @@ func (r *checkpointReader) Close() error {
 		return errReaderClosed
 	}
 	r.closed = true
+	r.settle(verdictUnusable)
 	return r.store.readerClosed()
+}
+
+func (r *checkpointReader) settle(verdict resumeVerdict) {
+	r.settled.Do(func() {
+		r.store.settleRead(r.generation, verdict)
+	})
 }

@@ -459,13 +459,13 @@ func (w *world) isSweepListing(f *natsjstest.Frame) bool {
 func TestACloseDuringTheStakeSweepIsNoSweepFailure(t *testing.T) {
 	w := startWorld(t)
 	w.putObject(t, testEpoch-1, firstPosition, imageOf(smallBytes))
-	_, meta := w.restorable(t)
+	_, _ = w.restorable(t)
 	verdict, held := natsjstest.Hold()
 	t.Cleanup(held.Release)
 	fired := w.once(w.isSweepListing, verdict)
 	staked := make(chan error, 1)
 	go func() {
-		_, err := w.store.Stake(t.Context(), &meta)
+		_, err := w.store.Stake(t.Context())
 		staked <- err
 	}()
 	waitFor(t, fired)

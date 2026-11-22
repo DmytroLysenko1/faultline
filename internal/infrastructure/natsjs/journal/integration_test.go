@@ -59,6 +59,10 @@ func startJournal(tb testing.TB, topology natsjs.Topology) *liveJournal {
 	if err := conn.EnsureTopology(tb.Context(), topology, natsjstest.Held{}); err != nil {
 		tb.Fatalf("EnsureTopology: %v", err)
 	}
+	leaders := natsjstest.JetStream(tb, cluster.URLs()[0])
+	for partition := range uint16(topology.Partitions) {
+		natsjstest.AwaitStreamLeader(tb, leaders, topology.Stream(partition))
+	}
 	publisher, err := conn.Publisher(topology)
 	if err != nil {
 		tb.Fatalf("Publisher: %v", err)

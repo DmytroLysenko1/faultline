@@ -20,10 +20,10 @@ const (
 
 func TestAFailedSweepLeavesTheStakeStanding(t *testing.T) {
 	w := startWorld(t)
-	_, meta := w.restorable(t)
+	_, _ = w.restorable(t)
 	w.once(w.isBucketInfo, natsjstest.Drop())
 
-	_, err := w.store.Stake(t.Context(), &meta)
+	_, err := w.store.Stake(t.Context())
 
 	if got, _ := w.pointer(t); err != nil || got.Epoch != testEpoch {
 		t.Fatalf("Stake: err = %v, epoch %d; want a standing stake", err, got.Epoch)
@@ -36,7 +36,7 @@ func TestAFailedSweepLeavesTheStakeStanding(t *testing.T) {
 func TestAnUnreadableMetaKeepsEveryChunkWithoutAMeta(t *testing.T) {
 	w := startWorld(t)
 	stale := w.putObject(t, olderEpoch, 20, imageOf(9))
-	_, meta := w.restorable(t)
+	_, _ = w.restorable(t)
 	w.publishRaw(t, w.metaSubject(unreadableMetaName), []byte("{not json"))
 	orphan := w.store.chunkSubject("OLD")
 	if _, err := w.operator.Publish(t.Context(), orphan, imageOf(9)); err != nil {
@@ -45,7 +45,7 @@ func TestAnUnreadableMetaKeepsEveryChunkWithoutAMeta(t *testing.T) {
 	published := w.lastTime(t, orphan)
 	w.store.now = func() time.Time { return published.Add(time.Hour + w.options.orphanAge()) }
 
-	if _, err := w.store.Stake(t.Context(), &meta); err != nil {
+	if _, err := w.store.Stake(t.Context()); err != nil {
 		t.Fatalf("Stake: %v", err)
 	}
 
@@ -67,9 +67,9 @@ func TestASweepKeepsAnObjectWhoseNameDoesNotParse(t *testing.T) {
 	if _, err := w.objects.PutBytes(t.Context(), unparsedName, imageOf(9)); err != nil {
 		t.Fatalf("put %s: %v", unparsedName, err)
 	}
-	_, meta := w.restorable(t)
+	_, _ = w.restorable(t)
 
-	if _, err := w.store.Stake(t.Context(), &meta); err != nil {
+	if _, err := w.store.Stake(t.Context()); err != nil {
 		t.Fatalf("Stake: %v", err)
 	}
 
@@ -85,10 +85,10 @@ func isChunkPurge(f *natsjstest.Frame) bool {
 func TestAMetaSweptBeforeItsChunksFailedIsStillCounted(t *testing.T) {
 	w := startWorld(t)
 	stale := w.putObject(t, olderEpoch, 20, imageOf(9))
-	_, meta := w.restorable(t)
+	_, _ = w.restorable(t)
 	w.once(isChunkPurge, natsjstest.Answer([]byte(unavailableAnswer)))
 
-	if _, err := w.store.Stake(t.Context(), &meta); err != nil {
+	if _, err := w.store.Stake(t.Context()); err != nil {
 		t.Fatalf("Stake: %v", err)
 	}
 

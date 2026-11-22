@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
@@ -19,14 +20,17 @@ const (
 )
 
 var (
-	errReadDone  = errors.New("checkpoint object read and verified")
-	errNoMessage = errors.New("no message on the subject")
+	errReadDone       = errors.New("checkpoint object read and verified")
+	errReadIncomplete = errors.New("checkpoint object closed before it was read to its end")
+	errNoMessage      = errors.New("no message on the subject")
 )
 
 type objectReader struct {
 	fetch   func(sequence uint64) (*jetstream.RawStreamMsg, error)
 	before  func(read uint64) error
 	still   func() error
+	settled func(err error)
+	once    sync.Once
 	cancel  context.CancelFunc
 	info    *jetstream.ObjectInfo
 	subject string
@@ -40,9 +44,14 @@ type objectReader struct {
 
 func (s *Store) reader(ctx context.Context, info *jetstream.ObjectInfo) *objectReader {
 	readCtx, cancel := readContext(ctx, info.Size)
-	return s.readerFor(readCtx, cancel, info, func() error {
+	reader := s.readerFor(readCtx, cancel, info, func() error {
 		return s.stillCurrent(readCtx, info.NUID)
 	})
+	generation := s.currentGeneration()
+	reader.settled = func(err error) {
+		s.settleRead(generation, err)
+	}
+	return reader
 }
 
 func (s *Store) readerWith(ctx context.Context, info *jetstream.ObjectInfo, still func() error) *objectReader {
@@ -95,17 +104,40 @@ func (r *objectReader) Read(out []byte) (int, error) {
 }
 
 func (r *objectReader) fill() {
+	if r.err != nil {
+		return
+	}
 	for len(r.pending) == 0 && r.err == nil {
 		r.err = r.advance()
 	}
 	if r.err != nil {
 		r.cancel()
+		r.settleLast()
+	}
+}
+
+func (r *objectReader) settleLast() {
+	if !r.settle(r.err) && errors.Is(r.err, errReadDone) {
+		r.err = fmt.Errorf("%w: %q was closed while its end was read", errReadIncomplete, r.info.Name)
 	}
 }
 
 func (r *objectReader) Close() error {
 	r.cancel()
+	r.settle(errReadIncomplete)
 	return nil
+}
+
+func (r *objectReader) settle(err error) bool {
+	if r.settled == nil {
+		return true
+	}
+	won := false
+	r.once.Do(func() {
+		won = true
+		r.settled(err)
+	})
+	return won
 }
 
 func (r *objectReader) advance() error {

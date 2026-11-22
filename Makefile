@@ -66,7 +66,11 @@ endif
 ##@ Verification
 
 .PHONY: verify
-verify: mod-check lint test-race test-probes cover-check vuln proto-lint gen-check ## Everything CI runs
+verify: mod-check lint test-race test-probes cover-check vuln proto-lint gen-check core-diff-check ## Everything CI runs
+
+.PHONY: core-diff-check
+core-diff-check: ## Fail when a core file changed since v0.2.0 without a line in hack/core-diff.allow
+	./hack/core-diff-check.sh v0.2.0
 
 .PHONY: nilaway
 nilaway: $(NILAWAY) ## Report possible nil panics (advisory, not part of verify)

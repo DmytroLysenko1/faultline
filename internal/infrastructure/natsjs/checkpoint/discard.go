@@ -45,18 +45,15 @@ func (s *Store) discardOf(known *address) nextValue {
 
 func (s *Store) targeted(target processing.DiscardTarget, known *address) error {
 	if !known.read || !known.verdict.discardable() {
-		return fmt.Errorf("%w: discard needs a Latest that found an unusable or restorable checkpoint", errStoreState)
+		return fmt.Errorf("%w: discard needs a Latest whose checkpoint is unusable or restorable", errStoreState)
 	}
 	return s.sameTarget(target, known)
 }
 
 func (s *Store) sameTarget(target processing.DiscardTarget, known *address) error {
-	if target.Partition != s.options.Partition || target.Checkpoint != nuidOf(known.current) {
-		return fmt.Errorf("%w: target p%d %q, refused p%d %q", errDiscardTarget, target.Partition, target.Checkpoint,
-			s.options.Partition, nuidOf(known.current))
-	}
-	if known.current == nil && target.FirstSeq != known.firstSeq {
-		return fmt.Errorf("%w: target first sequence %d, stream %d", errDiscardTarget, target.FirstSeq, known.firstSeq)
+	refused := s.targetOf(known)
+	if target != refused {
+		return fmt.Errorf("%w: target %+v, refused %+v", errDiscardTarget, target, refused)
 	}
 	return nil
 }

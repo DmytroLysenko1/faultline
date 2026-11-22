@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"math/rand/v2"
 	"strconv"
 	"sync"
@@ -348,14 +349,17 @@ func (w *world) laterHolder(t *testing.T) *Store {
 	options := *w.options
 	options.Epoch = testEpoch + 1
 	next := newStore(&options, &fakeLease{valid: true}, &w.store.buckets, time.Now)
-	meta, reader, err := next.Latest(t.Context(), testPartition)
+	_, reader, err := next.Latest(t.Context(), testPartition)
 	if err != nil {
 		t.Fatalf("Latest of the next holder: %v", err)
+	}
+	if _, err := io.Copy(io.Discard, reader); err != nil {
+		t.Fatalf("read the latest of the next holder: %v", err)
 	}
 	if err := reader.Close(); err != nil {
 		t.Fatalf("close the latest: %v", err)
 	}
-	if _, err := next.Stake(t.Context(), &meta); err != nil {
+	if _, err := next.Stake(t.Context()); err != nil {
 		t.Fatalf("Stake of the next holder: %v", err)
 	}
 	return next
@@ -368,7 +372,7 @@ func TestTheServerRefusesAnUpdateAtARevisionTheFenceMovedPast(t *testing.T) {
 			if err := latestErr(w.store.Latest(t.Context(), testPartition)); !errors.Is(err, processing.ErrNoCheckpoint) {
 				t.Fatalf("Latest: %v", err)
 			}
-			if _, err := w.store.StakeEmpty(t.Context()); err != nil {
+			if _, err := w.store.Stake(t.Context()); err != nil {
 				t.Fatalf("StakeEmpty: %v", err)
 			}
 			entry, err := w.kv.Get(t.Context(), w.options.pointerKey())
@@ -508,14 +512,17 @@ func TestAnObjectPutByHandLeavesThePointerWhole(t *testing.T) {
 
 func (w *world) restarted(t *testing.T) (*Sink, *fakeRetention) {
 	t.Helper()
-	meta, reader, err := w.store.Latest(t.Context(), testPartition)
+	_, reader, err := w.store.Latest(t.Context(), testPartition)
 	if err != nil {
 		t.Fatalf("Latest: %v", err)
+	}
+	if _, err := io.Copy(io.Discard, reader); err != nil {
+		t.Fatalf("read the latest: %v", err)
 	}
 	if err := reader.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
-	if _, err := w.store.Stake(t.Context(), &meta); err != nil {
+	if _, err := w.store.Stake(t.Context()); err != nil {
 		t.Fatalf("Stake: %v", err)
 	}
 	w.store.chunkBytes = uploadChunk

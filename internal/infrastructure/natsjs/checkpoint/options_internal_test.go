@@ -208,7 +208,7 @@ func TestEveryCauseOfTheStoreHasAProcessingMeaning(t *testing.T) {
 	causes := []error{
 		errEpochRegressed, errPointerMoved, errObjectChanged, errCheckpointMissing, errStreamRecreated, errCorrupt,
 		errStoreClosed, errStoreState, errDiscardTarget, errLeaseLost, errPointerForeign, errFenced, errCASUnknown,
-		errUnresolved, errPositionRegressed, errNameCollision, errSweepLeaseLost,
+		errUnresolved, errPositionRegressed, errNameCollision, errSweepLeaseLost, errReadIncomplete,
 	}
 	for _, cause := range causes {
 		if !slices.ContainsFunc(translations(), func(t translation) bool { return errors.Is(t.cause, cause) }) {

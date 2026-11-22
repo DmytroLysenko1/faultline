@@ -370,7 +370,7 @@ func TestWaitDuringAStakeWaitsForIt(t *testing.T) {
 	w.holdFirst(held, isPointerWrite)
 	staked := make(chan error, 1)
 	go func() {
-		_, err := w.store.StakeEmpty(t.Context())
+		_, err := w.store.Stake(t.Context())
 		staked <- err
 	}()
 	held.waitHeld(t)

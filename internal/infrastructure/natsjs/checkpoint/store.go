@@ -33,6 +33,7 @@ const (
 	outcomeRefused outcome = iota
 	outcomeEmpty
 	outcomeUnusable
+	outcomeFound
 	outcomeRestorable
 )
 
@@ -60,6 +61,7 @@ type Store struct {
 	mu         sync.Mutex
 	state      lifecycle
 	latest     address
+	generation uint64
 	stats      counters
 	up         *uploader
 	staking    *staking
@@ -230,7 +232,7 @@ func (s *Store) settle(err error) {
 func verdictOf(err error) outcome {
 	switch {
 	case err == nil:
-		return outcomeRestorable
+		return outcomeFound
 	case errors.Is(err, processing.ErrNoCheckpoint):
 		return outcomeEmpty
 	case unusable(err):
@@ -240,13 +242,42 @@ func verdictOf(err error) outcome {
 }
 
 func unusable(err error) bool {
-	return slices.ContainsFunc([]error{errCorrupt, errCheckpointMissing, errStreamRecreated}, func(cause error) bool {
+	causes := []error{errCorrupt, errCheckpointMissing, errStreamRecreated, errReadIncomplete}
+	return slices.ContainsFunc(causes, func(cause error) bool {
 		return errors.Is(err, cause)
 	})
 }
 
 func (v outcome) discardable() bool {
 	return v == outcomeUnusable || v == outcomeRestorable
+}
+
+func (s *Store) nextGeneration() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.generation++
+}
+
+func (s *Store) currentGeneration() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.generation
+}
+
+func (s *Store) settleRead(generation uint64, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if generation != s.generation {
+		return
+	}
+	s.latest.verdict = readVerdict(err)
+}
+
+func readVerdict(err error) outcome {
+	if errors.Is(err, errReadDone) {
+		return outcomeRestorable
+	}
+	return verdictOf(err)
 }
 
 func (s *Store) remembered() address {

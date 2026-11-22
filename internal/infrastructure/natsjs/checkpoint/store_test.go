@@ -367,15 +367,18 @@ func TestStakingOnTheRealBucketPurgesAStaleObjectOfAnOlderEpoch(t *testing.T) {
 	created := l.created(t)
 	l.raisePointer(t, l.putWithCLI(t, "1-42", image(smallImage), new(checkpointMeta(created))), created)
 	l.putWithCLI(t, "1-30", image(smallImage), new(checkpointMeta(created)))
-	restored, reader, err := store.Latest(t.Context(), 0)
+	_, reader, err := store.Latest(t.Context(), 0)
 	if err != nil {
 		t.Fatalf("Latest: %v", err)
+	}
+	if _, err := io.Copy(io.Discard, reader); err != nil {
+		t.Fatalf("read: %v", err)
 	}
 	if err := reader.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 
-	if _, err := store.Stake(t.Context(), &restored); err != nil {
+	if _, err := store.Stake(t.Context()); err != nil {
 		t.Fatalf("Stake: %v", err)
 	}
 
@@ -412,7 +415,7 @@ func TestACheckpointRaisedByTheRunbookIsRestoredAndStaked(t *testing.T) {
 	if err := errors.Join(readErr, reader.Close()); err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	staked, err := store.Stake(t.Context(), &gotMeta)
+	staked, err := store.Stake(t.Context())
 
 	if err != nil || !bytes.Equal(got.Bytes(), want) {
 		t.Fatalf("Stake: %v, read %d bytes of %d", err, got.Len(), len(want))
@@ -420,6 +423,9 @@ func TestACheckpointRaisedByTheRunbookIsRestoredAndStaked(t *testing.T) {
 	if diff := cmp.Diff(processing.Staked{After: meta.Position, ReceivedAt: meta.ReceivedAt, Created: created},
 		staked); diff != "" {
 		t.Errorf("staked (-want +got):\n%s", diff)
+	}
+	if gotMeta.Position != staked.After {
+		t.Errorf("Latest found %+v, Stake staked %+v", gotMeta.Position, staked.After)
 	}
 }
 
@@ -464,7 +470,7 @@ func TestStakeEmptyAndDiscardWorkOnTheRealBucket(t *testing.T) {
 		t.Fatalf("Latest: %v, want %v", err, processing.ErrNoCheckpoint)
 	}
 
-	if _, err := store.StakeEmpty(t.Context()); err != nil {
+	if _, err := store.Stake(t.Context()); err != nil {
 		t.Fatalf("StakeEmpty: %v", err)
 	}
 
