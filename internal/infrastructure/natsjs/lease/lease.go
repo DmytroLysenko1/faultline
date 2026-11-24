@@ -25,7 +25,7 @@ var (
 )
 
 const (
-	Bucket           = "faultline_leases"
+	Bucket           = "leases"
 	MeasuredElection = 15 * time.Second
 	keyPrefix        = "processor.p"
 	clockMargin      = 5 * time.Second

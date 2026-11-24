@@ -1,4 +1,4 @@
-digraph faultline {
+digraph services {
 	"svc:/bare" [label="bare"];
 	"svc:team%2Fa/svc" [label="team/a/svc"];
 	"svc:demo/say%20%22hi%22" [label="demo/say \"hi\""];

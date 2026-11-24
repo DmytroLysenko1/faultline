@@ -109,7 +109,7 @@ In DOT an edge reads `calls N, failed M` and under it `R/s err E% p95 D` of its 
 | `receiver without a final window: B` | B received calls but none of its server spans landed in a closed window | `windows.subjects.no_watermark`, `late_dropped` |
 | `I6 … != …`, `I10 … != …`, `I11 … != …` | an event was lost or counted twice between the engines | a faultline bug; keep `tmp/demo/faultline.log` |
 | `subjects.late_dropped/offered >= 1%` | too many events arrived after their window retired | collector batching or clock skew; `windows.subjects.clock_skew_reassigned`, the `windows.late_drop_ratio_high` warning |
-| `cardinality.services_over_limit != 0` | a service has more than 500 operations, new ones go to `__overflow__` | the `windows.cardinality_limit_reached` warning names the services; add a route rule (`FAULTLINE_ROUTE_RULES_FILE`) |
+| `cardinality.services_over_limit != 0` | a service has more than 500 operations, new ones go to `__overflow__` | the `windows.cardinality_limit_reached` warning names the services; add a route rule (`ROUTE_RULES_FILE`) |
 | `windows.subjects.offered == 0` | the last `pipeline.stats` line counted no events at all | the collector reaches faultline? `ingest.accepted_spans` |
 | `cardinality.operations == 0` | no operation is held: no traffic in the open windows when the line was written, or the spans carry no `http.route`, `url.path` or `rpc.method` | `windows.operations.offered`; the span attributes |
 | `… missing in pipeline.stats` | the log comes from a faultline without step 2 | rebuild the image: `make image kind-load` |

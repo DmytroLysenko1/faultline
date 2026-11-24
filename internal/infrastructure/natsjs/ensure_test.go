@@ -51,7 +51,7 @@ func shapeOf(t *testing.T, js jetstream.JetStream, name string) streamShape {
 		Subjects: config.Subjects, Retention: config.Retention, Discard: config.Discard, Storage: config.Storage,
 		Replicas: config.Replicas, MaxAge: config.MaxAge, MaxMsgSize: config.MaxMsgSize, MaxBytes: config.MaxBytes,
 		Duplicates: config.Duplicates, Compression: config.Compression,
-		Version: config.Metadata["faultline.config_version"], Partitions: config.Metadata["faultline.partitions"],
+		Version: config.Metadata["config_version"], Partitions: config.Metadata["partitions"],
 	}
 }
 
@@ -109,7 +109,7 @@ func TestAnOlderReleaseCannotRewriteANewerTopology(t *testing.T) {
 
 	err := dial(t, cluster).EnsureTopology(t.Context(), older, natsjstest.Held{})
 
-	assertDrift(t, err, "faultline.config_version")
+	assertDrift(t, err, "config_version")
 	if got := shapeOf(t, rawJetStream(t, cluster), older.Stream(firstPartition)).MaxBytes; got != grownMaxBytes {
 		t.Errorf("max bytes = %d, want the newer %d kept", got, grownMaxBytes)
 	}
@@ -188,7 +188,7 @@ func TestVerifyTopologyStopsOnlyWhatTheIngesterDependsOn(t *testing.T) {
 		wantNote     string
 	}{
 		{name: "partition count", args: func(t *natsjs.Topology) { t.Partitions = onePartition },
-			wantBlocking: "faultline.partitions"},
+			wantBlocking: "partitions"},
 		{name: "a missing stream", args: func(t *natsjs.Topology) { t.Partitions = twoPartitions + 1 },
 			wantBlocking: "stream"},
 		{name: "a dedup window shorter than the ingester's", args: func(t *natsjs.Topology) {
@@ -201,7 +201,7 @@ func TestVerifyTopologyStopsOnlyWhatTheIngesterDependsOn(t *testing.T) {
 		{name: "compression", args: func(t *natsjs.Topology) { t.Compression = natsjs.CompressionS2 },
 			wantNote: "compression"},
 		{name: "config version", args: func(t *natsjs.Topology) { t.ConfigVersion = secondVersion },
-			wantNote: "faultline.config_version"},
+			wantNote: "config_version"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -388,7 +388,7 @@ func TestAWrongTopologyCreatesNothing(t *testing.T) {
 
 	err := dial(t, cluster).EnsureTopology(t.Context(), wrong, natsjstest.Held{})
 
-	assertDrift(t, err, "faultline.partitions")
+	assertDrift(t, err, "partitions")
 	_, err = rawJetStream(t, cluster).Stream(t.Context(), wrong.Stream(secondPartition))
 	if !errors.Is(err, jetstream.ErrStreamNotFound) {
 		t.Errorf("stream of partition 1 = %v: created before the drift was found", err)

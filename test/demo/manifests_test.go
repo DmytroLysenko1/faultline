@@ -17,7 +17,7 @@ import (
 const (
 	kubectlBinary     = "kubectl"
 	deploymentKind    = "Deployment"
-	selfTracingEnv    = "FAULTLINE_SELF_TRACING_ENDPOINT"
+	selfTracingEnv    = "SELF_TRACING_ENDPOINT"
 	memoryLimitEnv    = "GOMEMLIMIT"
 	shutdownBudgetSec = 10
 )
@@ -167,9 +167,9 @@ func TestSkeletonDeploymentIsHardenedAndFitsTheMemoryBudget(t *testing.T) {
 		},
 		MemoryLimit: "2Gi",
 		Env: map[string]string{
-			"FAULTLINE_OTLP_GRPC_ADDR": "0.0.0.0:4317",
-			"FAULTLINE_API_ADDR":       "0.0.0.0:8080",
-			memoryLimitEnv:             "1600MiB",
+			"OTLP_GRPC_ADDR": "0.0.0.0:4317",
+			"API_ADDR":       "0.0.0.0:8080",
+			memoryLimitEnv:   "1600MiB",
 		},
 	}
 	got := hardeningOf(&spec)

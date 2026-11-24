@@ -332,7 +332,7 @@ type Cell struct {            // red.Cell — ячейка субъекта; б�
 
 **Злые входы:** обрабатываются первые 32 сегмента, остальное — одним сегментом `…`; имя ≤ 256 B (обрезка по границе UTF-8 с `…`); невалидный UTF-8 и управляющие символы → `U+FFFD`. Работа линейна по длине входа; вход читается из строки pdata без копии. Имя `__overflow__` недостижимо, закреплено fuzz-тестом. `N(N(x)) = N(x)` — для необрезанных имён при любых принятых правилах (fuzz с правилами и без): обрезка отбрасывает сегменты, и короткое имя может совпасть с правилом, которое не совпало с исходным путём. Ведущие `/` у `rpc.service` и `rpc.method` отбрасываются. Аллокация — одна на различное имя в запросе (интернирование в карте вызова `AcceptBatch`); бенчмарк `BenchmarkNormalize` при приёме, бюджет — в таблице.
 
-**Правила сервиса** — `FAULTLINE_ROUTE_RULES_FILE` (YAML ≤ 1 MiB, строгий разбор, exit 2 с номером строки):
+**Правила сервиса** — `ROUTE_RULES_FILE` (YAML ≤ 1 MiB, строгий разбор, exit 2 с номером строки):
 
 ```yaml
 version: 1
@@ -717,17 +717,17 @@ publish: Publish(Snapshot()) — ошибка → return (held не освобо
 
 | Переменная | По умолчанию | Допустимо |
 |---|---|---|
-| `FAULTLINE_WINDOW_SIZE` | `10s` | 1 s … 5 min, делит 1 h без остатка |
-| `FAULTLINE_WATERMARK_DELAY` | `30s` | 0 … 5 min |
-| `FAULTLINE_ALLOWED_LATENESS` | `30s` | 0 … 10 min |
-| `FAULTLINE_HORIZON_SLACK_WINDOWS` | `2` | 1 … 16 |
-| `FAULTLINE_EARLY_FIRE_PERIOD` | `1s` | 100 ms … размер окна; `cmd` строит из него и каденс `Fire` (срез 7), и `traffic.Limits.EarlyFirePeriod` (покрытие EARLY) — одно значение на две роли |
-| `FAULTLINE_IDLE_ADVANCE_AFTER` | `35s` | ≥ `EARLY_FIRE_PERIOD`, ≤ 5 min (параметр журнала: когда писать пульс). По умолчанию больше `max_interval` повторов Collector (30 s): после эпизода перегрузки Collector молчит до 30 s, и более короткий порог дал бы пульс посреди его отката и `late_dropped` досланного (ревью osmani). Цена — финал последнего окна после остановки трафика на ≈ 25 s позже |
-| `FAULTLINE_MAX_SERIES` | `100000` | 1 … 1 000 000 |
-| `FAULTLINE_MAX_OPERATIONS_PER_SERVICE` | `500` | 1 … 999 (в шаге 4 операции субъекта — одна страница FR-API-007) |
-| `FAULTLINE_SKETCH_MAX_ENTRIES` | `8388608` (8 Mi) | 1 048 576 … 268 435 456, степень двойки; целое число записей |
-| `FAULTLINE_API_RESPONSE_BUDGET` | `224MiB` | ≥ веса худшего ответа при заданных лимитах графа, ≤ 1 GiB |
-| `FAULTLINE_ROUTE_RULES_FILE` | не задано | путь к YAML ≤ 1 MiB; читается при старте, ошибка разбора — код 2 с путём и номером строки; пустое значение — ошибка, как у других переменных. Должен вести к обычному файлу: символическая ссылка куда угодно допустима (ConfigMap, `/run/secrets`), каталог и именованный канал — код 2 без ожидания |
+| `WINDOW_SIZE` | `10s` | 1 s … 5 min, делит 1 h без остатка |
+| `WATERMARK_DELAY` | `30s` | 0 … 5 min |
+| `ALLOWED_LATENESS` | `30s` | 0 … 10 min |
+| `HORIZON_SLACK_WINDOWS` | `2` | 1 … 16 |
+| `EARLY_FIRE_PERIOD` | `1s` | 100 ms … размер окна; `cmd` строит из него и каденс `Fire` (срез 7), и `traffic.Limits.EarlyFirePeriod` (покрытие EARLY) — одно значение на две роли |
+| `IDLE_ADVANCE_AFTER` | `35s` | ≥ `EARLY_FIRE_PERIOD`, ≤ 5 min (параметр журнала: когда писать пульс). По умолчанию больше `max_interval` повторов Collector (30 s): после эпизода перегрузки Collector молчит до 30 s, и более короткий порог дал бы пульс посреди его отката и `late_dropped` досланного (ревью osmani). Цена — финал последнего окна после остановки трафика на ≈ 25 s позже |
+| `MAX_SERIES` | `100000` | 1 … 1 000 000 |
+| `MAX_OPERATIONS_PER_SERVICE` | `500` | 1 … 999 (в шаге 4 операции субъекта — одна страница FR-API-007) |
+| `SKETCH_MAX_ENTRIES` | `8388608` (8 Mi) | 1 048 576 … 268 435 456, степень двойки; целое число записей |
+| `API_RESPONSE_BUDGET` | `224MiB` | ≥ веса худшего ответа при заданных лимитах графа, ≤ 1 GiB |
+| `ROUTE_RULES_FILE` | не задано | путь к YAML ≤ 1 MiB; читается при старте, ошибка разбора — код 2 с путём и номером строки; пустое значение — ошибка, как у других переменных. Должен вести к обычному файлу: символическая ссылка куда угодно допустима (ConfigMap, `/run/secrets`), каталог и именованный канал — код 2 без ожидания |
 | `GOMEMLIMIT` | `1600MiB` (`memory.max × 1600 / 2048` в контейнере) | как в шаге 1 |
 
 Производное: `max_held_bytes = journal_max_bytes − max_batch_footprint` (> 0, валидатор). Перекрёстные проверки при старте (срез 8c): окно делит час; `stream.Config.Validate` (не больше 256 живых окон на серию); `EARLY_FIRE_PERIOD ≤ WINDOW_SIZE`; `IDLE_ADVANCE_AFTER ≥ EARLY_FIRE_PERIOD`; `TOMBSTONE_TTL ≥ PAIRING_TTL`; `API_RESPONSE_BUDGET ≥` веса худшего ответа при лимитах графа. Константы: α = 0,02; 2 048 записей на скетч; 32 сегмента; 256 B имени.
@@ -911,7 +911,7 @@ publish: Publish(Snapshot()) — ошибка → return (held не освобо
 | 6 | `handle`, `role.Entry`, `matcher` (`Outcome`), `call`, `graph.Applied`, `red`, `traffic`, `Builder` (`Fire`, ревизия, `FinalSink`), `Snapshot`; 6d — `Builder` + `Snapshot`, 6e — replay с финалами | I10–I12, `Served`, `SeriesKey`, оракул RED (6d), I8 на `Builder` (6d), replay = golden и B4 (6e), `live`/`final` |
 | ✔ | **Контрольная точка 1:** дамп OTel Demo → финальные панели = golden | |
 | 7 | `processing`: `Cadence`, `clock`, пульсы | каденс, I2 со сводками под `test-stress`, дренаж ≤ 2,5 s |
-| 8 | 8a — `graph.proto` + маппинг, допуск по весу ответа, `SendMaxBytes` 192 MiB, `FAULTLINE_API_RESPONSE_BUDGET`, арена 8 Mi; 8b — частичное освобождение резерва и сжатие в обёртке; 8c — env окон и лимитов, файл правил; 8d — пробы памяти и производительности, пул половинок матчера; 8e — `pipeline.stats` и self-alert | `buf breaking`, gRPC = JSON, размеры, golden вкладов, фронты |
+| 8 | 8a — `graph.proto` + маппинг, допуск по весу ответа, `SendMaxBytes` 192 MiB, `API_RESPONSE_BUDGET`, арена 8 Mi; 8b — частичное освобождение резерва и сжатие в обёртке; 8c — env окон и лимитов, файл правил; 8d — пробы памяти и производительности, пул половинок матчера; 8e — `pipeline.stats` и self-alert | `buf breaking`, gRPC = JSON, размеры, golden вкладов, фронты |
 | 9 ✔ 12.11 | `faultctl`: RED в DOT и JSON | golden, разбор gonum, текст graphviz, таблица формата, мутации 15/15 |
 | 10 ✔ 12.11 | `make demo-2`, `hack/democheck`, README, глоссарий, уточнения requirements, матрица | демо в kind: 15/15 required, 12/12 получателей, 11/11 проверок `pipeline.stats`; мутации 36/36 |
 | ✔ | **Контрольная точка 2 (29.11)** | |
@@ -1117,7 +1117,7 @@ type Record struct {
 // Interval.Equal и Batch.Equal — сравнение для cmp (неэкспортированные поля)
 
 // memjournal
-type Limits struct { /* шаг 1 + */ IdleAfter time.Duration } // IdleAfter ≤ 0 → ErrInvalidLimits; env FAULTLINE_IDLE_ADVANCE_AFTER (35s, 100ms … 5m)
+type Limits struct { /* шаг 1 + */ IdleAfter time.Duration } // IdleAfter ≤ 0 → ErrInvalidLimits; env IDLE_ADVANCE_AFTER (35s, 100ms … 5m)
 type Clock interface{ Now() time.Time }
 func New(limits Limits, clock Clock) (*Journal, error) // nil clock — паника wiring; ReceivedAt = epoch + max(elapsed) по topology/clock.Monotonic: шаг стенных часов назад отметку не уменьшает
 func (j *Journal) Append(ctx context.Context, spans []span.Span) error // NewOwning и Footprint вне мьютекса; кредит, отметка, решение о пульсе, отправка — под ним
@@ -1494,7 +1494,7 @@ func ResponseWeight(nodes, edges int) int64                          // конс
 | osmani, pstack LOW: хэндл за пределом — голая ошибка границ; срезы `View` короче графа | Паника wiring `traffic: `; doc у `View`; общий конфиг лимитов в 6d |
 | pocock, osmani, pstack LOW: нет property-теста I8/I11/I12; детерминизм без разной частоты `Fire`; FR-STR-007 «освобождение → допуск», «тихий рядом с шумным» | 300 случайных журналов × 60 пакетов (будущее, прошлое, без времени, сверх лимитов, пульсы, `Fire`): I6 и I11 после каждого пакета, ноль после сброса, повтор = те же финалы; тесты |
 | pocock, osmani LOW: проба памяти не худший случай | Все субъекты, `MaxSeries` операций с именами 256 B, переполнение, live-сводки, копия `View`: 14,9 MB против модели 15,5 MB |
-| pocock LOW: `EarlyFirePeriod` и каденс `Fire` — две ручки | Одна переменная `FAULTLINE_EARLY_FIRE_PERIOD` строит обе (раздел «Конфигурация») |
+| pocock LOW: `EarlyFirePeriod` и каденс `Fire` — две ручки | Одна переменная `EARLY_FIRE_PERIOD` строит обе (раздел «Конфигурация») |
 | pstack: расхождение спеки о порядке `Closed` | Исправлено по коду `pkg/stream` |
 | clean-arch LOW: паника в `admit`; `Stats` с типами `pkg` | Паника — недостижимый инвариант (pstack доказал); `Builder` в 6d не выносит типы `pkg` в своё API |
 

@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	updateGoldenEnv = "FAULTLINE_UPDATE_GOLDEN"
+	updateGoldenEnv = "UPDATE_GOLDEN"
 	goldenDir       = "testdata"
 	goldenFileMode  = 0o600
 	labelKey        = "label"

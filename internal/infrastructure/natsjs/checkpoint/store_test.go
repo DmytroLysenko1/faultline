@@ -42,7 +42,7 @@ const (
 	bindWithin      = 20 * time.Second
 	bindAttempt     = 2 * time.Second
 	shortDuplicates = time.Minute
-	objectStream    = "OBJ_faultline_checkpoints_p0"
+	objectStream    = "OBJ_checkpoints_p0"
 	pointerStream   = "KV_" + checkpoint.PointerBucket
 )
 
@@ -136,7 +136,7 @@ func (l *live) putWithCLI(t *testing.T, name string, image []byte, meta *process
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), bindWithin)
 	defer cancel()
-	store, err := l.js.ObjectStore(ctx, "faultline_checkpoints_p0")
+	store, err := l.js.ObjectStore(ctx, "checkpoints_p0")
 	if err != nil {
 		t.Fatalf("object store: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestOpenCreatesBucketsOnlyTheLeaderAnswersFor(t *testing.T) {
 
 	l.open(t)
 
-	for _, name := range []string{"KV_faultline_checkpoint_pointers", "OBJ_faultline_checkpoints_p0"} {
+	for _, name := range []string{"KV_checkpoint_pointers", "OBJ_checkpoints_p0"} {
 		stream, err := l.js.Stream(t.Context(), name)
 		if err != nil {
 			t.Fatalf("stream %s: %v", name, err)
@@ -270,7 +270,7 @@ func TestTwoProcessorsOpeningAtOnceBothGetTheBuckets(t *testing.T) {
 
 func TestABucketThatServesDirectReadsIsRefused(t *testing.T) {
 	l := startLive(t, singleNode)
-	if _, err := l.js.CreateObjectStore(t.Context(), jetstream.ObjectStoreConfig{Bucket: "faultline_checkpoints_p0",
+	if _, err := l.js.CreateObjectStore(t.Context(), jetstream.ObjectStoreConfig{Bucket: "checkpoints_p0",
 		MaxBytes: bucketBytes, Storage: jetstream.FileStorage}); err != nil {
 		t.Fatalf("CreateObjectStore: %v", err)
 	}
@@ -349,7 +349,7 @@ func TestTheBucketOnlyGrows(t *testing.T) {
 				l.open(t)
 			}
 
-			stream, err := l.js.Stream(t.Context(), "OBJ_faultline_checkpoints_p0")
+			stream, err := l.js.Stream(t.Context(), "OBJ_checkpoints_p0")
 			if err != nil {
 				t.Fatalf("stream: %v", err)
 			}
@@ -382,7 +382,7 @@ func TestStakingOnTheRealBucketPurgesAStaleObjectOfAnOlderEpoch(t *testing.T) {
 		t.Fatalf("Stake: %v", err)
 	}
 
-	objects, err := l.js.ObjectStore(t.Context(), "faultline_checkpoints_p0")
+	objects, err := l.js.ObjectStore(t.Context(), "checkpoints_p0")
 	if err != nil {
 		t.Fatalf("object store: %v", err)
 	}
@@ -450,7 +450,7 @@ func TestAReadThroughALeaderChangeOfTheBucketStillRestores(t *testing.T) {
 		t.Fatalf("first read: %v", err)
 	}
 
-	if _, err := l.raw.Request("$JS.API.STREAM.LEADER.STEPDOWN.OBJ_faultline_checkpoints_p0", nil, stepdownWait); err != nil {
+	if _, err := l.raw.Request("$JS.API.STREAM.LEADER.STEPDOWN.OBJ_checkpoints_p0", nil, stepdownWait); err != nil {
 		t.Fatalf("stepdown: %v", err)
 	}
 	rest := new(bytes.Buffer)
@@ -503,7 +503,7 @@ func TestDiscardOnTheRealBucketEmptiesThePointerAndKeepsThePreviousObject(t *tes
 	if _, _, err := l.open(t).Latest(t.Context(), 0); !errors.Is(err, processing.ErrNoCheckpoint) {
 		t.Fatalf("Latest after Discard: %v, want %v", err, processing.ErrNoCheckpoint)
 	}
-	objects, err := l.js.ObjectStore(t.Context(), "faultline_checkpoints_p0")
+	objects, err := l.js.ObjectStore(t.Context(), "checkpoints_p0")
 	if err != nil {
 		t.Fatalf("object store: %v", err)
 	}
@@ -518,7 +518,7 @@ func TestLatestOverADeletedObjectBucketIsLostState(t *testing.T) {
 	store := l.open(t)
 	created := l.created(t)
 	l.raisePointer(t, l.putWithCLI(t, "1-42", image(smallImage), new(checkpointMeta(created))), created)
-	if err := l.js.DeleteStream(t.Context(), "OBJ_faultline_checkpoints_p0"); err != nil {
+	if err := l.js.DeleteStream(t.Context(), "OBJ_checkpoints_p0"); err != nil {
 		t.Fatalf("delete bucket: %v", err)
 	}
 

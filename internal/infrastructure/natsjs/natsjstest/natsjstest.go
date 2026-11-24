@@ -15,7 +15,7 @@ const (
 	MaxPayload   = 8 << 20
 	readyTimeout = 10 * time.Second
 	leaderPoll   = 20 * time.Millisecond
-	clusterName  = "faultline"
+	clusterName  = "test"
 	localHost    = "127.0.0.1"
 	anyPort      = -1
 	nodeFormat   = "n%d"

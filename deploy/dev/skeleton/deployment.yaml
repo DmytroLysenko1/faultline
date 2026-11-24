@@ -21,9 +21,9 @@ spec:
           image: faultline:dev
           imagePullPolicy: Never
           env:
-            - name: FAULTLINE_OTLP_GRPC_ADDR
+            - name: OTLP_GRPC_ADDR
               value: 0.0.0.0:4317
-            - name: FAULTLINE_API_ADDR
+            - name: API_ADDR
               value: 0.0.0.0:8080
             - name: GOMEMLIMIT
               value: 1600MiB

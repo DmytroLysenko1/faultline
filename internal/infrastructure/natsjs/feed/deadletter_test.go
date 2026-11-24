@@ -77,7 +77,7 @@ func TestACorruptRecordIsCopiedToTheDLQOnceAndSkipped(t *testing.T) {
 			if diff := cmp.Diff([]uint64{1, 3}, sequencesOf(got)); diff != "" {
 				t.Errorf("delivered positions mismatch (-want +got):\n%s", diff)
 			}
-			want := []letterShape{{Subject: "faultline.dlq.p0", Partition: "0", Sequence: "2", Reason: "length", Window: "0,2",
+			want := []letterShape{{Subject: "dlq.p0", Partition: "0", Sequence: "2", Reason: "length", Window: "0,2",
 				Created: created, Truncated: tt.wantTruncated, Bytes: tt.wantBytes}}
 			if diff := cmp.Diff(want, shapesOf(l.deadLetters(t))); diff != "" {
 				t.Errorf("DLQ after a restart mismatch, one copy (-want +got):\n%s", diff)
@@ -176,7 +176,7 @@ func TestAPermanentDLQRefusalStopsTheFeedOnNATS(t *testing.T) {
 				t.Fatalf("delete the DLQ: %v", err)
 			}
 			if _, err := l.raw.CreateStream(t.Context(), jetstream.StreamConfig{Name: impostor,
-				Subjects: []string{"faultline.dlq.>"}}); err != nil {
+				Subjects: []string{"dlq.>"}}); err != nil {
 				t.Fatalf("create the impostor: %v", err)
 			}
 		}},

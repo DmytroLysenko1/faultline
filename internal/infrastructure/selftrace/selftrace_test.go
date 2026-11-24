@@ -176,7 +176,7 @@ func TestShutdownFlushesSpansToTheCollector(t *testing.T) {
 	}
 	want := []exported{
 		{
-			Service: "faultline",
+			Service: "self",
 			Span:    spanName,
 		},
 	}

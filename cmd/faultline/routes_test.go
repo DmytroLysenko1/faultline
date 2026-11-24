@@ -132,7 +132,7 @@ func TestABrokenRouteRulesFileIsAConfigError(t *testing.T) {
 		{
 			Name:    "missing file",
 			Args:    missing,
-			Want:    "FAULTLINE_ROUTE_RULES_FILE " + missing + ": stat " + missing + ": no such file",
+			Want:    "ROUTE_RULES_FILE " + missing + ": stat " + missing + ": no such file",
 			WantErr: os.ErrNotExist,
 		},
 		{

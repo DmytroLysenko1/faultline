@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	Bucket          = "faultline_ingest_tokens"
+	Bucket          = "ingest_tokens"
 	MaxGrants       = 1024
 	MaxValueBytes   = 1 << 10
 	MaxMessageBytes = 2 << 10

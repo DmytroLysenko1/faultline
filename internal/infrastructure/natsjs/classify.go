@@ -4,9 +4,27 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"slices"
+	"syscall"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+)
+
+type DialReason string
+
+const (
+	DialDNS            DialReason = "dns"
+	DialNetwork        DialReason = "network"
+	DialNoNATSGreeting DialReason = "no_nats_greeting"
+	DialNoServers      DialReason = "no_servers"
+)
+
+const (
+	opDial = "dial"
+	opRead = "read"
 )
 
 type Reason uint8
@@ -200,4 +218,69 @@ func PurgeDenied(err error) bool {
 func HasCode(err error, code jetstream.ErrorCode) bool {
 	apiErr, isAPI := errors.AsType[*jetstream.APIError](err)
 	return isAPI && apiErr.ErrorCode == code
+}
+
+type dialRule struct {
+	matches func(err error) bool
+	reason  DialReason
+}
+
+func dialRules() []dialRule {
+	return []dialRule{
+		{matches: lookupFailed, reason: DialDNS},
+		{matches: greetingMissing, reason: DialNoNATSGreeting},
+		{matches: networkFailed, reason: DialNetwork},
+		{matches: noServers, reason: DialNoServers},
+	}
+}
+
+func Unreachable(err error) (DialReason, bool) {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return "", false
+	}
+	for _, rule := range dialRules() {
+		if rule.matches(err) {
+			return rule.reason, true
+		}
+	}
+	return "", false
+}
+
+func lookupFailed(err error) bool {
+	_, found := errors.AsType[*net.DNSError](err)
+	return found
+}
+
+func greetingMissing(err error) bool {
+	return errors.Is(err, io.EOF) || timedOut(err, opRead)
+}
+
+func networkFailed(err error) bool {
+	return timedOut(err, opDial) || isAny(err, networkErrors())
+}
+
+func noServers(err error) bool {
+	return errors.Is(err, nats.ErrNoServers)
+}
+
+func timedOut(err error, op string) bool {
+	failure, found := errors.AsType[*net.OpError](err)
+	return found && failure.Op == op && failure.Timeout()
+}
+
+func networkErrors() []error {
+	return []error{
+		syscall.ECONNRESET,
+		syscall.EPIPE,
+		syscall.EHOSTUNREACH,
+		syscall.ENETUNREACH,
+		nats.ErrTimeout,
+		context.DeadlineExceeded,
+	}
+}
+
+func isAny(err error, targets []error) bool {
+	return slices.ContainsFunc(targets, func(target error) bool {
+		return errors.Is(err, target)
+	})
 }

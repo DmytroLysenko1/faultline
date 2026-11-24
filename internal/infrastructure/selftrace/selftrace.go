@@ -22,7 +22,7 @@ const (
 
 	heldBatches    = 2
 	serviceNameKey = "service.name"
-	serviceName    = "faultline"
+	serviceName    = "self"
 )
 
 type flusher interface {

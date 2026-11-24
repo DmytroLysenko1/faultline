@@ -30,7 +30,7 @@ const (
 	goldenPath      = "test/demo/otel-demo/replay.golden.json"
 	requiredPath    = "test/demo/otel-demo/required-edges.txt"
 	optionalPath    = "test/demo/otel-demo/optional-edges.txt"
-	updateGoldenEnv = "FAULTLINE_UPDATE_GOLDEN"
+	updateGoldenEnv = "UPDATE_GOLDEN"
 	goldenFileMode  = 0o644
 	pairingTTL      = 10 * time.Second
 	maxPending      = 100_000

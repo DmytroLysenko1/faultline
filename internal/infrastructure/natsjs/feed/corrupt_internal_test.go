@@ -494,7 +494,7 @@ func TestADeadLetterCarriesWhatTheOperatorNeeds(t *testing.T) {
 			letter := &deadLetter{partition: 3, sequence: 42, created: streamCreated(), reason: "crc",
 				data: make([]byte, tt.size), window: window{low: 7, high: 42}}
 
-			msg := letter.message("faultline.dlq.p3")
+			msg := letter.message("dlq.p3")
 
 			want := map[string]string{headerPartition: "3", headerSequence: "42", headerReason: "crc",
 				headerCreated: strconv.FormatInt(streamCreated().UnixNano(), decimal), headerWindow: "7,42",

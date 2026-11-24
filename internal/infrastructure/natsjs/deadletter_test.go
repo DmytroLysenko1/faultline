@@ -19,7 +19,7 @@ const (
 	deadLetterFloor   = 5 * time.Minute
 	shortDedup        = 30 * time.Second
 	longDedup         = 10 * time.Minute
-	deadLetterSubject = "faultline.dlq.>"
+	deadLetterSubject = "dlq.>"
 )
 
 func deadLetterShape(replicas int, duplicates time.Duration) streamShape {

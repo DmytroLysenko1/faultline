@@ -31,7 +31,7 @@ const (
 	closeTimeout   = 5 * time.Second
 	singleNode     = 1
 	threeNodes     = 3
-	clusterName    = "faultline"
+	clusterName    = "test"
 	settleBudget   = 7 * time.Second
 	lostBudget     = 4 * time.Second
 	quorumWithin   = 20 * time.Second

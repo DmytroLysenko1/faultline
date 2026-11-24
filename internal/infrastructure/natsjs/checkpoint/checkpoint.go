@@ -30,8 +30,8 @@ var (
 )
 
 const (
-	PointerBucket      = "faultline_checkpoint_pointers"
-	objectBucketFormat = "faultline_checkpoints_p%d"
+	PointerBucket      = "checkpoint_pointers"
+	objectBucketFormat = "checkpoints_p%d"
 	pointerKeyFormat   = "p%d"
 	dedupWindow        = 2 * time.Minute
 	uploadSlack        = 10 * time.Second

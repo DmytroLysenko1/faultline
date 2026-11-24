@@ -35,7 +35,7 @@ func readAtMost(path string, limit int64) ([]byte, error) {
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("%w (%s)", errNotRegular, info.Mode().Type())
 	}
-	file, err := os.Open(path) //nolint:gosec // G304: the operator names this file in FAULTLINE_ROUTE_RULES_FILE
+	file, err := os.Open(path) //nolint:gosec // G304: the operator names this file in ROUTE_RULES_FILE
 	if err != nil {
 		return nil, err
 	}

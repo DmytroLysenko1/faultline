@@ -1,4 +1,4 @@
-digraph faultline {
+digraph services {
 	"svc:demo/cart" [label="demo/cart\nserved 1.2/s err 16.7%\nunanswered 3 (failed 1)"];
 	"svc:demo/checkout" [label="demo/checkout\nunanswered 1 (failed 0)"];
 	"svc:demo/frontend" [label="demo/frontend"];

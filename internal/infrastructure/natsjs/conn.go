@@ -5,11 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/url"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/samber/lo"
 
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/record"
 )
@@ -20,6 +25,12 @@ const (
 	rolePublish = "publish"
 	roleFeed    = "feed"
 	roleControl = "control"
+	roleProbe   = "probe"
+
+	unclassifiedAsync = "unclassified"
+	maxAsyncClasses   = 16
+	asyncNetPrefix    = "net "
+	asyncRepeatPeriod = time.Minute
 
 	noReconnectBuffer = -1
 	reconnectForever  = -1
@@ -67,6 +78,7 @@ type Link struct {
 	Closed      <-chan struct{}
 	Disconnects atomic.Uint64
 	Reconnects  atomic.Uint64
+	AsyncErrors atomic.Uint64
 }
 
 type Conn struct {
@@ -100,6 +112,70 @@ func Dial(ctx context.Context, options *ConnOptions) (*Conn, error) {
 	return conn, nil
 }
 
+type URLFailure struct {
+	Host   string
+	Reason DialReason
+	Err    error
+}
+
+func DialEach(ctx context.Context, options *ConnOptions) ([]URLFailure, error) {
+	if err := options.validate(); err != nil {
+		return nil, err
+	}
+	probed := make([]URLFailure, 0, len(options.URLs))
+	for _, raw := range options.URLs {
+		result, err := probe(ctx, options, raw)
+		if err != nil {
+			return nil, err
+		}
+		probed = append(probed, result)
+	}
+	return lo.Filter(probed, failed), nil
+}
+
+func probe(ctx context.Context, options *ConnOptions, raw string) (URLFailure, error) {
+	err := connectOnce(ctx, options, raw)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return URLFailure{}, ctxErr
+	}
+	reason, _ := Unreachable(err)
+	return URLFailure{
+		Host:   hostOf(raw),
+		Reason: reason,
+		Err:    err,
+	}, nil
+}
+
+func connectOnce(ctx context.Context, options *ConnOptions, raw string) error {
+	settings := append(
+		baseOptions(options, roleProbe, options.ConnectTimeout),
+		nats.IgnoreDiscoveredServers(),
+		nats.ErrorHandler(ignoreAsyncError),
+	)
+	nc, err := connectWith(ctx, raw, settings)
+	if err != nil {
+		return err
+	}
+	nc.Close()
+	return nil
+}
+
+func (f URLFailure) Waitable() bool {
+	return f.Reason != ""
+}
+
+func failed(result URLFailure, _ int) bool {
+	return result.Err != nil
+}
+
+func hostOf(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return parsed.Host
+}
+
 func payloadsFit(links []*Link) error {
 	for index, link := range links {
 		if maxPayload := link.NATS.MaxPayload(); !payloadFits(maxPayload) {
@@ -110,9 +186,13 @@ func payloadsFit(links []*Link) error {
 }
 
 func (c *Conn) Connected() bool {
-	return c.Publish.NATS.IsConnected() &&
-		c.Feed.NATS.IsConnected() &&
-		c.Control.NATS.IsConnected()
+	return c.Publish.Connected() &&
+		c.Feed.Connected() &&
+		c.Control.Connected()
+}
+
+func (l *Link) Connected() bool {
+	return l.NATS.IsConnected()
 }
 
 func (c *Conn) Close(ctx context.Context) error {
@@ -150,14 +230,8 @@ func connect(ctx context.Context, options *ConnOptions, role string) (*Link, err
 		return nil, fmt.Errorf("connect %s: %w", role, err)
 	}
 	closed := make(chan struct{})
-	link := &Link{
-		Closed: closed,
-	}
-	settings := append(
-		baseOptions(options, role, timeout),
-		handlers(loggerOf(options),
-			role, link, closed)...,
-	)
+	link := &Link{Closed: closed}
+	settings := append(baseOptions(options, role, timeout), handlers(loggerOf(options), role, link, closed)...)
 	nc, err := connectWith(ctx, strings.Join(options.URLs, ","), settings)
 	if err != nil {
 		return nil, fmt.Errorf("connect %s: %w", role, err)
@@ -240,12 +314,121 @@ func handlers(logger *slog.Logger, role string, link *Link, closed chan<- struct
 			link.Reconnects.Add(1)
 			logger.Info("nats.reconnected", "connection", role, "url", nc.ConnectedUrlRedacted())
 		}),
+		nats.ErrorHandler(newAsyncLog(logger, role, link).handle),
 		nats.ClosedHandler(func(*nats.Conn) {
 			logger.Info("nats.closed", "connection", role)
 			close(closed)
 		}),
 	}
 }
+
+type asyncClass struct {
+	warnedAt   time.Time
+	suppressed uint64
+}
+
+type asyncKey struct {
+	name     string
+	sentinel bool
+}
+
+type asyncLog struct {
+	logger  *slog.Logger
+	role    string
+	link    *Link
+	lock    sync.Mutex
+	classes map[string]*asyncClass
+	textual int
+}
+
+func newAsyncLog(logger *slog.Logger, role string, link *Link) *asyncLog {
+	return &asyncLog{
+		logger:  logger,
+		role:    role,
+		link:    link,
+		classes: map[string]*asyncClass{},
+	}
+}
+
+func (l *asyncLog) handle(_ *nats.Conn, _ *nats.Subscription, err error) {
+	total := l.link.AsyncErrors.Add(1)
+	suppressed, due := l.due(asyncClassOf(err))
+	if !due {
+		return
+	}
+	l.logger.Warn("nats.error", "connection", l.role, "error", err, "suppressed", suppressed, "total", total)
+}
+
+func (l *asyncLog) due(key asyncKey) (uint64, bool) {
+	l.lock.Lock()
+	defer l.lock.Unlock()
+	class := l.classOf(key)
+	now := time.Now()
+	if !class.warnedAt.IsZero() && now.Sub(class.warnedAt) < asyncRepeatPeriod {
+		class.suppressed++
+		return 0, false
+	}
+	suppressed := class.suppressed
+	class.warnedAt = now
+	class.suppressed = 0
+	return suppressed, true
+}
+
+func (l *asyncLog) classOf(key asyncKey) *asyncClass {
+	if class := l.classes[key.name]; class != nil {
+		return class
+	}
+	name := l.nameOf(key)
+	class := l.classes[name]
+	if class == nil {
+		class = &asyncClass{}
+		l.classes[name] = class
+	}
+	return class
+}
+
+func (l *asyncLog) nameOf(key asyncKey) string {
+	if key.sentinel {
+		return key.name
+	}
+	if l.textual >= maxAsyncClasses {
+		return unclassifiedAsync
+	}
+	l.textual++
+	return key.name
+}
+
+func asyncClassOf(err error) asyncKey {
+	classes := asyncErrorClasses()
+	index := slices.IndexFunc(classes, func(target error) bool {
+		return errors.Is(err, target)
+	})
+	if index >= 0 {
+		return asyncKey{
+			name:     classes[index].Error(),
+			sentinel: true,
+		}
+	}
+	if failure, found := errors.AsType[*net.OpError](err); found {
+		return asyncKey{name: asyncNetPrefix + failure.Op}
+	}
+	return asyncKey{name: err.Error()}
+}
+
+func asyncErrorClasses() []error {
+	return []error{
+		nats.ErrPermissionViolation,
+		nats.ErrAuthorization,
+		nats.ErrAuthExpired,
+		nats.ErrAuthRevoked,
+		nats.ErrAccountAuthExpired,
+		nats.ErrSlowConsumer,
+		nats.ErrMaxSubscriptionsExceeded,
+	}
+}
+
+func ignoreAsyncError(*nats.Conn, *nats.Subscription, error) {}
+
 func closeAll(links []*Link) {
 	for _, link := range links {
 		link.NATS.Close()

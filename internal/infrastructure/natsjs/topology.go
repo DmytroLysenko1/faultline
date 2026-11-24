@@ -26,18 +26,20 @@ const (
 	MaxPartitions   = 256
 	maxReplicas     = 5
 
-	streamFormat  = "FAULTLINE_SPANS_P%d"
-	subjectFormat = "faultline.spans.p%d"
+	StreamConfigVersion = 1
 
-	DeadLetterStream        = "FAULTLINE_DLQ"
-	deadLetterSubjects      = "faultline.dlq.>"
-	deadLetterFormat        = "faultline.dlq.p%d"
+	streamFormat  = "SPANS_P%d"
+	subjectFormat = "spans.p%d"
+
+	DeadLetterStream        = "DLQ"
+	deadLetterSubjects      = "dlq.>"
+	deadLetterFormat        = "dlq.p%d"
 	deadLetterMaxAge        = 7 * 24 * time.Hour
 	deadLetterMaxBytes      = 1 << 30
 	deadLetterMinDuplicates = 5 * time.Minute
 
-	metaVersion    = "faultline.config_version"
-	metaPartitions = "faultline.partitions"
+	metaVersion    = "config_version"
+	metaPartitions = "partitions"
 )
 
 type Compression uint8

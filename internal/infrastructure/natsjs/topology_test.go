@@ -80,7 +80,7 @@ func TestEveryPartitionHasItsOwnStreamAndSubject(t *testing.T) {
 		topology.Stream(secondPartition), topology.Subject(secondPartition),
 	}
 
-	want := []string{"FAULTLINE_SPANS_P0", "faultline.spans.p0", "FAULTLINE_SPANS_P1", "faultline.spans.p1"}
+	want := []string{"SPANS_P0", "spans.p0", "SPANS_P1", "spans.p1"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("names (-want +got):\n%s", diff)
 	}

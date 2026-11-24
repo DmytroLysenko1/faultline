@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	dotHeader   = "digraph faultline {\n"
+	dotHeader   = "digraph services {\n"
 	dotFooter   = "}\n"
 	nodeFormat  = "\t%s [label=%s];\n"
 	edgeFormat  = "\t%s -> %s [label=%s];\n"

@@ -34,9 +34,9 @@ const (
 	staleAckChunk      = 2
 	stopPromptly       = time.Second
 	threeNodes         = 3
-	bucketPurge        = "$JS.API.STREAM.PURGE." + objStreamPrefix + "faultline_checkpoints_p0"
+	bucketPurge        = "$JS.API.STREAM.PURGE." + objStreamPrefix + "checkpoints_p0"
 	changedChunk       = 3
-	staleAck           = `{"stream":"OBJ_faultline_checkpoints_p0","seq":1}`
+	staleAck           = `{"stream":"OBJ_checkpoints_p0","seq":1}`
 	replicatedConflict = `{"error":{"code":400,"err_code":10164,"description":"wrong last sequence"}}`
 )
 

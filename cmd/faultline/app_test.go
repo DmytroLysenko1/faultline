@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	reexecFlag      = "FAULTLINE_TEST_REEXEC"
-	stackFlag       = "FAULTLINE_TEST_STACK"
+	reexecFlag      = "TEST_REEXEC"
+	stackFlag       = "TEST_STACK"
 	stackSignal     = "signal"
 	heldStopBudget  = time.Hour
 	secondSignalCap = 10 * time.Second
@@ -107,7 +107,7 @@ func TestRealMain(t *testing.T) {
 			},
 			Want: outcome{
 				Code: exitConfig,
-				Stderr: `FAULTLINE_GRAPH_MAX_NODES: invalid integer "abc" (not an unsigned decimal integer), ` +
+				Stderr: `GRAPH_MAX_NODES: invalid integer "abc" (not an unsigned decimal integer), ` +
 					"want e.g. 10000\n",
 			},
 		},

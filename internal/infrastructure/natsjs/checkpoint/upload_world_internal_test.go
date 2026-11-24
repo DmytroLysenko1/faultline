@@ -30,10 +30,10 @@ const (
 	secondPosition = 20
 	thirdPosition  = 30
 	fourthPosition = 40
-	chunkPrefix    = objSubjectPrefix + "faultline_checkpoints_p0" + chunkSubjectPart
-	metaPrefix     = objSubjectPrefix + "faultline_checkpoints_p0" + metaSubjectPart
+	chunkPrefix    = objSubjectPrefix + "checkpoints_p0" + chunkSubjectPart
+	metaPrefix     = objSubjectPrefix + "checkpoints_p0" + metaSubjectPart
 	pointerSubject = kvSubjectPrefix + PointerBucket + ".p0"
-	bucketInfo     = "$JS.API.STREAM.INFO." + objStreamPrefix + "faultline_checkpoints_p0"
+	bucketInfo     = "$JS.API.STREAM.INFO." + objStreamPrefix + "checkpoints_p0"
 )
 
 type fakeRetention struct {

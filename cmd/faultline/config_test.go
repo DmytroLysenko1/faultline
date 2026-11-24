@@ -71,9 +71,9 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 			Want: defaultConfig(),
 		},
 		{
-			Name: "unrelated FAULTLINE variables are ignored",
+			Name: "unrelated variables are ignored",
 			Args: map[string]string{
-				"FAULTLINE_UNKNOWN": "x",
+				"UNKNOWN": "x",
 			},
 			Want: defaultConfig(),
 		},
@@ -207,7 +207,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envPairingTTL: "10",
 			},
-			Want:    `FAULTLINE_PAIRING_TTL: invalid duration "10", want e.g. 10s`,
+			Want:    `PAIRING_TTL: invalid duration "10", want e.g. 10s`,
 			WantErr: errInvalid,
 		},
 		{
@@ -215,7 +215,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envPairingTTL: "+10s",
 			},
-			Want:    `FAULTLINE_PAIRING_TTL: invalid duration "+10s", want e.g. 10s`,
+			Want:    `PAIRING_TTL: invalid duration "+10s", want e.g. 10s`,
 			WantErr: errInvalid,
 		},
 		{
@@ -223,7 +223,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envPairingTTL: " 10s",
 			},
-			Want:    `FAULTLINE_PAIRING_TTL: invalid duration " 10s", want e.g. 10s`,
+			Want:    `PAIRING_TTL: invalid duration " 10s", want e.g. 10s`,
 			WantErr: errInvalid,
 		},
 		{
@@ -231,7 +231,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envPairingTTL: "10S",
 			},
-			Want:    `FAULTLINE_PAIRING_TTL: invalid duration "10S", want e.g. 10s`,
+			Want:    `PAIRING_TTL: invalid duration "10S", want e.g. 10s`,
 			WantErr: errInvalid,
 		},
 		{
@@ -239,7 +239,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envPairingTTL: "999ms",
 			},
-			Want:    "FAULTLINE_PAIRING_TTL: 999ms out of range, want 1s … 5m0s",
+			Want:    "PAIRING_TTL: 999ms out of range, want 1s … 5m0s",
 			WantErr: errOutOfRange,
 		},
 		{
@@ -247,7 +247,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envTombstoneTTL: "11m",
 			},
-			Want:    "FAULTLINE_TOMBSTONE_TTL: 11m0s out of range, want 1s … 10m0s",
+			Want:    "TOMBSTONE_TTL: 11m0s out of range, want 1s … 10m0s",
 			WantErr: errOutOfRange,
 		},
 		{
@@ -255,7 +255,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envIdleAdvanceAfter: "50ms",
 			},
-			Want:    "FAULTLINE_IDLE_ADVANCE_AFTER: 50ms out of range, want 100ms … 5m0s",
+			Want:    "IDLE_ADVANCE_AFTER: 50ms out of range, want 100ms … 5m0s",
 			WantErr: errOutOfRange,
 		},
 		{
@@ -263,7 +263,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envIdleAdvanceAfter: "6m",
 			},
-			Want:    "FAULTLINE_IDLE_ADVANCE_AFTER: 6m0s out of range, want 100ms … 5m0s",
+			Want:    "IDLE_ADVANCE_AFTER: 6m0s out of range, want 100ms … 5m0s",
 			WantErr: errOutOfRange,
 		},
 		{
@@ -271,7 +271,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envGraphMaxNodes: "30000",
 			},
-			Want:    "FAULTLINE_GRAPH_MAX_NODES: 30000 out of range, want 1 … 20000",
+			Want:    "GRAPH_MAX_NODES: 30000 out of range, want 1 … 20000",
 			WantErr: errOutOfRange,
 		},
 		{
@@ -279,7 +279,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envGraphMaxEdges: "0",
 			},
-			Want:    "FAULTLINE_GRAPH_MAX_EDGES: 0 out of range, want 1 … 100000",
+			Want:    "GRAPH_MAX_EDGES: 0 out of range, want 1 … 100000",
 			WantErr: errOutOfRange,
 		},
 		{
@@ -287,7 +287,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envJournalMaxBatches: "+5",
 			},
-			Want:    `FAULTLINE_JOURNAL_MAX_BATCHES: invalid integer "+5" (not an unsigned decimal integer), want e.g. 4096`,
+			Want:    `JOURNAL_MAX_BATCHES: invalid integer "+5" (not an unsigned decimal integer), want e.g. 4096`,
 			WantErr: errInvalid,
 		},
 		{
@@ -295,7 +295,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envTombstoneMax: "99999999999999999999",
 			},
-			Want: `FAULTLINE_TOMBSTONE_MAX: invalid integer "99999999999999999999" (value overflows int64: ` +
+			Want: `TOMBSTONE_MAX: invalid integer "99999999999999999999" (value overflows int64: ` +
 				`strconv.ParseInt: parsing "99999999999999999999": value out of range), want e.g. 1000000`,
 			WantErr: errOverflow,
 		},
@@ -304,7 +304,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envJournalMaxBytes: "64",
 			},
-			Want:    `FAULTLINE_JOURNAL_MAX_BYTES: invalid size "64" (unknown size unit), want e.g. 64MiB`,
+			Want:    `JOURNAL_MAX_BYTES: invalid size "64" (unknown size unit), want e.g. 64MiB`,
 			WantErr: errUnknownUnit,
 		},
 		{
@@ -312,7 +312,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envJournalMaxBytes: "64mib",
 			},
-			Want:    `FAULTLINE_JOURNAL_MAX_BYTES: invalid size "64mib" (unknown size unit), want e.g. 64MiB`,
+			Want:    `JOURNAL_MAX_BYTES: invalid size "64mib" (unknown size unit), want e.g. 64MiB`,
 			WantErr: errUnknownUnit,
 		},
 		{
@@ -320,7 +320,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envJournalMaxBytes: "32MiB",
 			},
-			Want:    "FAULTLINE_JOURNAL_MAX_BYTES: 32MiB out of range, want 48MiB … 512MiB",
+			Want:    "JOURNAL_MAX_BYTES: 32MiB out of range, want 48MiB … 512MiB",
 			WantErr: errOutOfRange,
 		},
 		{
@@ -328,7 +328,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envJournalMaxBytes: "1GiB",
 			},
-			Want:    "FAULTLINE_JOURNAL_MAX_BYTES: 1GiB out of range, want 48MiB … 512MiB",
+			Want:    "JOURNAL_MAX_BYTES: 1GiB out of range, want 48MiB … 512MiB",
 			WantErr: errOutOfRange,
 		},
 		{
@@ -336,7 +336,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envJournalMaxBytes: "9999999999GiB",
 			},
-			Want:    `FAULTLINE_JOURNAL_MAX_BYTES: invalid size "9999999999GiB" (value overflows int64), want e.g. 64MiB`,
+			Want:    `JOURNAL_MAX_BYTES: invalid size "9999999999GiB" (value overflows int64), want e.g. 64MiB`,
 			WantErr: errOverflow,
 		},
 		{
@@ -344,7 +344,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envGraphMaxNodes: "",
 			},
-			Want:    "FAULTLINE_GRAPH_MAX_NODES: empty value, unset the variable to use the default",
+			Want:    "GRAPH_MAX_NODES: empty value, unset the variable to use the default",
 			WantErr: errEmpty,
 		},
 		{
@@ -352,7 +352,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envOTLPAddr: ":4317",
 			},
-			Want:    `FAULTLINE_OTLP_GRPC_ADDR: invalid address ":4317" (host is empty), want host:port`,
+			Want:    `OTLP_GRPC_ADDR: invalid address ":4317" (host is empty), want host:port`,
 			WantErr: errEmptyHost,
 		},
 		{
@@ -360,7 +360,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envAPIAddr: "127.0.0.1:0",
 			},
-			Want:    `FAULTLINE_API_ADDR: invalid address "127.0.0.1:0" (port must be 1 … 65535), want host:port`,
+			Want:    `API_ADDR: invalid address "127.0.0.1:0" (port must be 1 … 65535), want host:port`,
 			WantErr: errPort,
 		},
 		{
@@ -368,7 +368,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envOTLPAddr: " 127.0.0.1:4317",
 			},
-			Want:    `FAULTLINE_OTLP_GRPC_ADDR: invalid address " 127.0.0.1:4317" (contains whitespace), want host:port`,
+			Want:    `OTLP_GRPC_ADDR: invalid address " 127.0.0.1:4317" (contains whitespace), want host:port`,
 			WantErr: errWhitespace,
 		},
 		{
@@ -376,7 +376,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envAPIAddr: "localhost",
 			},
-			Want: `FAULTLINE_API_ADDR: invalid address "localhost" ` +
+			Want: `API_ADDR: invalid address "localhost" ` +
 				"(address localhost: missing port in address), want host:port",
 			WantErr: errAddress,
 		},
@@ -385,7 +385,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envSelfTracing: "collector:70000",
 			},
-			Want: `FAULTLINE_SELF_TRACING_ENDPOINT: invalid address "collector:70000" ` +
+			Want: `SELF_TRACING_ENDPOINT: invalid address "collector:70000" ` +
 				"(port must be 1 … 65535), want host:port",
 			WantErr: errPort,
 		},
@@ -394,7 +394,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envSelfTracing: defaultOTLPAddr,
 			},
-			Want:    `FAULTLINE_SELF_TRACING_ENDPOINT: "127.0.0.1:4317" must differ from FAULTLINE_OTLP_GRPC_ADDR`,
+			Want:    `SELF_TRACING_ENDPOINT: "127.0.0.1:4317" must differ from OTLP_GRPC_ADDR`,
 			WantErr: errSameAddress,
 		},
 		{
@@ -402,7 +402,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envLogLevel: "Info",
 			},
-			Want:    `FAULTLINE_LOG_LEVEL: unknown log level "Info", want debug, info, warn or error`,
+			Want:    `LOG_LEVEL: unknown log level "Info", want debug, info, warn or error`,
 			WantErr: errUnknownLevel,
 		},
 		{
@@ -411,7 +411,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 				envPairingTTL:   "30s",
 				envTombstoneTTL: "20s",
 			},
-			Want:    "FAULTLINE_TOMBSTONE_TTL: 20s must not be below FAULTLINE_PAIRING_TTL (30s)",
+			Want:    "TOMBSTONE_TTL: 20s must not be below PAIRING_TTL (30s)",
 			WantErr: errBelow,
 		},
 		{
@@ -419,7 +419,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envWindowSize: "7s",
 			},
-			Want:    "FAULTLINE_WINDOW_SIZE: 7s must divide 1h0m0s without a remainder",
+			Want:    "WINDOW_SIZE: 7s must divide 1h0m0s without a remainder",
 			WantErr: errNotDivisor,
 		},
 		{
@@ -427,7 +427,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envWindowSize: "10m",
 			},
-			Want:    "FAULTLINE_WINDOW_SIZE: 10m0s out of range, want 1s … 5m0s",
+			Want:    "WINDOW_SIZE: 10m0s out of range, want 1s … 5m0s",
 			WantErr: errOutOfRange,
 		},
 		{
@@ -435,7 +435,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envAllowedLateness: "11m",
 			},
-			Want:    "FAULTLINE_ALLOWED_LATENESS: 11m0s out of range, want 0s … 10m0s",
+			Want:    "ALLOWED_LATENESS: 11m0s out of range, want 0s … 10m0s",
 			WantErr: errOutOfRange,
 		},
 		{
@@ -443,7 +443,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envSlackWindows: "17",
 			},
-			Want:    "FAULTLINE_HORIZON_SLACK_WINDOWS: 17 out of range, want 1 … 16",
+			Want:    "HORIZON_SLACK_WINDOWS: 17 out of range, want 1 … 16",
 			WantErr: errOutOfRange,
 		},
 		{
@@ -453,7 +453,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 				envWatermarkDelay:  "5m",
 				envAllowedLateness: "10m",
 			},
-			Want: "FAULTLINE_WINDOW_SIZE: invalid window config: delay 5m0s and lateness 10m0s need more than 256 " +
+			Want: "WINDOW_SIZE: invalid window config: delay 5m0s and lateness 10m0s need more than 256 " +
 				"live windows of 1s per series",
 			WantErr: stream.ErrInvalidConfig,
 		},
@@ -462,7 +462,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envEarlyFirePeriod: "50ms",
 			},
-			Want:    "FAULTLINE_EARLY_FIRE_PERIOD: 50ms out of range, want 100ms … 5m0s",
+			Want:    "EARLY_FIRE_PERIOD: 50ms out of range, want 100ms … 5m0s",
 			WantErr: errOutOfRange,
 		},
 		{
@@ -470,7 +470,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envEarlyFirePeriod: "15s",
 			},
-			Want:    "FAULTLINE_EARLY_FIRE_PERIOD: 15s must not be above FAULTLINE_WINDOW_SIZE (10s)",
+			Want:    "EARLY_FIRE_PERIOD: 15s must not be above WINDOW_SIZE (10s)",
 			WantErr: errAbove,
 		},
 		{
@@ -479,7 +479,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 				envEarlyFirePeriod:  "2s",
 				envIdleAdvanceAfter: "1s",
 			},
-			Want:    "FAULTLINE_IDLE_ADVANCE_AFTER: 1s must not be below FAULTLINE_EARLY_FIRE_PERIOD (2s)",
+			Want:    "IDLE_ADVANCE_AFTER: 1s must not be below EARLY_FIRE_PERIOD (2s)",
 			WantErr: errBelow,
 		},
 		{
@@ -487,7 +487,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envOperationsEach: "1000",
 			},
-			Want:    "FAULTLINE_MAX_OPERATIONS_PER_SERVICE: 1000 out of range, want 1 … 999",
+			Want:    "MAX_OPERATIONS_PER_SERVICE: 1000 out of range, want 1 … 999",
 			WantErr: errOutOfRange,
 		},
 		{
@@ -495,7 +495,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envMaxSeries: "1000001",
 			},
-			Want:    "FAULTLINE_MAX_SERIES: 1000001 out of range, want 1 … 1000000",
+			Want:    "MAX_SERIES: 1000001 out of range, want 1 … 1000000",
 			WantErr: errOutOfRange,
 		},
 		{
@@ -503,7 +503,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envSketchEntries: "3000000",
 			},
-			Want:    "FAULTLINE_SKETCH_MAX_ENTRIES: 3000000 must be a power of two",
+			Want:    "SKETCH_MAX_ENTRIES: 3000000 must be a power of two",
 			WantErr: errPowerOfTwo,
 		},
 		{
@@ -511,7 +511,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envSketchEntries: "1024",
 			},
-			Want:    "FAULTLINE_SKETCH_MAX_ENTRIES: 1024 out of range, want 1048576 … 268435456",
+			Want:    "SKETCH_MAX_ENTRIES: 1024 out of range, want 1048576 … 268435456",
 			WantErr: errOutOfRange,
 		},
 		{
@@ -519,7 +519,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envRouteRulesFile: "",
 			},
-			Want:    "FAULTLINE_ROUTE_RULES_FILE: empty value, unset the variable to use the default",
+			Want:    "ROUTE_RULES_FILE: empty value, unset the variable to use the default",
 			WantErr: errEmpty,
 		},
 		{
@@ -527,7 +527,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envAPIResponseBudget: "128MiB",
 			},
-			Want: "FAULTLINE_API_RESPONSE_BUDGET: 134217728 must not be below the worst response at the graph limits " +
+			Want: "API_RESPONSE_BUDGET: 134217728 must not be below the worst response at the graph limits " +
 				"(257762560)",
 			WantErr: errBelow,
 		},
@@ -536,7 +536,7 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 			Args: map[string]string{
 				envAPIResponseBudget: "2GiB",
 			},
-			Want:    "FAULTLINE_API_RESPONSE_BUDGET: 2GiB out of range, want 1MiB … 1GiB",
+			Want:    "API_RESPONSE_BUDGET: 2GiB out of range, want 1MiB … 1GiB",
 			WantErr: errOutOfRange,
 		},
 	}
@@ -560,9 +560,9 @@ func TestLoadReportsEveryErrorAtOnce(t *testing.T) {
 		envJournalMaxBytes: "64",
 	}))
 	want := []string{
-		`FAULTLINE_JOURNAL_MAX_BYTES: invalid size "64" (unknown size unit), want e.g. 64MiB`,
-		`FAULTLINE_PAIRING_TTL: invalid duration "10", want e.g. 10s`,
-		"FAULTLINE_GRAPH_MAX_NODES: 30000 out of range, want 1 … 20000",
+		`JOURNAL_MAX_BYTES: invalid size "64" (unknown size unit), want e.g. 64MiB`,
+		`PAIRING_TTL: invalid duration "10", want e.g. 10s`,
+		"GRAPH_MAX_NODES: 30000 out of range, want 1 … 20000",
 	}
 	if err == nil {
 		t.Fatal("Load accepted three invalid variables")

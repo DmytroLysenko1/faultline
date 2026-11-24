@@ -10,11 +10,12 @@ type lifecycleState string
 const eventState = "lifecycle.state"
 
 const (
-	stateStarting lifecycleState = "starting"
-	stateServing  lifecycleState = "serving"
-	stateDraining lifecycleState = "draining"
-	stateAborting lifecycleState = "aborting"
-	stateStopped  lifecycleState = "stopped"
+	stateStarting   lifecycleState = "starting"
+	stateConnecting lifecycleState = "connecting"
+	stateServing    lifecycleState = "serving"
+	stateDraining   lifecycleState = "draining"
+	stateAborting   lifecycleState = "aborting"
+	stateStopped    lifecycleState = "stopped"
 )
 
 const (
@@ -25,6 +26,7 @@ const (
 	reasonLaunched      = "launched"
 	reasonStartFailed   = "start_failed"
 	reasonUnexplained   = "unexplained"
+	reasonDialing       = "dialing"
 )
 
 type lifecycle struct {
