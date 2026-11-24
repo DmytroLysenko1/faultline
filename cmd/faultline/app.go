@@ -34,18 +34,7 @@ type startup struct {
 	Memory memorySetting
 }
 
-func realMain(current process) int {
-	setup, err := start(current)
-	if err != nil {
-		return fail(current.Stderr, err, exitConfig)
-	}
-	return serve(current.Stderr, &setup)
-}
-
 func start(current process) (startup, error) {
-	if len(current.Args) != 1 || current.Args[0] != commandAll {
-		return startup{}, errUsage
-	}
 	cfg, err := loadConfig(current.Lookup)
 	if err != nil {
 		return startup{}, err

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"time"
 
@@ -68,4 +69,14 @@ func ownerNames(owners []resource.ServiceRef) []string {
 		names = append(names, owner.Namespace+"/"+owner.Name)
 	}
 	return names
+}
+
+func logTransitions(ctx context.Context, logger *slog.Logger, transitions []selfalert.Transition) {
+	for index := range transitions {
+		transition := &transitions[index]
+		logger.LogAttrs(
+			ctx, levelOf(transition),
+			transition.Event, transitionAttrs(transition)...,
+		)
+	}
 }

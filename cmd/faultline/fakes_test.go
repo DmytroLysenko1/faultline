@@ -67,6 +67,7 @@ type fakeServer struct {
 	hangShutdown bool
 	ignoreStop   bool
 	sentinel     error
+	closeErr     error
 }
 
 func newFakeServer(events *eventLog, name string, sentinel error) *fakeServer {
@@ -124,7 +125,7 @@ func (s *fakeServer) Shutdown(ctx context.Context) error {
 func (s *fakeServer) Close() error {
 	s.events.add(s.name + ".close")
 	s.release()
-	return nil
+	return s.closeErr
 }
 
 type recordingJournal struct {

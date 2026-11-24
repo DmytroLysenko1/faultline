@@ -99,14 +99,11 @@ func (r *statsReporter) report(ctx context.Context, final bool) {
 	)
 }
 
-func (r *statsReporter) logTransitions(ctx context.Context, transitions []selfalert.Transition) {
-	for index := range transitions {
-		transition := &transitions[index]
-		r.logger.LogAttrs(ctx, levelOf(transition), transition.Event, transitionAttrs(transition)...)
-	}
-}
-
-func provideStats(stored storage, counters ingestCounters, timings pipelineTimings, cfg *Config,
+func provideStats(
+	stored storage,
+	counters ingestCounters,
+	timings pipelineTimings,
+	cfg *Config,
 	logger *slog.Logger,
 ) *statsReporter {
 	return &statsReporter{
@@ -125,4 +122,8 @@ func alertThresholds(cfg *Config) selfalert.Thresholds {
 	return selfalert.Thresholds{
 		WatermarkLag: cfg.Topology.Windows.Delay + cfg.Journal.IdleAfter + cfg.Topology.EarlyFirePeriod + lagSlack,
 	}
+}
+
+func (r *statsReporter) logTransitions(ctx context.Context, transitions []selfalert.Transition) {
+	logTransitions(ctx, r.logger, transitions)
 }

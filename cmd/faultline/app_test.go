@@ -1,22 +1,38 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"go.uber.org/goleak"
 )
 
-const reexecFlag = "FAULTLINE_TEST_REEXEC"
+const (
+	reexecFlag      = "FAULTLINE_TEST_REEXEC"
+	stackFlag       = "FAULTLINE_TEST_STACK"
+	stackSignal     = "signal"
+	heldStopBudget  = time.Hour
+	secondSignalCap = 10 * time.Second
+)
 
 func TestMain(m *testing.M) {
 	if os.Getenv(reexecFlag) != "" {
 		main()
+	}
+	if os.Getenv(stackFlag) == stackSignal {
+		os.Exit(runSignalledStack())
 	}
 	goleak.VerifyTestMain(m, goleak.IgnoreAnyFunction("os/signal.loop"))
 }
@@ -57,6 +73,20 @@ func TestRealMain(t *testing.T) {
 			Args: process{
 				Args: []string{
 					"ingest",
+				},
+				Lookup: environment(map[string]string{}),
+			},
+			Want: outcome{
+				Code:   exitConfig,
+				Stderr: "usage: faultline all\n",
+			},
+		},
+		{
+			Name: "a command with extra arguments prints usage",
+			Args: process{
+				Args: []string{
+					commandAll,
+					"extra",
 				},
 				Lookup: environment(map[string]string{}),
 			},
@@ -150,5 +180,83 @@ func TestProcessExitCodeIsTwoForAnInvalidVariable(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), envGraphMaxNodes) {
 		t.Errorf("stderr %q does not name %s", stderr.String(), envGraphMaxNodes)
+	}
+}
+
+func TestTheUsageNamesEveryCommand(t *testing.T) {
+	for name := range commands() {
+		if !slices.Contains(strings.Fields(usage), name) {
+			t.Errorf("usage %q does not name the command %q", usage, name)
+		}
+	}
+}
+
+type heldStop struct{}
+
+func (heldStop) start(context.Context, unitSupervisor) error {
+	return nil
+}
+
+func (heldStop) stop(ctx context.Context) error {
+	<-ctx.Done()
+	return nil
+}
+
+func runSignalledStack() int {
+	role := &stack{
+		layers: []layer{
+			{
+				name:       "held",
+				unit:       heldStop{},
+				stopBudget: heldStopBudget,
+			},
+		},
+	}
+	life := newLifecycle(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+	return launchStack(context.Background(), signalNotify, role, life)
+}
+
+func TestASecondSignalIsLeftToTheSystem(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), secondSignalCap)
+	defer cancel()
+	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^$")
+	command.Env = append(os.Environ(), stackFlag+"="+stackSignal)
+	stderr, err := command.StderrPipe()
+	if err != nil {
+		t.Fatalf("stderr pipe: %v", err)
+	}
+	if err := command.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	lines := bufio.NewScanner(stderr)
+	awaitState(t, lines, stateServing)
+	signalChild(t, command)
+	awaitState(t, lines, stateDraining)
+	signalChild(t, command)
+	if _, err := io.Copy(io.Discard, stderr); err != nil {
+		t.Errorf("drain stderr: %v", err)
+	}
+	waitErr := command.Wait()
+	status, _ := command.ProcessState.Sys().(syscall.WaitStatus)
+	if !status.Signaled() || status.Signal() != syscall.SIGTERM {
+		t.Fatalf("child ended with %v (%v), want killed by the second SIGTERM", command.ProcessState, waitErr)
+	}
+}
+
+func awaitState(t *testing.T, lines *bufio.Scanner, state lifecycleState) {
+	t.Helper()
+	want := `"state":"` + string(state) + `"`
+	for lines.Scan() {
+		if strings.Contains(lines.Text(), want) {
+			return
+		}
+	}
+	t.Fatalf("the child never logged %s: %v", want, lines.Err())
+}
+
+func signalChild(t *testing.T, command *exec.Cmd) {
+	t.Helper()
+	if err := command.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("SIGTERM: %v", err)
 	}
 }

@@ -66,7 +66,15 @@ endif
 ##@ Verification
 
 .PHONY: verify
-verify: mod-check lint test-race test-probes cover-check vuln proto-lint gen-check core-diff-check ## Everything CI runs
+verify: mod-check lint test-race test-probes cover-check vuln proto-lint gen-check core-diff-check shutdown-tests-check ## Everything CI runs
+
+.PHONY: shutdown-tests-check
+shutdown-tests-check: ## Fail when the SHUTDOWN_TESTS pattern has a space or selects no test for a listed name
+	@case '$(SHUTDOWN_TESTS)' in *' '*) echo "SHUTDOWN_TESTS has a space: $(SHUTDOWN_TESTS)"; exit 1;; esac
+	@listed="$$(go test -list '$(SHUTDOWN_TESTS)' ./cmd/faultline/ 2>&1)" || { printf '%s\n' "$$listed"; exit 1; }; \
+	for name in $(SHUTDOWN_NAMES); do \
+		printf '%s\n' "$$listed" | grep -q "^$$name$$" || { echo "SHUTDOWN_TESTS selects no $$name"; exit 1; }; \
+	done
 
 .PHONY: core-diff-check
 core-diff-check: ## Fail when a core file changed since v0.2.0 without a line in hack/core-diff.allow
@@ -123,8 +131,14 @@ STRESS_PACKAGES := ./internal/application/ingest/... ./internal/application/proc
 STRESS_COUNT := 200
 STREAM_STRESS_COUNT := 2
 STREAM_STRESS_TIMEOUT := 20m
-SHUTDOWN_TESTS := TestShutdownOrder|TestDrainIncomplete|TestSignalAfterPipelineExit|TestEveryComponent|TestOTLPStuckAfterStop|\
-	TestSlowComponentsAtTheEndOfShutdown|TestStatsReporter|TestStopOnATick
+empty :=
+space := $(empty) $(empty)
+SHUTDOWN_NAMES := TestShutdownOrder TestDrainIncompleteReportsTheJournalRemainder TestSignalAfterPipelineExitAborts \
+	TestEveryComponentReportsExactlyOneExit TestOTLPStuckAfterStopIsReported TestSlowComponentsAtTheEndOfShutdown \
+	TestStatsReporterWritesWhileIdleAndOnceMoreOnStop TestStopOnATickIsNotAFailure \
+	TestAServedStackStopsInReverseOnASignal TestRollbackGetsTheFullBudgetAfterASignal \
+	TestALateUnitFailureIsCountedOnce TestAStuckLayerStopIsAbandonedAndNamed TestASecondSignalIsLeftToTheSystem
+SHUTDOWN_TESTS := ^($(subst $(space),|,$(strip $(SHUTDOWN_NAMES))))$$
 
 BENCH_DIR := tmp/bench
 BENCH_BASELINE := test/bench/baseline.txt

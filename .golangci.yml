@@ -367,6 +367,9 @@ linters:
           msg: no stdout printing — use slog/zap (observability doctrine)
         - pattern: ^log\.(Print|Fatal|Panic)(|f|ln)$
           msg: no stdlib log — errors flow up as values; log only at the final boundary
+        - pattern: ^signal\.(Notify|NotifyContext)$
+          pkg: ^os/signal$
+          msg: only launchstack.go registers the stop signals — a second registration swallows the second SIGTERM (decision 13)
         - pattern: ^time\.(Now|Since|Until)$
           msg: inject a clock port — domain and application time must be deterministic
     gocritic:
@@ -392,6 +395,19 @@ linters:
         linters:
           - forbidigo
         text: inject a clock port
+      - path-except: cmd/faultline/
+        linters:
+          - forbidigo
+        text: only launchstack.go registers the stop signals
+      - path: cmd/faultline/launchstack\.go
+        linters:
+          - forbidigo
+        text: only launchstack.go registers the stop signals
+      - path: cmd/faultline/app\.go
+        source: ^\tctx, stop := signal\.NotifyContext\(context\.Background\(\), os\.Interrupt, syscall\.SIGTERM\)$
+        linters:
+          - forbidigo
+        text: only launchstack.go registers the stop signals
       - path: (_test\.go$|internal/infrastructure/natsjs/checkpoint/)
         linters:
           - forbidigo

@@ -20,7 +20,6 @@ const (
 )
 
 var (
-	errUnexpectedExit  = errors.New("component exited unexpectedly")
 	errDrainIncomplete = errors.New("journal not drained before exit")
 	errNotStopped      = errors.New("component did not stop in time")
 )
