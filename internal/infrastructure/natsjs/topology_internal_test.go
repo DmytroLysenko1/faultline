@@ -13,7 +13,7 @@ import (
 
 const (
 	pinnedVersion  = 1
-	pinnedHash     = "9b5c5ad2191e6180dcb52234e77907d8a90b28a873194776beb9f9d03b02df41"
+	pinnedHash     = "0268c631f05be163e8e683fe70514c37bf30212cd3923fc81d8f4326f6bce87d"
 	pinnedMaxBytes = 2 << 30
 	pinnedWindow   = 5 * time.Minute
 	pinnedReplicas = 3
