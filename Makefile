@@ -147,7 +147,7 @@ SHUTDOWN_NAMES := TestShutdownOrder TestDrainIncompleteReportsTheJournalRemainde
 	TestProcessorStopOrderAndReadiness TestAPartitionServesAndReleasesItsLeaseOnSigterm \
 	TestTheDrainWaitsForThePipelineThenCancelsItThenGivesUp \
 	TestTheReleaseStepSeversBeforeItCancelsTheRenewalOnlyWhenAWriterWasAbandoned \
-	TestAnAbandonedPartitionStopToleratesTheClosedConnection
+	TestAnAbandonedPartitionStopToleratesTheClosedConnection TestAPipelineExitWhileServingIsCodeOneAndAborting
 SHUTDOWN_TESTS := ^($(subst $(space),|,$(strip $(SHUTDOWN_NAMES))))$$
 
 BENCH_DIR := tmp/bench
