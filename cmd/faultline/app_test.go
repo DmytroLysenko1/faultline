@@ -65,7 +65,7 @@ func TestRealMain(t *testing.T) {
 			},
 			Want: outcome{
 				Code:   exitConfig,
-				Stderr: "usage: faultline all | ingester\n",
+				Stderr: "usage: faultline all | ingester | processor\n",
 			},
 		},
 		{
@@ -78,7 +78,7 @@ func TestRealMain(t *testing.T) {
 			},
 			Want: outcome{
 				Code:   exitConfig,
-				Stderr: "usage: faultline all | ingester\n",
+				Stderr: "usage: faultline all | ingester | processor\n",
 			},
 		},
 		{
@@ -92,7 +92,7 @@ func TestRealMain(t *testing.T) {
 			},
 			Want: outcome{
 				Code:   exitConfig,
-				Stderr: "usage: faultline all | ingester\n",
+				Stderr: "usage: faultline all | ingester | processor\n",
 			},
 		},
 		{

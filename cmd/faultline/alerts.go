@@ -18,19 +18,24 @@ const (
 )
 
 func sampleOf(snapshot *topology.Snapshot, now time.Time) *selfalert.Sample {
-	stats := &snapshot.TrafficStats
-	return &selfalert.Sample{
-		Now:                now,
-		Watermark:          snapshot.Watermark,
-		WatermarkKnown:     snapshot.WatermarkKnown,
-		Offered:            stats.Subjects.Offered,
-		Reassigned:         stats.Subjects.Reassigned,
-		LateDropped:        stats.Subjects.LateDropped,
-		OwnersOverLimit:    stats.Cardinality.OwnersOverLimit,
-		Owners:             stats.OwnersOverLimit[:min(len(stats.OwnersOverLimit), maxListedOwners)],
-		SeriesLimitReached: stats.SeriesLimitReached,
-		DroppedSamples:     stats.Sketch.DroppedSamples,
+	sample := &selfalert.Sample{
+		Now: now,
 	}
+	fillSample(snapshot, sample)
+	return sample
+}
+
+func fillSample(snapshot *topology.Snapshot, sample *selfalert.Sample) {
+	stats := &snapshot.TrafficStats
+	sample.Watermark = snapshot.Watermark
+	sample.WatermarkKnown = snapshot.WatermarkKnown
+	sample.Offered = stats.Subjects.Offered
+	sample.Reassigned = stats.Subjects.Reassigned
+	sample.LateDropped = stats.Subjects.LateDropped
+	sample.OwnersOverLimit = stats.Cardinality.OwnersOverLimit
+	sample.Owners = stats.OwnersOverLimit[:min(len(stats.OwnersOverLimit), maxListedOwners)]
+	sample.SeriesLimitReached = stats.SeriesLimitReached
+	sample.DroppedSamples = stats.Sketch.DroppedSamples
 }
 
 func levelOf(transition *selfalert.Transition) slog.Level {

@@ -61,6 +61,7 @@ type partitionUnit struct {
 	graph          *memgraph.Store
 	phases         phaseLog
 	logger         *slog.Logger
+	clock          wallClock
 	label          string
 	stopped        chan struct{}
 	closeStopped   func()
@@ -116,6 +117,7 @@ func newPartitionUnit(
 		graph:          graph,
 		phases:         phases,
 		logger:         logger,
+		clock:          systemClock{},
 		label:          partitionLabel(cfg.Partition),
 		stopped:        stopped,
 		closeStopped:   sync.OnceFunc(func() { close(stopped) }),

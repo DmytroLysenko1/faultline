@@ -13,7 +13,7 @@ import (
 
 const (
 	commandAll  = "all"
-	usage       = "usage: faultline all | ingester"
+	usage       = "usage: faultline all | ingester | processor"
 	exitOK      = 0
 	exitFailure = 1
 	exitConfig  = 2
@@ -101,9 +101,9 @@ func launch(ctx context.Context, stop context.CancelFunc, setup *startup, logger
 	return run(ctx, stop, sys, open, defaultShutdownBudget())
 }
 
-func fail(stderr io.Writer, reason error, code int) int {
+func fail(stderr io.Writer, reason error) int {
 	if _, err := fmt.Fprintln(stderr, reason); err != nil {
 		return exitFailure
 	}
-	return code
+	return exitConfig
 }

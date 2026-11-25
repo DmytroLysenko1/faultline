@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,6 +38,7 @@ const (
 	driftDeadline       = 10 * time.Second
 	shortRestoreBudget  = 2 * time.Second
 	finalOnlyInterval   = time.Minute
+	abandonedStopBudget = time.Second
 )
 
 type partitionRun struct {
@@ -674,4 +676,92 @@ func TestAPointerThatCannotBeReadIsNotDiscardable(t *testing.T) {
 		t.Errorf("restore_failed %v, want p0/resume, not discardable and no hint", failed)
 	}
 	assertErrors(t, run.logs, eventRestoreFailed)
+}
+
+type recordedSever struct {
+	severableConns
+	events *eventLog
+}
+
+func (r recordedSever) sever(ctx context.Context) error {
+	r.events.add("sever")
+	return r.severableConns.sever(ctx)
+}
+
+type recordedStop struct {
+	unit
+	events *eventLog
+	name   string
+	hold   <-chan struct{}
+	done   chan struct{}
+	err    error
+}
+
+func (r *recordedStop) stop(ctx context.Context) error {
+	r.events.add(r.name + " stop")
+	if r.hold != nil {
+		<-r.hold
+	}
+	r.err = r.unit.stop(ctx)
+	r.events.add(r.name + " stopped")
+	close(r.done)
+	return r.err
+}
+
+func TestAnAbandonedPartitionStopToleratesTheClosedConnection(t *testing.T) {
+	cluster := natsjstest.Start(t, singleNATSNode)
+	run := &partitionRun{
+		logs:  &logBuffer{},
+		graph: &memgraph.Store{},
+		sig:   newFakeNotify(),
+	}
+	events := &eventLog{}
+	run.life = newLifecycle(testLogger(run.logs))
+	conn, conns := connLayer(natsSetup(cluster.URLs()...), run.life, testLogger(run.logs))
+	source := recordedSever{
+		severableConns: conns,
+		events:         events,
+	}
+	partition, unit := partitionLayer(finalOnlyConfig(t), source, run.graph, run.life, testLogger(run.logs))
+	run.unit = unit
+	closed := &recordedStop{
+		unit:   conn.unit,
+		events: events,
+		name:   "conn",
+		done:   make(chan struct{}),
+	}
+	conn.unit = closed
+	abandoned := &recordedStop{
+		unit:   partition.unit,
+		events: events,
+		name:   "p0",
+		hold:   closed.done,
+		done:   make(chan struct{}),
+	}
+	partition.unit = abandoned
+	partition.stopBudget = abandonedStopBudget
+	run.role = &stack{
+		layers: []layer{
+			conn,
+			partition,
+		},
+	}
+	run.done = launchRoleWith(t, run.role, run.sig.notify, run.life)
+	servedWithRecords(t, run, cluster.URLs()...)
+
+	run.sig.send()
+
+	assertCode(t, <-run.done, exitFailure, run.logs)
+	<-abandoned.done
+	if !errors.Is(abandoned.err, errStepAbandoned) {
+		t.Errorf("the abandoned stop = %v, want its store step abandoned", abandoned.err)
+	}
+	want := []string{"p0 stop", "conn stop", "conn stopped", "sever", "p0 stopped"}
+	assertDiff(t, "order", want, events.list())
+	failed := valuesOf(run.logs.all(t, eventLayerStopFailed), "layer")
+	assertDiff(t, "layer_stop_failed", []any{"p0"}, failed)
+	assertErrors(t, run.logs, eventStopFailed)
+	if !leaseKeyExists(t, cluster.URLs()[0]) {
+		t.Errorf("the lease key went away, want it severed rather than released")
+	}
 }

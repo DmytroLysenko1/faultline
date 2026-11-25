@@ -21,7 +21,7 @@ type ingesterSetup struct {
 func runIngester(current process) int {
 	role, life, err := prepareIngester(current)
 	if err != nil {
-		return fail(current.Stderr, err, exitConfig)
+		return fail(current.Stderr, err)
 	}
 	return launchStack(context.Background(), signalNotify, role, life)
 }

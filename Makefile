@@ -144,8 +144,10 @@ SHUTDOWN_NAMES := TestShutdownOrder TestDrainIncompleteReportsTheJournalRemainde
 	TestIngesterStopOrder TestAForcedOTLPStopIsAWarningOnlyWhenItsGoroutineExits \
 	TestASecondSignalReachesTheSystemThroughTheIngesterWiring \
 	TestOneErrorAndOneLeaseLineInEveryOrder TestTwoExitsBeforeTheSnapshotLogOneErrorAndOneLeaseLine \
-	TestAPartitionServesAndReleasesItsLeaseOnSigterm TestTheDrainWaitsForThePipelineThenCancelsItThenGivesUp \
-	TestTheReleaseStepSeversBeforeItCancelsTheRenewalOnlyWhenAWriterWasAbandoned
+	TestProcessorStopOrderAndReadiness TestAPartitionServesAndReleasesItsLeaseOnSigterm \
+	TestTheDrainWaitsForThePipelineThenCancelsItThenGivesUp \
+	TestTheReleaseStepSeversBeforeItCancelsTheRenewalOnlyWhenAWriterWasAbandoned \
+	TestAnAbandonedPartitionStopToleratesTheClosedConnection
 SHUTDOWN_TESTS := ^($(subst $(space),|,$(strip $(SHUTDOWN_NAMES))))$$
 
 BENCH_DIR := tmp/bench

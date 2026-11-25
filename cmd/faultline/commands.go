@@ -12,6 +12,9 @@ func commands() map[string]command {
 		commandIngester: {
 			run: runIngester,
 		},
+		commandProcessor: {
+			run: runProcessor,
+		},
 	}
 }
 
@@ -26,7 +29,7 @@ func commandOf(args []string) (command, bool) {
 func runAll(current process) int {
 	setup, err := start(current)
 	if err != nil {
-		return fail(current.Stderr, err, exitConfig)
+		return fail(current.Stderr, err)
 	}
 	return serve(current.Stderr, &setup)
 }
@@ -34,7 +37,7 @@ func runAll(current process) int {
 func realMain(current process) int {
 	selected, found := commandOf(current.Args)
 	if !found {
-		return fail(current.Stderr, errUsage, exitConfig)
+		return fail(current.Stderr, errUsage)
 	}
 	return selected.run(current)
 }
