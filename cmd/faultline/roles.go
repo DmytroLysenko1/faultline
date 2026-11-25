@@ -67,7 +67,10 @@ func loadRoleConfig(lookup lookupFunc) (Config, routeRules, error) {
 	if err != nil {
 		return Config{}, routeRules{}, err
 	}
-	rules, _ := loadRules(cfg.RouteRulesFile)
+	rules, err := loadRules(cfg.RouteRulesFile)
+	if err != nil {
+		return Config{}, routeRules{}, err
+	}
 	return cfg, rules, nil
 }
 

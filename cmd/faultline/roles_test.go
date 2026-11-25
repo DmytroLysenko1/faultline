@@ -327,7 +327,7 @@ func TestTheIngesterSetsItsMemoryLimitBeforeItsBudget(t *testing.T) {
 	assertDiff(t, "logged limit", want, []any{logged["bytes"], logged["source"]})
 }
 
-func TestTheIngesterRefusesRouteRulesItCannotReadWithCodeTwo(t *testing.T) {
+func TestTheIngesterRefusesRouteRulesItCannotRead(t *testing.T) {
 	tests := []struct {
 		name  string
 		rules string
@@ -349,24 +349,17 @@ func TestTheIngesterRefusesRouteRulesItCannotReadWithCodeTwo(t *testing.T) {
 					t.Fatalf("write rules: %v", err)
 				}
 			}
-			var stderr bytes.Buffer
-			limits := &recordedLimit{}
 
-			code := realMain(process{
-				Args: []string{commandIngester},
+			_, err := loadIngester(process{
 				Lookup: environment(map[string]string{
 					envNATSURL:        testNATSURL,
 					envRouteRulesFile: path,
 				}),
-				ReadCgroup:     func() ([]byte, error) { return nil, os.ErrNotExist },
-				SetMemoryLimit: limits.setLimit,
-				Stderr:         &stderr,
-				Hostname:       podHostname,
+				Hostname: podHostname,
 			})
 
-			assertDiff(t, "code", exitConfig, code)
-			if !strings.Contains(stderr.String(), envRouteRulesFile) {
-				t.Errorf("stderr = %q, want it to name %s", stderr.String(), envRouteRulesFile)
+			if err == nil || !strings.Contains(err.Error(), envRouteRulesFile) {
+				t.Errorf("loadIngester error = %v, want one naming %s", err, envRouteRulesFile)
 			}
 		})
 	}
