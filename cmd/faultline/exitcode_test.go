@@ -278,7 +278,7 @@ func TestLateOutcome(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
-			if diff := cmp.Diff(tt.Want, lateOutcome(tt.Args).code); diff != "" {
+			if diff := cmp.Diff(tt.Want, lateOutcome(&exitOutcome{}, tt.Args, nil, nil).code); diff != "" {
 				t.Errorf("code mismatch (-want +got):\n%s", diff)
 			}
 		})

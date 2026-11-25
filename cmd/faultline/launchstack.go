@@ -57,7 +57,8 @@ func stopStack(
 	unwatch := watchAbortSignal(signalCtx, life.logger, outcome)
 	failures := role.stop(context.WithoutCancel(signalCtx), sup, life.logger)
 	unwatch()
-	return finishStack(signalCtx, sup, life, outcome, failures)
+	loss := leaseLossIn(sup.lostLease(), role.stageAt(life.Served()), failures)
+	return finishStack(signalCtx, sup, life, outcome, failures, loss)
 }
 
 func finishStack(
@@ -66,8 +67,10 @@ func finishStack(
 	life *lifecycle,
 	outcome *exitOutcome,
 	failures []stopFailure,
+	loss *leaseLoss,
 ) int {
-	late := lateOutcome(sup.late())
+	late := lateOutcome(outcome, sup.late(), loss, sup.claimLeaseIncident)
+	logOutcome(signalCtx, life.logger, &late)
 	reportStopFailures(signalCtx, life.logger, failures, stopReport{
 		state:    outcome.state,
 		followup: sup.incidentOpened(),

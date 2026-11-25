@@ -18,6 +18,14 @@ var (
 
 const eventComponentExit = "lifecycle.component_exit"
 
+type incidentMark int
+
+const (
+	incidentNone incidentMark = iota
+	incidentOwed
+	incidentWritten
+)
+
 type unitExitError struct {
 	name string
 	err  error
@@ -53,14 +61,15 @@ func newSupervised() *supervised {
 }
 
 type supervisor struct {
-	mu             sync.Mutex
-	fail           context.CancelCauseFunc
-	logger         *slog.Logger
-	units          map[string]*supervised
-	incidentLogged bool
-	snapshotted    bool
-	first          error
-	lateExit       error
+	mu          sync.Mutex
+	fail        context.CancelCauseFunc
+	logger      *slog.Logger
+	units       map[string]*supervised
+	incident    incidentMark
+	snapshotted bool
+	first       error
+	lateExit    error
+	leaseExit   keptLeaseExit
 }
 
 func newSupervisor(fail context.CancelCauseFunc, logger *slog.Logger) *supervisor {
@@ -119,10 +128,20 @@ func (s *supervisor) record(name string, current *supervised, err error) (*unitE
 		name: name,
 		err:  err,
 	}
-	opens := !s.incidentLogged
-	s.incidentLogged = true
+	opens := s.incident == incidentNone
+	if opens {
+		s.incident = incidentOf(exit)
+	}
 	s.keep(exit)
+	s.keepLeaseExit(exit)
 	return exit, opens
+}
+
+func incidentOf(exit error) incidentMark {
+	if errors.Is(exit, processing.ErrLeaseLost) {
+		return incidentOwed
+	}
+	return incidentWritten
 }
 
 func (s *supervisor) keep(exit *unitExitError) {
@@ -131,6 +150,20 @@ func (s *supervisor) keep(exit *unitExitError) {
 	}
 	if !s.snapshotted && s.first == nil {
 		s.first = exit
+	}
+}
+
+type keptLeaseExit struct {
+	err            error
+	beforeSnapshot bool
+}
+
+func (s *supervisor) keepLeaseExit(exit *unitExitError) {
+	if s.leaseExit.err == nil && errors.Is(exit, processing.ErrLeaseLost) {
+		s.leaseExit = keptLeaseExit{
+			err:            exit,
+			beforeSnapshot: !s.snapshotted,
+		}
 	}
 }
 
@@ -231,7 +264,7 @@ func (s *supervisor) snapshot(decide func(unit error) exitOutcome) exitOutcome {
 	s.snapshotted = true
 	outcome := decide(s.first)
 	if outcome.level == slog.LevelError {
-		s.incidentLogged = true
+		s.incident = incidentWritten
 	}
 	return outcome
 }
@@ -245,7 +278,21 @@ func (s *supervisor) late() error {
 func (s *supervisor) incidentOpened() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.incidentLogged
+	return s.incident != incidentNone
+}
+
+func (s *supervisor) lostLease() keptLeaseExit {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.leaseExit
+}
+
+func (s *supervisor) claimLeaseIncident() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	owes := s.incident != incidentWritten
+	s.incident = incidentWritten
+	return owes
 }
 
 func hasExited(current *supervised) bool {
