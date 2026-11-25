@@ -89,7 +89,7 @@ func (l *Lease) claimOnce(ctx context.Context, sent time.Duration) bool {
 		l.claimed(sent, revision)
 		return true
 	}
-	l.attempt = err
+	l.remember(ctx, err)
 	if !errors.Is(err, jetstream.ErrKeyExists) || !l.reclaimOwnWrite(attempt) {
 		return false
 	}
@@ -105,4 +105,10 @@ func (l *Lease) claimOnce(ctx context.Context, sent time.Duration) bool {
 func (l *Lease) claimed(sent time.Duration, revision uint64) {
 	l.wrote(sent, revision)
 	l.Epoch = revision
+}
+
+func (l *Lease) remember(ctx context.Context, err error) {
+	if ctx.Err() == nil {
+		l.attempt = err
+	}
 }

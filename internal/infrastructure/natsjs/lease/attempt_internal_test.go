@@ -31,3 +31,20 @@ func TestAnExpiredClaimNamesTheHolderOrTheLastFailure(t *testing.T) {
 		}
 	})
 }
+
+func TestAClaimCutByItsDeadlineKeepsTheFailureBeforeIt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store := newFakeStore(productionTTL)
+		store.failNext(noStream)
+		store.failAlways(hang)
+		options := productionOptions()
+		ctx, cancel := context.WithTimeout(t.Context(), options.RetryEvery+options.AttemptTime/2)
+		defer cancel()
+
+		_, err := claim(ctx, store, store.Delete, productionTTL, options)
+
+		if !errors.Is(err, jetstream.ErrNoStreamResponse) {
+			t.Errorf("claim cut by its deadline = %v, want the failure of the attempt before", err)
+		}
+	})
+}
