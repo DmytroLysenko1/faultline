@@ -191,7 +191,7 @@ func assertAllRefusedBeforeItsStack(t *testing.T, current process) {
 	}
 	current.SetMemoryLimit = (&recordedLimit{}).setLimit
 	current.Stderr = io.Discard
-	if _, _, err := prepareAll(current); err == nil {
+	if _, _, err := prepareRole(current, allRole()); err == nil {
 		t.Fatalf("all accepted its config and memory budget, realMain would start its stack and dial NATS")
 	}
 }
@@ -306,4 +306,19 @@ func TestAllServesOnOneNATSConnection(t *testing.T) {
 	names := lo.Map(connections.Conns, func(open *server.ConnInfo, _ int) string { return open.Name })
 	got := slices.Sorted(slices.Values(names))
 	assertDiff(t, "client connections to NATS while serving, one natsjs connection", want, got)
+}
+
+func TestAPairingTTLAboveTheAllTombstoneDefaultIsRefusedOnlyByAll(t *testing.T) {
+	values := processorEnvironment(t, map[string]string{
+		envPairingTTL: "20s",
+	})
+	want := "TOMBSTONE_TTL: 15s must not be below PAIRING_TTL (20s)"
+
+	_, allErr := loadAll(processOf(values))
+	if allErr == nil || !strings.Contains(allErr.Error(), want) {
+		t.Fatalf("loadAll: %v, want %q", allErr, want)
+	}
+	if _, err := loadProcessor(processOf(values)); err != nil {
+		t.Errorf("the processor refused PAIRING_TTL 20s under its own TOMBSTONE_TTL default: %v", err)
+	}
 }

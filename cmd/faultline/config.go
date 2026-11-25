@@ -7,7 +7,6 @@ import (
 
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
-	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/graphservice"
 	"github.com/DmytroLysenko1/faultline/pkg/stream"
@@ -39,60 +38,52 @@ const (
 	envRouteRulesFile    = "ROUTE_RULES_FILE"
 	worstResponseAtLimit = "the worst response at the graph limits"
 
-	defaultOTLPAddr          = "127.0.0.1:4317"
-	defaultAPIAddr           = "127.0.0.1:8080"
-	defaultJournalMaxBytes   = 64 * mib
-	minJournalMaxBytes       = 48 * mib
-	maxJournalMaxBytes       = 512 * mib
-	defaultJournalMaxBatches = 4096
-	maxJournalMaxBatches     = 1_000_000
-	defaultIdleAdvanceAfter  = 35 * time.Second
-	minIdleAdvanceAfter      = 100 * time.Millisecond
-	maxIdleAdvanceAfter      = 5 * time.Minute
-	defaultPairingTTL        = 10 * time.Second
-	minPairingTTL            = time.Second
-	maxPairingTTL            = 5 * time.Minute
-	defaultMaxPending        = 100_000
-	maxMaxPending            = 1_000_000
-	defaultTombstoneTTL      = time.Minute
-	minTombstoneTTL          = time.Second
-	maxTombstoneTTL          = 10 * time.Minute
-	defaultTombstoneMax      = 1_000_000
-	maxTombstoneMax          = 5_000_000
-	defaultGraphMaxNodes     = 10_000
-	maxGraphMaxNodes         = 20_000
-	defaultGraphMaxEdges     = 50_000
-	maxGraphMaxEdges         = 100_000
-	minCount                 = 1
-	minAPIResponseBudget     = mib
-	maxAPIResponseBudget     = 1 << 30
-	defaultWindowSize        = 10 * time.Second
-	defaultWatermarkDelay    = 30 * time.Second
-	defaultAllowedLateness   = 30 * time.Second
-	defaultSlackWindows      = 2
-	defaultEarlyFirePeriod   = time.Second
-	defaultMaxSeries         = 100_000
-	defaultOperationsEach    = 500
-	defaultSketchEntries     = 8 << 20
-	minWindowSize            = time.Second
-	maxWindowSize            = 5 * time.Minute
-	windowsDivide            = time.Hour
-	maxWatermarkDelay        = 5 * time.Minute
-	maxAllowedLateness       = 10 * time.Minute
-	maxSlackWindows          = 16
-	minEarlyFirePeriod       = 100 * time.Millisecond
-	maxMaxSeries             = 1_000_000
-	maxOperationsEach        = 999
-	minSketchEntries         = 1 << 20
-	maxSketchEntries         = 256 << 20
+	defaultOTLPAddr         = "127.0.0.1:4317"
+	defaultAPIAddr          = "127.0.0.1:8080"
+	defaultIdleAdvanceAfter = 35 * time.Second
+	minIdleAdvanceAfter     = 100 * time.Millisecond
+	maxIdleAdvanceAfter     = 5 * time.Minute
+	defaultPairingTTL       = 10 * time.Second
+	minPairingTTL           = time.Second
+	maxPairingTTL           = 5 * time.Minute
+	defaultMaxPending       = 100_000
+	maxMaxPending           = 1_000_000
+	defaultTombstoneTTL     = time.Minute
+	minTombstoneTTL         = time.Second
+	maxTombstoneTTL         = 10 * time.Minute
+	defaultTombstoneMax     = 1_000_000
+	maxTombstoneMax         = 5_000_000
+	defaultGraphMaxNodes    = 10_000
+	maxGraphMaxNodes        = 20_000
+	defaultGraphMaxEdges    = 50_000
+	maxGraphMaxEdges        = 100_000
+	minCount                = 1
+	minAPIResponseBudget    = mib
+	maxAPIResponseBudget    = 1 << 30
+	defaultWindowSize       = 10 * time.Second
+	defaultWatermarkDelay   = 30 * time.Second
+	defaultAllowedLateness  = 30 * time.Second
+	defaultSlackWindows     = 2
+	defaultEarlyFirePeriod  = time.Second
+	defaultMaxSeries        = 100_000
+	defaultOperationsEach   = 500
+	defaultSketchEntries    = 8 << 20
+	minWindowSize           = time.Second
+	maxWindowSize           = 5 * time.Minute
+	windowsDivide           = time.Hour
+	maxWatermarkDelay       = 5 * time.Minute
+	maxAllowedLateness      = 10 * time.Minute
+	maxSlackWindows         = 16
+	minEarlyFirePeriod      = 100 * time.Millisecond
+	maxMaxSeries            = 1_000_000
+	maxOperationsEach       = 999
+	minSketchEntries        = 1 << 20
+	maxSketchEntries        = 256 << 20
 )
 
 type Config struct {
 	OTLPAddr            string
 	APIAddr             string
-	Journal             memjournal.Limits
-	Topology            topology.Limits
-	APIResponseBudget   int64
 	RouteRulesFile      string
 	RouteRules          *operation.Rules
 	LogLevel            slog.Level
@@ -105,26 +96,12 @@ type graphConfig struct {
 	IdleAfter         time.Duration
 }
 
-func Load(lookup lookupFunc) (Config, error) {
-	reader := newEnvReader(lookup)
-	cfg := sharedConfig(reader)
-	cfg.Journal = journalLimits(reader)
-	cfg.Topology = topologyLimits(reader)
-	cfg.APIResponseBudget = responseBudget(reader)
-	graphChecks(reader, &graphConfig{
-		Topology:          cfg.Topology,
-		APIResponseBudget: cfg.APIResponseBudget,
-		IdleAfter:         cfg.Journal.IdleAfter,
-	})
-	return cfg, errors.Join(reader.errs...)
-}
-
 type removedVariable struct {
 	name string
 	hint string
 }
 
-func loadShared(lookup lookupFunc) (Config, error) {
+func Load(lookup lookupFunc) (Config, error) {
 	reader := newEnvReader(lookup)
 	cfg := sharedConfig(reader)
 	reader.refuseRemoved(removedVariables())
@@ -185,14 +162,6 @@ func graphChecks(reader *envReader, cfg *graphConfig) {
 	reader.notAbove(envEarlyFirePeriod, topology.EarlyFirePeriod, envWindowSize, topology.Windows.Size)
 	reader.notBelow(envIdleAdvanceAfter, cfg.IdleAfter, envEarlyFirePeriod, topology.EarlyFirePeriod)
 	reader.powerOfTwo(envSketchEntries, int64(topology.SketchEntries))
-}
-
-func journalLimits(reader *envReader) memjournal.Limits {
-	return memjournal.Limits{
-		MaxBytes:   reader.size(envJournalMaxBytes, defaultJournalMaxBytes, minJournalMaxBytes, maxJournalMaxBytes),
-		MaxBatches: reader.count(envJournalMaxBatches, defaultJournalMaxBatches, maxJournalMaxBatches),
-		IdleAfter:  idleAfter(reader),
-	}
 }
 
 func topologyLimits(reader *envReader) topology.Limits {

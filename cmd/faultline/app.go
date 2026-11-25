@@ -25,37 +25,6 @@ type process struct {
 	Hostname       func() (string, error)
 }
 
-type startup struct {
-	Config Config
-	Memory memorySetting
-}
-
-func start(current process) (startup, error) {
-	cfg, err := loadConfig(current.Lookup)
-	if err != nil {
-		return startup{}, err
-	}
-	memory, err := enforceMemoryBudget(current, contributions(&cfg))
-	if err != nil {
-		return startup{}, err
-	}
-	return startup{
-		Config: cfg,
-		Memory: memory,
-	}, nil
-}
-
-func loadConfig(lookup lookupFunc) (Config, error) {
-	cfg, err := Load(lookup)
-	if err != nil {
-		return Config{}, err
-	}
-	if cfg.RouteRules, err = loadRouteRules(cfg.RouteRulesFile); err != nil {
-		return Config{}, err
-	}
-	return cfg, nil
-}
-
 func enforceMemoryBudget(current process, parts []contribution) (memorySetting, error) {
 	memory, err := memoryLimit(current.Lookup, current.ReadCgroup)
 	if err != nil {

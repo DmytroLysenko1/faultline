@@ -9,6 +9,8 @@ const (
 	graphFixedBytes = 64 << 10
 	viewNodeBytes   = int64(unsafe.Sizeof(Node{}))
 	viewEdgeBytes   = int64(unsafe.Sizeof(Edge{}))
+	indexNodeBytes  = int64(unsafe.Sizeof((*Node)(nil)))
+	indexEdgeBytes  = int64(unsafe.Sizeof(edgeKey{}))
 )
 
 func (l Limits) WorstCaseHeapBytes() int64 {
@@ -17,4 +19,8 @@ func (l Limits) WorstCaseHeapBytes() int64 {
 
 func (l Limits) ViewHeapBytes() int64 {
 	return int64(l.MaxNodes)*viewNodeBytes + int64(l.MaxEdges)*viewEdgeBytes
+}
+
+func (l Limits) CheckpointIndexBytes() int64 {
+	return int64(l.MaxNodes)*indexNodeBytes + int64(l.MaxEdges)*indexEdgeBytes
 }

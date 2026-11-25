@@ -20,6 +20,8 @@ const (
 
 	eventLayerStopped    = "lifecycle.layer_stopped"
 	eventLayerStopFailed = "lifecycle.layer_stop_failed"
+
+	exitGrace = 100 * time.Millisecond
 )
 
 var (
@@ -219,4 +221,11 @@ func (v layerSupervisor) wait(ctx context.Context, name string) (bool, error) {
 		return v.sup.wait(ctx, name)
 	}
 	return true, fmt.Errorf("wait %s: %w", name, errUndeclaredComponent)
+}
+
+func withoutSentinel(err, normal error) error {
+	if errors.Is(err, normal) {
+		return nil
+	}
+	return err
 }

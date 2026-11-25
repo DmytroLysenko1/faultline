@@ -52,17 +52,21 @@ func connLayer(cfg *natsConfig, phases phaseLog, logger *slog.Logger) (layer, *c
 		logger:  logger,
 	}
 	return layer{
-		name:       layerConn,
-		unit:       connector,
-		components: []string{componentConn},
-		stopBudget: connCloseBudget,
-		contributions: []contribution{
-			{
-				name:  "nats connections",
-				bytes: connectionsHeap,
-			},
-		},
+		name:          layerConn,
+		unit:          connector,
+		components:    []string{componentConn},
+		stopBudget:    connCloseBudget,
+		contributions: connContributions(),
 	}, connector
+}
+
+func connContributions(heldWriteBuffers ...int64) []contribution {
+	return []contribution{
+		{
+			name:  "nats connections",
+			bytes: connectionsHeap + lo.Sum(heldWriteBuffers),
+		},
+	}
 }
 
 func (u *connUnit) start(ctx context.Context, sup unitSupervisor) error {

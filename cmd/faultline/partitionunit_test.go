@@ -27,6 +27,7 @@ const (
 	exactImage         = 16 << 20
 	minFeedBytes       = 48 << 20
 	movedAttempts      = 3
+	quarterSecond      = 250 * time.Millisecond
 )
 
 var errPipelineExit = errors.New("pipeline failed after stopping")
@@ -255,9 +256,9 @@ func TestARestoreTimeoutIsAFailureNotASignal(t *testing.T) {
 }
 
 func TestRestoreBudgetCoversThreeReadsOfTheWorstImage(t *testing.T) {
-	cfg, err := Load(func(string) (string, bool) { return "", false })
+	cfg, err := loadGraph(func(string) (string, bool) { return "", false })
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("loadGraph: %v", err)
 	}
 	tests := []struct {
 		name  string
@@ -279,12 +280,14 @@ func TestRestoreBudgetCoversThreeReadsOfTheWorstImage(t *testing.T) {
 func TestPartitionOptionsFollowTheConfig(t *testing.T) {
 	cfg := testPartitionConfig(t)
 	cfg.FeedMaxBytes = minFeedBytes
+	cfg.Limits.EarlyFirePeriod = quarterSecond
 	cadence := partitionCadence(cfg)
 	if err := cadence.Validate(); err != nil {
 		t.Errorf("cadence at the smallest feed: %v", err)
 	}
 	assertDiff(t, "held bytes", int64(minFeedBytes)-otlp.MaxBatchFootprint(), cadence.MaxHeldBytes)
 	assertDiff(t, "checkpoint interval", testCheckpointEvery, cadence.CheckpointInterval)
+	assertDiff(t, "fire period", quarterSecond, cadence.FirePeriod)
 	stored := checkpointOptions(cfg, 9)
 	assertDiff(t, "bucket", bucketBytes(stored.WorstImage), stored.MaxBytes)
 	assertDiff(t, "bucket of ten bytes", int64(44), bucketBytes(10))

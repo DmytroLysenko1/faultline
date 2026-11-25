@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log/slog"
-	"time"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/selfalert"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
@@ -16,14 +15,6 @@ const (
 	stateCleared     = "cleared"
 	reasonLowTraffic = "low_traffic"
 )
-
-func sampleOf(snapshot *topology.Snapshot, now time.Time) *selfalert.Sample {
-	sample := &selfalert.Sample{
-		Now: now,
-	}
-	fillSample(snapshot, sample)
-	return sample
-}
 
 func fillSample(snapshot *topology.Snapshot, sample *selfalert.Sample) {
 	stats := &snapshot.TrafficStats

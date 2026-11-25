@@ -24,6 +24,7 @@ import (
 const (
 	refusedWithin     = time.Second
 	ingesterBudgetMiB = 509.0
+	allWorstBytes     = 1_382_581_641
 	budgetMiB         = float64(mib)
 )
 
@@ -132,39 +133,11 @@ func TestEveryRoleFitsItsMemoryBudgetAtDefaults(t *testing.T) {
 	}
 	want := "otlp requests 440.0 MiB, records before pubAck 60.0 MiB, publish buffer 8.0 MiB, nats connections 1.0 MiB"
 	assertDiff(t, "breakdown", want, breakdown(parts))
-}
 
-func TestAllStartsWithoutANATSURL(t *testing.T) {
-	tests := []struct {
-		name string
-		args map[string]string
-	}{
-		{
-			name: "no NATS variables",
-			args: map[string]string{},
-		},
-		{
-			name: "NATS variables the ingester would refuse",
-			args: map[string]string{
-				envNATSURL:        userinfoURL,
-				envStreamReplicas: "2",
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			limits := &recordedLimit{}
-			_, err := start(process{
-				Args:           []string{commandAll},
-				Lookup:         environment(tt.args),
-				ReadCgroup:     func() ([]byte, error) { return nil, os.ErrNotExist },
-				SetMemoryLimit: limits.setLimit,
-			})
-
-			if err != nil {
-				t.Errorf("all = %v, want it to start without reading NATS", err)
-			}
-		})
+	everything := allContributions(t, map[string]string{})
+	assertDiff(t, "all bytes", int64(allWorstBytes), total(everything))
+	if err := checkParts(everything, defaultMemoryLimit); err != nil {
+		t.Errorf("all does not fit the default GOMEMLIMIT: %v", err)
 	}
 }
 
@@ -308,7 +281,7 @@ func TestTheIngesterSetsItsMemoryLimitBeforeItsBudget(t *testing.T) {
 	logs := &logBuffer{}
 	limits := &recordedLimit{}
 
-	_, _, err := prepareIngester(process{
+	_, _, err := prepareRole(process{
 		Lookup: environment(map[string]string{
 			envNATSURL: testNATSURL,
 		}),
@@ -316,9 +289,9 @@ func TestTheIngesterSetsItsMemoryLimitBeforeItsBudget(t *testing.T) {
 		SetMemoryLimit: limits.setLimit,
 		Stderr:         logs,
 		Hostname:       podHostname,
-	})
+	}, ingesterRole())
 	if err != nil {
-		t.Fatalf("prepareIngester: %v", err)
+		t.Fatalf("prepareRole: %v", err)
 	}
 
 	assertDiff(t, "GOMEMLIMIT set", []int64{defaultMemoryLimit}, limits.set)
@@ -361,6 +334,52 @@ func TestTheIngesterRefusesRouteRulesItCannotRead(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), envRouteRulesFile) {
 				t.Errorf("loadIngester error = %v, want one naming %s", err, envRouteRulesFile)
 			}
+		})
+	}
+}
+
+func preparedRole[S any](recipe roleRecipe[S]) func(process) error {
+	return func(current process) error {
+		_, _, err := prepareRole(current, recipe)
+		return err
+	}
+}
+
+func TestEveryRoleLogsAtItsLogLevel(t *testing.T) {
+	roles := map[string]func(process) error{
+		commandIngester:  preparedRole(ingesterRole()),
+		commandProcessor: preparedRole(processorRole()),
+		commandAll:       preparedRole(allRole()),
+	}
+	type args struct {
+		role  string
+		level string
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"the ingester at info", args{commandIngester, "info"}, true},
+		{"the ingester at warn", args{commandIngester, "warn"}, false},
+		{"the processor at info", args{commandProcessor, "info"}, true},
+		{"the processor at warn", args{commandProcessor, "warn"}, false},
+		{"all at info", args{commandAll, "info"}, true},
+		{"all at warn", args{commandAll, "warn"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			current := processOf(processorEnvironment(t, map[string]string{
+				envLogLevel: tt.args.level,
+			}))
+			current.ReadCgroup = noCgroup
+			current.SetMemoryLimit = (&recordedLimit{}).setLimit
+			current.Stderr = &stderr
+			if err := roles[tt.args.role](current); err != nil {
+				t.Fatalf("prepareRole: %v", err)
+			}
+			assertDiff(t, "config.memory_limit logged", tt.want, strings.Contains(stderr.String(), "config.memory_limit"))
 		})
 	}
 }

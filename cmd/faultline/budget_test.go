@@ -13,24 +13,26 @@ import (
 )
 
 const (
-	defaultWorstCaseBytes = 1_323_825_408
-	manifestMemoryLimit   = 1600 << 20
-	tightMemoryLimit      = defaultWorstCaseBytes/budgetSharePercent*percent - mib
-	applyProbeSpans       = 148_470
+	manifestMemoryLimit = 1600 << 20
+	applyProbeSpans     = 148_470
 )
 
-func TestDefaultWorstCaseIsPinned(t *testing.T) {
-	if got := total(contributions(new(defaultConfig()))); got != defaultWorstCaseBytes {
-		t.Errorf("default worst case = %d bytes (%s), pinned %d: update the I5 table in the design doc",
-			got, inMiB(got), defaultWorstCaseBytes)
+func allContributions(t *testing.T, values map[string]string) []contribution {
+	t.Helper()
+	setup, err := loadAll(processOf(processorEnvironment(t, values)))
+	if err != nil {
+		t.Fatalf("loadAll: %v", err)
 	}
+	logger := testLogger(&logBuffer{})
+	return allStack(&setup, newLifecycle(logger), logger).contributions()
 }
 
 func TestBudgetAtTheMemoryLimit(t *testing.T) {
 	type args struct {
-		cfg   Config
-		limit int64
+		values map[string]string
+		limit  func(worst int64) int64
 	}
+	manifest := func(int64) int64 { return manifestMemoryLimit }
 	tests := []struct {
 		Name    string
 		Args    args
@@ -39,34 +41,35 @@ func TestBudgetAtTheMemoryLimit(t *testing.T) {
 		{
 			Name: "defaults fit the manifest limit",
 			Args: args{
-				cfg:   defaultConfig(),
-				limit: manifestMemoryLimit,
+				values: map[string]string{},
+				limit:  manifest,
 			},
 		},
 		{
 			Name: "defaults do not fit a limit one MiB below what they need",
 			Args: args{
-				cfg:   defaultConfig(),
-				limit: tightMemoryLimit,
+				values: map[string]string{},
+				limit:  func(worst int64) int64 { return worst/budgetSharePercent*percent - mib },
 			},
 			WantErr: errOverBudget,
 		},
 		{
 			Name: "every variable in range but the sum over the limit",
 			Args: args{
-				cfg: configWith(func(cfg *Config) {
-					cfg.Journal.MaxBytes = 512 << 20
-					cfg.Topology.MaxTombstones = 5_000_000
-					cfg.Topology.MaxPending = 1_000_000
-				}),
-				limit: manifestMemoryLimit,
+				values: map[string]string{
+					envFeedMaxBytes:      "512MiB",
+					envTombstoneMax:      "5000000",
+					envPairingMaxPending: "1000000",
+				},
+				limit: manifest,
 			},
 			WantErr: errOverBudget,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
-			if err := checkParts(contributions(&tt.Args.cfg), tt.Args.limit); !errors.Is(err, tt.WantErr) {
+			parts := allContributions(t, tt.Args.values)
+			if err := checkParts(parts, tt.Args.limit(total(parts))); !errors.Is(err, tt.WantErr) {
 				t.Errorf("checkParts = %v, want %v", err, tt.WantErr)
 			}
 		})
@@ -124,9 +127,11 @@ func TestSelfTracingAddsItsQueueOnlyWhenEnabled(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
-			if got := total(contributions(new(configWith(func(cfg *Config) {
-				cfg.SelfTracingEndpoint = tt.Args
-			})))) - defaultWorstCaseBytes; got != tt.Want {
+			cfg := Config{
+				SelfTracingEndpoint: tt.Args,
+			}
+			traced, _ := tracingLayer(&cfg, nil)
+			if got := total(traced.contributions); got != tt.Want {
 				t.Errorf("self-tracing contribution = %d, want %d", got, tt.Want)
 			}
 		})

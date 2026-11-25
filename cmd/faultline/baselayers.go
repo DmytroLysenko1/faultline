@@ -7,9 +7,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"time"
 
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/selftrace"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi"
 )
 
@@ -24,7 +26,23 @@ const (
 	stageHTTPRoutes   = "http/routes"
 
 	eventForcedStop = "lifecycle.forced_stop"
+
+	componentAPI = "api"
+	network      = "tcp"
+	httpGrace    = 2 * time.Second
+	traceFlush   = 200 * time.Millisecond
 )
+
+type selfTracing interface {
+	TracerProvider() trace.TracerProvider
+	Shutdown(ctx context.Context) error
+}
+
+type apiServer interface {
+	Serve(listener net.Listener) error
+	Shutdown(ctx context.Context) error
+	Close() error
+}
 
 type apiRoutes func(tracer trace.TracerProvider) (http.Handler, error)
 
@@ -61,6 +79,17 @@ func (u *tracingUnit) start(ctx context.Context, _ unitSupervisor) error {
 	}
 	u.tracing = tracing
 	return nil
+}
+
+func provideTracing(ctx context.Context, endpoint string, logger *slog.Logger) (selfTracing, error) {
+	if endpoint == "" {
+		return selftrace.Disabled(), nil
+	}
+	tracing, err := selftrace.New(ctx, endpoint, logger)
+	if err != nil {
+		return nil, fmt.Errorf("build self-tracing: %w", err)
+	}
+	return tracing, nil
 }
 
 func (u *tracingUnit) stop(ctx context.Context) error {

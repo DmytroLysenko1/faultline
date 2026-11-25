@@ -1,13 +1,9 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
@@ -21,7 +17,14 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology/cardinality"
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology/graph"
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology/matcher"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/topologytest"
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology/traffic"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memgraph"
+	"github.com/DmytroLysenko1/faultline/pkg/sketch"
+	"github.com/DmytroLysenko1/faultline/pkg/stream"
 )
 
 const (
@@ -35,164 +38,127 @@ const (
 	reportedAt      = time.Minute
 	specLagSlack    = 30 * time.Second
 	specRaiseRatio  = 0.01
+	subjectsBase    = 100
+	operationsBase  = 200
+	overflowBase    = 300
+	watermarkBehind = 45 * time.Second
 )
 
-type heldTimings struct {
-	held processing.Timings
+func engineStats(base uint64) stream.Stats {
+	return stream.Stats{
+		Series:       int(base),
+		Capacity:     int(base + 1),
+		Offered:      base + 2,
+		OnTime:       base + 3,
+		LateAccepted: base + 4,
+		LateDropped:  base + 5,
+		NoWatermark:  base + 6,
+		Reassigned:   base + 7,
+		PanesEarly:   base + 8,
+		PanesOnTime:  base + 9,
+		PanesLate:    base + 10,
+		Retired:      base + 11,
+	}
 }
 
-func (f *heldTimings) TakeTimings() processing.Timings {
-	taken := f.held
-	f.held = processing.Timings{}
-	return taken
+func sampleTraffic() traffic.Stats {
+	return traffic.Stats{
+		Subjects:   engineStats(subjectsBase),
+		Operations: engineStats(operationsBase),
+		Overflow:   engineStats(overflowBase),
+		Sketch: sketch.ArenaStats{
+			Budget:            8_388_608,
+			InUse:             4_096,
+			CollapsedAdds:     41,
+			CollapsedSketches: 42,
+			DroppedSamples:    43,
+		},
+		Cardinality: cardinality.Stats{
+			Operations:      51,
+			OwnersOverLimit: 52,
+		},
+		OwnersOverLimit: []resource.ServiceRef{
+			{
+				Namespace: "shop",
+				Name:      "cart",
+			},
+		},
+		SeriesLimitReached: true,
+		Untimed:            61,
+		LatencyUnknown:     62,
+		Heartbeats:         63,
+		Finals:             64,
+	}
 }
 
-type alertLine struct {
-	Msg      string
-	Level    string
-	State    string
-	Services []any
+func sampleSnapshot() *topology.Snapshot {
+	return &topology.Snapshot{
+		Revision: 7,
+		Nodes: []topology.NodeView{
+			{
+				Node: graph.Node{
+					Served: 70,
+				},
+			},
+			{
+				Node: graph.Node{
+					Served: 71,
+				},
+			},
+		},
+		Edges: []topology.EdgeView{
+			{
+				Edge: graph.Edge{
+					Calls: 80,
+				},
+			},
+		},
+		WindowSize:     10 * time.Second,
+		Watermark:      telemetrytest.Epoch(),
+		WatermarkKnown: true,
+		TrafficStats:   sampleTraffic(),
+		PairingStats: matcher.Stats{
+			Observed:         21,
+			Matched:          5,
+			Duplicate:        1,
+			Unpairable:       2,
+			Evicted:          3,
+			Expired:          4,
+			Pending:          1,
+			ExpiredCaller:    2,
+			EvictedCaller:    1,
+			TombstoneEvicted: 6,
+		},
+		GraphStats: graph.Stats{
+			GraphOverflow:      8,
+			UnansweredOverflow: 9,
+			NodeOverflow:       10,
+		},
+	}
 }
 
-func alertLines(t *testing.T, logs *logBuffer) []alertLine {
+func partitionStatsLine(t *testing.T, snapshot *topology.Snapshot) (map[string]any, string) {
 	t.Helper()
-	var lines []alertLine
-	for _, record := range logs.records(t) {
-		state, isAlert := record["state"].(string)
-		if !isAlert {
-			continue
-		}
-		services, _ := record["services"].([]any)
-		lines = append(lines, alertLine{
-			Msg:      record["msg"].(string),
-			Level:    record["level"].(string),
-			State:    state,
-			Services: services,
-		})
+	graph, err := memgraph.New(snapshot)
+	if err != nil {
+		t.Fatalf("memgraph.New: %v", err)
 	}
-	return lines
-}
-
-func TestAReportWarnsOnceForEveryRaisedAlert(t *testing.T) {
 	logs := &logBuffer{}
-	reporter := sampleReporter(logs, fixedSnapshots{snapshot: sampleSnapshot()})
-	reporter.report(t.Context(), false)
-	reporter.report(t.Context(), false)
-	want := []alertLine{
+	part := newPartitionUnit(&partitionConfig{}, nil, graph, nil, testLogger(logs))
+	part.pipeline = &processing.Pipeline{}
+	part.clock = fixedClock{
+		now: telemetrytest.Epoch().Add(reportedAt),
+	}
+	hooks := []layer{
 		{
-			Msg:      "windows.cardinality_limit_reached",
-			Level:    "WARN",
-			State:    stateRaised,
-			Services: []any{"shop/cart"},
-		},
-		{
-			Msg:   "windows.series_limit_reached",
-			Level: "WARN",
-			State: stateRaised,
-		},
-		{
-			Msg:   "windows.sketch_budget_exhausted",
-			Level: "WARN",
-			State: stateRaised,
+			name:        partitionLabel(0),
+			statsGroups: part.statsGroups,
 		},
 	}
-	if diff := cmp.Diff(want, alertLines(t, logs)); diff != "" {
-		t.Errorf("alert lines over two reports of one snapshot (-want +got):\n%s", diff)
-	}
-}
-
-func TestTheFinalReportDoesNotJudgeAShortInterval(t *testing.T) {
-	logs := &logBuffer{}
-	sampleReporter(logs, fixedSnapshots{snapshot: sampleSnapshot()}).report(t.Context(), true)
-	if lines := alertLines(t, logs); len(lines) != 0 {
-		t.Errorf("final report logged alert lines %+v, want none", lines)
-	}
-	alerts := logs.all(t, "pipeline.stats")[0]["alerts"].(map[string]any)
-	for event, raised := range alerts {
-		if raised != false {
-			t.Errorf("alert %s = %v after a final report alone, want false", event, raised)
-		}
-	}
-}
-
-func TestAFailedSnapshotKeepsTheTimingsForTheNextReport(t *testing.T) {
-	logs := &logBuffer{}
-	reporter := sampleReporter(logs, fixedSnapshots{err: errSnapshotUnavailable})
-	reporter.timings = &heldTimings{
-		held: sampleTimings(),
-	}
-	reporter.report(t.Context(), false)
-	reporter.snapshots = fixedSnapshots{snapshot: sampleSnapshot()}
-	reporter.report(t.Context(), false)
-	got := logs.all(t, "pipeline.stats")[0]["pipeline"]
-	want := map[string]any{
-		"iteration_max_us": 9000.0, "apply_max_us": 2500.0, "fire_max_us": 700.0, "publish_max_us": 3000.0,
-	}
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("timings in the report after a failed one (-want +got):\n%s", diff)
-	}
-}
-
-func calmSnapshot() *topology.Snapshot {
-	snapshot := sampleSnapshot()
-	snapshot.TrafficStats.OwnersOverLimit = nil
-	snapshot.TrafficStats.Cardinality.OwnersOverLimit = 0
-	snapshot.TrafficStats.SeriesLimitReached = false
-	return snapshot
-}
-
-func TestAlertsRaiseThenClearThroughTheReporter(t *testing.T) {
-	logs := &logBuffer{}
-	reporter := sampleReporter(logs, fixedSnapshots{snapshot: sampleSnapshot()})
-	reporter.report(t.Context(), false)
-	reporter.snapshots = fixedSnapshots{snapshot: calmSnapshot()}
-	reporter.report(t.Context(), false)
-	reporter.report(t.Context(), false)
-	var got []alertLine
-	for _, line := range alertLines(t, logs) {
-		line.Services = nil
-		got = append(got, line)
-	}
-	var want []alertLine
-	for _, level := range []string{"WARN", "INFO"} {
-		state := map[string]string{"WARN": stateRaised, "INFO": stateCleared}[level]
-		for _, event := range []string{
-			"windows.cardinality_limit_reached", "windows.series_limit_reached", "windows.sketch_budget_exhausted",
-		} {
-			want = append(want, alertLine{Msg: event, Level: level, State: state})
-		}
-	}
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("alert lines (-want +got):\n%s", diff)
-	}
-	stats := logs.all(t, "pipeline.stats")
-	for event, raised := range stats[len(stats)-1]["alerts"].(map[string]any) {
-		if raised != false {
-			t.Errorf("alert %s = %v after two calm reports, want false", event, raised)
-		}
-	}
-}
-
-func TestASecondRunOfTheReporterIsRejected(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		reporter := sampleReporter(&logBuffer{}, fixedSnapshots{snapshot: sampleSnapshot()})
-		ctx, cancel := context.WithCancel(t.Context())
-		var first sync.WaitGroup
-		running := make(chan error, 1)
-		first.Go(func() {
-			running <- reporter.Run(ctx)
-		})
-		synctest.Wait()
-		second := reporter.Run(ctx)
-		cancel()
-		first.Wait()
-		if !errors.Is(second, errReporterStarted) {
-			t.Errorf("second Run = %v, want %v", second, errReporterStarted)
-		}
-		if err := <-running; err != nil {
-			t.Errorf("first Run = %v, want nil", err)
-		}
-	})
+	served := func() bool { return true }
+	reporter := statsLayer(func() []layer { return hooks }, served, selfalert.Thresholds{}, testLogger(logs))
+	reporter.unit.(*statsUnit).report(t.Context(), false)
+	return logs.event(t, eventPipelineStats), logs.String()
 }
 
 func nameOperations(spans []span.Span) {
@@ -239,9 +205,7 @@ func engineBalanced(windows map[string]any, engine string) bool {
 }
 
 func TestOneStatsLineBalancesI6I10AndI11(t *testing.T) {
-	logs := &logBuffer{}
-	sampleReporter(logs, fixedSnapshots{snapshot: secretTraffic(t)}).report(t.Context(), false)
-	line := logs.all(t, "pipeline.stats")[0]
+	line, _ := partitionStatsLine(t, secretTraffic(t))
 	windows, graph := line["windows"].(map[string]any), line["graph"].(map[string]any)
 	subjectsOffered := counter(windows, "subjects", "offered")
 	got := map[string]bool{
@@ -267,9 +231,7 @@ func TestOneStatsLineBalancesI6I10AndI11(t *testing.T) {
 }
 
 func TestTheLogNeverNamesAnOperationAndStaysSmall(t *testing.T) {
-	logs := &logBuffer{}
-	sampleReporter(logs, fixedSnapshots{snapshot: secretTraffic(t)}).report(t.Context(), false)
-	raw := logs.String()
+	_, raw := partitionStatsLine(t, secretTraffic(t))
 	if strings.Contains(raw, "secret-op") {
 		t.Errorf("the log names an operation:\n%s", raw)
 	}
@@ -307,15 +269,18 @@ func TestASampleReadsTheSubjectsEngine(t *testing.T) {
 		SeriesLimitReached: true,
 		DroppedSamples:     43,
 	}
-	if diff := cmp.Diff(want, sampleOf(snapshot, now)); diff != "" {
+	got := &selfalert.Sample{
+		Now: now,
+	}
+	fillSample(snapshot, got)
+	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("sample (-want +got):\n%s", diff)
 	}
 }
 
 func TestAlertLinesCarryTheirStateValuesAndReason(t *testing.T) {
 	logs := &logBuffer{}
-	reporter := sampleReporter(logs, fixedSnapshots{snapshot: sampleSnapshot()})
-	reporter.logTransitions(t.Context(), []selfalert.Transition{
+	logTransitions(t.Context(), testLogger(logs), []selfalert.Transition{
 		{
 			Event:  selfalert.LateDropRatioHigh,
 			Raised: true,
@@ -355,19 +320,25 @@ func TestAlertLinesCarryTheirStateValuesAndReason(t *testing.T) {
 }
 
 func TestTheLagThresholdAllowsTheDelayTheIdleGapAndOneFire(t *testing.T) {
-	cfg := new(defaultConfig())
+	graph, err := loadGraph(environment(map[string]string{}))
+	if err != nil {
+		t.Fatalf("loadGraph: %v", err)
+	}
+	partition := partitionConfig{
+		Limits:    graph.Topology,
+		IdleAfter: graph.IdleAfter,
+	}
 	want := defaultWatermarkDelay + defaultIdleAdvanceAfter + defaultEarlyFirePeriod + specLagSlack
-	if got := alertThresholds(cfg).WatermarkLag; got != want {
+	if got := processorThresholds(&partition).WatermarkLag; got != want {
 		t.Errorf("watermark lag threshold = %s, want %s", got, want)
 	}
 }
 
 func TestAnUnknownWatermarkLeavesTheLagOut(t *testing.T) {
-	logs := &logBuffer{}
 	snapshot := sampleSnapshot()
 	snapshot.WatermarkKnown = false
-	sampleReporter(logs, fixedSnapshots{snapshot: snapshot}).report(t.Context(), false)
-	windows := logs.all(t, "pipeline.stats")[0]["windows"].(map[string]any)
+	line, _ := partitionStatsLine(t, snapshot)
+	windows := line["windows"].(map[string]any)
 	for _, key := range []string{"watermark", "watermark_lag_seconds"} {
 		if value, found := windows[key]; found {
 			t.Errorf("windows.%s = %v while the watermark is unknown, want it left out", key, value)

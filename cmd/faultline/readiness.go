@@ -8,7 +8,10 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi"
 )
 
-const readyPattern = "GET /readyz"
+const (
+	healthPattern = "GET /healthz"
+	readyPattern  = "GET /readyz"
+)
 
 type alive struct{}
 

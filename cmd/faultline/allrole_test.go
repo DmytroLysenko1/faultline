@@ -17,6 +17,10 @@ import (
 	"github.com/samber/lo"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 
+	"github.com/DmytroLysenko1/faultline/internal/application/processing"
+	"github.com/DmytroLysenko1/faultline/internal/application/processing/processingtest"
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
+	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/gen/proto/faultline/v1/faultlinev1connect"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memgraph"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/lease"
@@ -365,15 +369,15 @@ func TestTheAllRoleFitsTheDefaultMemoryLimit(t *testing.T) {
 		},
 		{
 			name:  "nats connections",
-			bytes: 1048576,
+			bytes: 7340032,
 		},
 		{
 			name:  "feed credit and pull",
-			bytes: 83886080,
+			bytes: 92274688,
 		},
 		{
 			name:  "pairing, graph and traffic",
-			bytes: 472770472,
+			bytes: 421652392,
 		},
 		{
 			name:  "snapshots",
@@ -382,6 +386,10 @@ func TestTheAllRoleFitsTheDefaultMemoryLimit(t *testing.T) {
 		{
 			name:  "batch apply",
 			bytes: 29100120,
+		},
+		{
+			name:  "checkpoint",
+			bytes: 6491273,
 		},
 		{
 			name:  "records before pubAck",
@@ -412,5 +420,38 @@ func TestAPartitionWithoutAGraphWarnsThatItsStatsFailed(t *testing.T) {
 	assertDiff(t, "warnings", 1, len(failed))
 	if len(failed) == 1 && !strings.Contains(failed[0]["error"].(string), "no graph") {
 		t.Errorf("pipeline.stats_failed = %v, want the missing graph as its error", failed[0])
+	}
+}
+
+type tickingClock struct {
+	now time.Time
+}
+
+func (c *tickingClock) Now() time.Time {
+	c.now = c.now.Add(time.Millisecond)
+	return c.now
+}
+
+type droppedSnapshots struct{}
+
+func (droppedSnapshots) Publish(context.Context, *topology.Snapshot) error {
+	return nil
+}
+
+func TestAStatsLineWithoutAGraphKeepsThePipelineTimingsForTheNextLine(t *testing.T) {
+	feed := processingtest.NewIterationFeed([]processing.Delivery{processingtest.NewDelivery(processingtest.Pairs(t, 1, 1))})
+	clock := &tickingClock{
+		now: telemetrytest.Epoch(),
+	}
+	pipeline := processingtest.NewPipeline(t, feed, processingtest.NewBuilder(t), droppedSnapshots{}, clock)
+	if err := pipeline.Run(t.Context()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	unit := newPartitionUnit(&partitionConfig{}, nil, &memgraph.Store{}, nil, testLogger(&logBuffer{}))
+	unit.pipeline = pipeline
+
+	assertDiff(t, "groups", []slog.Attr(nil), unit.statsGroups(t.Context()))
+	if kept := pipeline.TakeTimings(); kept.Iteration <= 0 {
+		t.Errorf("timings after a stats line without a graph = %+v, want the iteration kept for the next line", kept)
 	}
 }

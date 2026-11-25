@@ -19,33 +19,21 @@ type ingesterSetup struct {
 	Journal journal.Options
 }
 
-func runIngester(current process) int {
-	role, life, err := prepareIngester(current)
-	if err != nil {
-		return fail(current.Stderr, err)
-	}
-	return launchStack(context.Background(), signalNotify, role, life)
-}
-
-func prepareIngester(current process) (*stack, *lifecycle, error) {
-	setup, err := loadIngester(current)
-	if err != nil {
-		return nil, nil, err
-	}
-	logger := roleLogger(current.Stderr, setup.Config.LogLevel)
-	life := newLifecycle(logger)
-	role := ingesterStack(&setup, life, logger)
-	if err := enforceRoleBudget(current, role, logger); err != nil {
-		return nil, nil, err
-	}
-	return role, life, nil
-}
-
 type roleBase struct {
 	Config  Config
 	Rules   routeRules
 	NATS    natsConfig
 	Streams natsjs.Topology
+}
+
+func ingesterRole() roleRecipe[ingesterSetup] {
+	return roleRecipe[ingesterSetup]{
+		Load: loadIngester,
+		Level: func(setup *ingesterSetup) slog.Level {
+			return setup.Config.LogLevel
+		},
+		Build: ingesterStack,
+	}
 }
 
 func loadIngester(current process) (ingesterSetup, error) {
@@ -85,7 +73,7 @@ func journalOptions(base *roleBase, publish *publishConfig) journal.Options {
 }
 
 func loadRoleConfig(lookup lookupFunc) (Config, routeRules, error) {
-	cfg, err := loadShared(lookup)
+	cfg, err := Load(lookup)
 	if err != nil {
 		return Config{}, routeRules{}, err
 	}
@@ -114,6 +102,45 @@ func ingesterStack(setup *ingesterSetup, life *lifecycle, logger *slog.Logger) *
 		otlpLayer(&setup.Config, journals, logger),
 	}
 	return role
+}
+
+type roleRecipe[S any] struct {
+	Load  func(current process) (S, error)
+	Level func(setup *S) slog.Level
+	Build func(setup *S, life *lifecycle, logger *slog.Logger) *stack
+}
+
+func (r roleRecipe[S]) run(current process) int {
+	role, life, err := prepareRole(current, r)
+	if err != nil {
+		return fail(current.Stderr, err)
+	}
+	return launchStack(context.Background(), signalNotify, role, life)
+}
+
+func prepareRole[S any](current process, recipe roleRecipe[S]) (*stack, *lifecycle, error) {
+	setup, err := recipe.Load(current)
+	if err != nil {
+		return nil, nil, err
+	}
+	logger := roleLogger(current.Stderr, recipe.Level(&setup))
+	life := newLifecycle(logger)
+	role := recipe.Build(&setup, life, logger)
+	if err := enforceRoleBudget(current, role, logger); err != nil {
+		return nil, nil, err
+	}
+	return role, life, nil
+}
+
+func withDefaults(lookup lookupFunc, defaults map[string]string) lookupFunc {
+	return func(name string) (string, bool) {
+		value, set := lookup(name)
+		if set {
+			return value, set
+		}
+		fallback, known := defaults[name]
+		return fallback, known
+	}
 }
 
 func enforceRoleBudget(current process, role *stack, logger *slog.Logger) error {

@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -17,12 +16,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 	"google.golang.org/grpc"
-
-	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
-	"github.com/DmytroLysenko1/faultline/internal/application/processing"
-	"github.com/DmytroLysenko1/faultline/internal/application/selfalert"
-	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
-	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
 )
 
 const (
@@ -37,8 +30,6 @@ const (
 	eventStatsExit      = "stats.exit"
 	timelineFinalStats  = "final_stats"
 )
-
-var errCrash = errors.New("component crashed")
 
 type eventLog struct {
 	lock   sync.Mutex
@@ -126,40 +117,6 @@ func (s *fakeServer) Close() error {
 	s.events.add(s.name + ".close")
 	s.release()
 	return s.closeErr
-}
-
-type recordingJournal struct {
-	*memjournal.Journal
-	events *eventLog
-}
-
-func (j recordingJournal) Close() {
-	j.events.add(eventJournalClose)
-	j.Journal.Close()
-}
-
-type recordingRunner struct {
-	inner  pipelineRunner
-	events *eventLog
-	exit   string
-}
-
-func (r recordingRunner) Run(ctx context.Context) error {
-	err := r.inner.Run(ctx)
-	r.events.add(r.exit)
-	return err
-}
-
-type runnerFunc func(ctx context.Context) error
-
-func (f runnerFunc) Run(ctx context.Context) error {
-	return f(ctx)
-}
-
-type feedFunc func(ctx context.Context, limit int, maxWait time.Duration) ([]processing.Delivery, error)
-
-func (f feedFunc) Receive(ctx context.Context, limit int, maxWait time.Duration) ([]processing.Delivery, error) {
-	return f(ctx, limit, maxWait)
 }
 
 type logBuffer struct {
@@ -262,47 +219,10 @@ func (f *fakeTracing) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-type fixedSnapshots struct {
-	snapshot *topology.Snapshot
-	err      error
-}
-
-func (f fixedSnapshots) Latest(context.Context) (*topology.Snapshot, error) {
-	return f.snapshot, f.err
-}
-
-type fixedCounters struct {
-	stats ingest.Stats
-}
-
-func (f fixedCounters) Stats() ingest.Stats {
-	return f.stats
-}
-
-type fixedJournal struct {
-	stats memjournal.Stats
-}
-
-func (f fixedJournal) Stats() memjournal.Stats {
-	return f.stats
-}
-
-type fixedTimings struct {
-	timings processing.Timings
-}
-
-func (f fixedTimings) TakeTimings() processing.Timings {
-	return f.timings
-}
-
 type fixedClock struct {
 	now time.Time
 }
 
 func (c fixedClock) Now() time.Time {
 	return c.now
-}
-
-func testAlerts() *selfalert.Evaluator {
-	return selfalert.NewEvaluator(alertThresholds(new(defaultConfig())))
 }

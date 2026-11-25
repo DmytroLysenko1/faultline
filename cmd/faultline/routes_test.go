@@ -7,15 +7,11 @@ import (
 	"strings"
 	"syscall"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
-	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
-	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/routerules"
 )
 
@@ -82,7 +78,10 @@ func fifo(t *testing.T) string {
 }
 
 func normalizedReview(rules *operation.Rules) operation.Operation {
-	catalog := resource.ServiceRef{Namespace: "shop", Name: "catalog"}
+	catalog := resource.ServiceRef{
+		Namespace: "shop",
+		Name:      "catalog",
+	}
 	return operation.NewNormalizer(rules).Normalize(catalog, &operation.Facts{
 		HTTPMethod: "GET",
 		Path:       "/products/ABC123/reviews",
@@ -95,8 +94,16 @@ func TestTheRouteRulesFileReachesTheNormalizer(t *testing.T) {
 		Args string
 		Want string
 	}{
-		{Name: "no file", Args: "", Want: "GET /products/ABC123/reviews"},
-		{Name: "a file with the catalog routes", Args: writeRules(t, catalogRules), Want: "GET /products/{sku}/reviews"},
+		{
+			Name: "no file",
+			Args: "",
+			Want: "GET /products/ABC123/reviews",
+		},
+		{
+			Name: "a file with the catalog routes",
+			Args: writeRules(t, catalogRules),
+			Want: "GET /products/{sku}/reviews",
+		},
 		{
 			Name: "an absolute symlink to a file in another directory",
 			Args: linkRules(t, writeRules(t, catalogRules)),
@@ -110,9 +117,9 @@ func TestTheRouteRulesFileReachesTheNormalizer(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
-			rules, err := loadRouteRules(tt.Args)
+			rules, err := rulesOf(tt.Args)
 			if err != nil {
-				t.Fatalf("loadRouteRules: %v", err)
+				t.Fatalf("rulesOf: %v", err)
 			}
 			if diff := cmp.Diff(tt.Want, normalizedReview(rules).Name); diff != "" {
 				t.Errorf("operation (-want +got):\n%s", diff)
@@ -162,7 +169,7 @@ func TestABrokenRouteRulesFileIsAConfigError(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
-			_, err := loadRouteRules(tt.Args)
+			_, err := rulesOf(tt.Args)
 			if !errors.Is(err, tt.WantErr) {
 				t.Fatalf("loadRouteRules = %v, want %v", err, tt.WantErr)
 			}
@@ -178,8 +185,10 @@ func TestStartRefusesABrokenRouteRulesFile(t *testing.T) {
 	var stderr strings.Builder
 	limits := &recordedLimit{}
 	code := realMain(process{
-		Args:           []string{commandAll},
-		Lookup:         environment(map[string]string{envRouteRulesFile: path}),
+		Args: []string{commandAll},
+		Lookup: environment(map[string]string{
+			envRouteRulesFile: path,
+		}),
 		ReadCgroup:     noCgroup,
 		SetMemoryLimit: limits.setLimit,
 		Stderr:         &stderr,
@@ -189,53 +198,7 @@ func TestStartRefusesABrokenRouteRulesFile(t *testing.T) {
 	}
 }
 
-type oneRecord struct {
-	resource resource.Resource
-	record   ingest.Record
-}
-
-func (s *oneRecord) Command() ingest.AcceptCommand {
-	return ingest.AcceptCommand{
-		SpanCount: 1,
-		Records: func(yield func(resource.Resource, *ingest.Record) bool) {
-			yield(s.resource, &s.record)
-		},
-	}
-}
-
-const ingestWait = time.Second
-
-func TestIngestNamesOperationsWithTheRouteRules(t *testing.T) {
-	rules, err := loadRouteRules(writeRules(t, catalogRules))
-	if err != nil {
-		t.Fatalf("loadRouteRules: %v", err)
-	}
-	journal, err := memjournal.New(defaultConfig().Journal, systemClock{})
-	if err != nil {
-		t.Fatalf("memjournal.New: %v", err)
-	}
-	t.Cleanup(journal.Close)
-	_, accept := provideIngest(journal, rules, testLogger(&logBuffer{}))
-	source := &oneRecord{
-		resource: telemetrytest.ResourceWith(func(catalog *resource.Resource) {
-			catalog.K8sNamespaceName, catalog.ServiceName = "shop", "catalog"
-		}),
-		record: ingest.Record{
-			Fields: telemetrytest.ValidFields(),
-			Facts: operation.Facts{
-				HTTPMethod: "GET",
-				Path:       "/products/ABC123/reviews",
-			},
-		},
-	}
-	if _, err := accept.Execute(t.Context(), source.Command()); err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	deliveries, err := journal.Receive(t.Context(), 1, ingestWait)
-	if err != nil || len(deliveries) != 1 {
-		t.Fatalf("Receive = %d deliveries, %v", len(deliveries), err)
-	}
-	if got := deliveries[0].Batch().Spans[0].Operation.Name; got != "GET /products/{sku}/reviews" {
-		t.Errorf("stored operation %q, want the catalog route", got)
-	}
+func rulesOf(path string) (*operation.Rules, error) {
+	loaded, err := loadRules(path)
+	return loaded.Rules, err
 }

@@ -1,12 +1,19 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"log/slog"
+	"strconv"
+	"time"
 
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memgraph"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/journal"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/record"
+)
+
+const (
+	allSketchEntries = 2 << 20
+	allTombstoneTTL  = 15 * time.Second
 )
 
 type allSetup struct {
@@ -17,32 +24,27 @@ type allSetup struct {
 	Partition partitionConfig
 }
 
-func runAll(current process) int {
-	role, life, err := prepareAll(current)
-	if err != nil {
-		return fail(current.Stderr, err)
+func allRole() roleRecipe[allSetup] {
+	return roleRecipe[allSetup]{
+		Load: loadAll,
+		Level: func(setup *allSetup) slog.Level {
+			return setup.Config.LogLevel
+		},
+		Build: allStack,
 	}
-	return launchStack(context.Background(), signalNotify, role, life)
 }
 
-func prepareAll(current process) (*stack, *lifecycle, error) {
-	setup, err := loadAll(current)
-	if err != nil {
-		return nil, nil, err
-	}
-	logger := roleLogger(current.Stderr, setup.Config.LogLevel)
-	life := newLifecycle(logger)
-	role := allStack(&setup, life, logger)
-	if err := enforceRoleBudget(current, role, logger); err != nil {
-		return nil, nil, err
-	}
-	return role, life, nil
+func allDefaults(lookup lookupFunc) lookupFunc {
+	return withDefaults(lookup, map[string]string{
+		envSketchEntries: strconv.Itoa(allSketchEntries),
+		envTombstoneTTL:  allTombstoneTTL.String(),
+	})
 }
 
 func loadAll(current process) (allSetup, error) {
 	base, baseErr := loadBase(current)
 	publish, publishErr := loadPublish(current.Lookup)
-	graph, partition, processingErr := loadProcessing(current.Lookup, current.Lookup, &base)
+	graph, partition, processingErr := loadProcessing(current.Lookup, allDefaults(current.Lookup), &base)
 	if err := errors.Join(baseErr, publishErr, processingErr); err != nil {
 		return allSetup{}, err
 	}
@@ -60,6 +62,7 @@ func allStack(setup *allSetup, life *lifecycle, logger *slog.Logger) *stack {
 	graph := &memgraph.Store{}
 	tracing, tracer := tracingLayer(&setup.Config, logger)
 	conn, conns := connLayer(&setup.NATS, life, logger)
+	conn.contributions = connContributions(record.MaxRecordBytes)
 	publishing, journals := journalLayer(conns, &setup.Journal, life, logger)
 	ready := readiness{
 		life:   life,

@@ -7,13 +7,13 @@ type command struct {
 func commands() map[string]command {
 	return map[string]command{
 		commandAll: {
-			run: runAll,
+			run: allRole().run,
 		},
 		commandIngester: {
-			run: runIngester,
+			run: ingesterRole().run,
 		},
 		commandProcessor: {
-			run: runProcessor,
+			run: processorRole().run,
 		},
 	}
 }

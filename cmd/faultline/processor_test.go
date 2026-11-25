@@ -26,8 +26,8 @@ import (
 )
 
 const (
-	processorBreakdown = "pairing, graph and traffic 551.6 MiB, api responses 256.0 MiB, feed credit and pull 80.0 MiB, " +
-		"batch apply 27.8 MiB, snapshots 23.5 MiB, nats connections 1.0 MiB"
+	processorBreakdown = "pairing, graph and traffic 551.6 MiB, api responses 256.0 MiB, feed credit and pull 88.0 MiB, " +
+		"batch apply 27.8 MiB, snapshots 23.5 MiB, nats connections 9.0 MiB, checkpoint 6.2 MiB"
 	defaultLagSeconds = 96
 
 	missingCheckpointDir  = "missing"
@@ -287,9 +287,9 @@ func TestTheProcessorPendingDefaultYieldsToTheEnvironment(t *testing.T) {
 	values := map[string]string{
 		envPairingMaxPending: "5000",
 	}
-	cfg, err := Load(processorDefaults(environment(values)))
+	cfg, err := loadGraph(processorDefaults(environment(values)))
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("loadGraph: %v", err)
 	}
 	assertDiff(t, "pending", 5000, cfg.Topology.MaxPending)
 }
@@ -338,7 +338,11 @@ func TestThePartitionFillsTheSample(t *testing.T) {
 		Now: now,
 	}
 	observed.sample(t.Context(), &got)
-	assertDiff(t, "sample", *sampleOf(snapshot, now), got)
+	want := selfalert.Sample{
+		Now: now,
+	}
+	fillSample(snapshot, &want)
+	assertDiff(t, "sample", want, got)
 	if observed.statsGroups == nil || len(observed.contributions) == 0 {
 		t.Errorf("the role's partition layer has no stats groups or memory contributions")
 	}
@@ -348,7 +352,7 @@ func TestThePartitionFillsTheSample(t *testing.T) {
 		Now: now,
 	}
 	empty.sample(t.Context(), &untouched)
-	want := selfalert.Sample{
+	want = selfalert.Sample{
 		Now: now,
 	}
 	assertDiff(t, "sample without a graph", want, untouched)

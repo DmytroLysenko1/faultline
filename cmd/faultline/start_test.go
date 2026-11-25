@@ -77,9 +77,9 @@ func assertTheHTTPLayerRefusesTheBusyPort(t *testing.T, current process) {
 	t.Helper()
 	current.SetMemoryLimit = (&recordedLimit{}).setLimit
 	current.Stderr = io.Discard
-	role, _, err := prepareAll(current)
+	role, _, err := prepareRole(current, allRole())
 	if err != nil {
-		t.Fatalf("prepareAll: %v", err)
+		t.Fatalf("prepareRole: %v", err)
 	}
 	api := role.layers[slices.IndexFunc(role.layers, func(candidate layer) bool { return candidate.name == layerHTTP })]
 	listener, err := api.unit.(*apiUnit).listen(t.Context())

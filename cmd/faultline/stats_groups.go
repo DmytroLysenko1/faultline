@@ -11,7 +11,6 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/matcher"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/traffic"
-	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
 	"github.com/DmytroLysenko1/faultline/pkg/stream"
 )
 
@@ -142,13 +141,5 @@ func ingestGroup(stats ingest.Stats) slog.Attr {
 		slog.Int64("rejected_spans", stats.RejectedSpans),
 		slog.Int64("overloaded_responses", stats.OverloadedResponses),
 		slog.Int64("too_large_responses", stats.TooLargeResponses),
-	)
-}
-
-func journalGroup(stats memjournal.Stats) slog.Attr {
-	return slog.Group("journal",
-		slog.Int64("bytes", stats.Bytes),
-		slog.Int("batches", stats.Batches),
-		slog.Int("spans", stats.Spans),
 	)
 }

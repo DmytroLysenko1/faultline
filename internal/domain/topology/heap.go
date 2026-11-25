@@ -31,6 +31,10 @@ func (l *Limits) ViewHeapBytes() int64 {
 	return int64(l.MaxNodes)*nodeViewBytes + int64(l.MaxEdges)*edgeViewBytes + snapshotFixedBytes
 }
 
+func (l *Limits) CheckpointIndexBytes() int64 {
+	return l.graphLimits().CheckpointIndexBytes()
+}
+
 func ApplyHeapBytes(maxSpans int) int64 {
 	return int64(maxSpans) * (participantBytes + matchedCallBytes + servedBytes + appliedBytes + servedIndexBytes)
 }

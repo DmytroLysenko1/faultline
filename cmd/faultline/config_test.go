@@ -10,7 +10,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
-	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
 	"github.com/DmytroLysenko1/faultline/pkg/stream"
 )
 
@@ -21,15 +20,41 @@ func environment(values map[string]string) lookupFunc {
 	}
 }
 
+type loadedVariables struct {
+	Shared       Config
+	Graph        graphConfig
+	FeedMaxBytes int64
+}
+
+func loadVariables(t *testing.T, values map[string]string) (loadedVariables, error) {
+	t.Helper()
+	lookup := func(name string) (string, bool) {
+		if name == envCheckpointDir {
+			return t.TempDir(), true
+		}
+		value, found := values[name]
+		return value, found
+	}
+	shared, sharedErr := Load(lookup)
+	graph, graphErr := loadGraph(lookup)
+	partition, partitionErr := loadPartition(lookup)
+	return loadedVariables{
+		Shared:       shared,
+		Graph:        graph,
+		FeedMaxBytes: partition.FeedMaxBytes,
+	}, errors.Join(sharedErr, graphErr, partitionErr)
+}
+
 func defaultConfig() Config {
 	return Config{
 		OTLPAddr: "127.0.0.1:4317",
 		APIAddr:  "127.0.0.1:8080",
-		Journal: memjournal.Limits{
-			MaxBytes:   64 << 20,
-			MaxBatches: 4096,
-			IdleAfter:  35 * time.Second,
-		},
+		LogLevel: slog.LevelInfo,
+	}
+}
+
+func defaultGraph() graphConfig {
+	return graphConfig{
 		Topology: topology.Limits{
 			PairingTTL:    10 * time.Second,
 			MaxPending:    100_000,
@@ -49,41 +74,48 @@ func defaultConfig() Config {
 			SketchEntries:           8 << 20,
 		},
 		APIResponseBudget: 256 << 20,
-		LogLevel:          slog.LevelInfo,
+		IdleAfter:         35 * time.Second,
 	}
 }
 
-func configWith(edit func(cfg *Config)) Config {
-	cfg := defaultConfig()
-	edit(&cfg)
-	return cfg
+func defaultVariables() loadedVariables {
+	return loadedVariables{
+		Shared:       defaultConfig(),
+		Graph:        defaultGraph(),
+		FeedMaxBytes: 64 << 20,
+	}
+}
+
+func variablesWith(edit func(loaded *loadedVariables)) loadedVariables {
+	loaded := defaultVariables()
+	edit(&loaded)
+	return loaded
 }
 
 func TestLoadReadsEveryVariable(t *testing.T) {
 	tests := []struct {
 		Name string
 		Args map[string]string
-		Want Config
+		Want loadedVariables
 	}{
 		{
 			Name: "empty environment gives the documented defaults",
 			Args: map[string]string{},
-			Want: defaultConfig(),
+			Want: defaultVariables(),
 		},
 		{
 			Name: "unrelated variables are ignored",
 			Args: map[string]string{
 				"UNKNOWN": "x",
 			},
-			Want: defaultConfig(),
+			Want: defaultVariables(),
 		},
 		{
 			Name: "every variable lands in its field",
 			Args: map[string]string{
 				envOTLPAddr:          "0.0.0.0:4317",
 				envAPIAddr:           "[::1]:8081",
-				envJournalMaxBytes:   "128MiB",
-				envJournalMaxBatches: "10",
+				envFeedMaxBytes:      "128MiB",
 				envIdleAdvanceAfter:  "1m",
 				envPairingTTL:        "20s",
 				envPairingMaxPending: "500",
@@ -104,36 +136,37 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 				envSketchEntries:     "16777216",
 				envRouteRulesFile:    "/etc/faultline/routes.yaml",
 			},
-			Want: Config{
-				OTLPAddr: "0.0.0.0:4317",
-				APIAddr:  "[::1]:8081",
-				Journal: memjournal.Limits{
-					MaxBytes:   128 << 20,
-					MaxBatches: 10,
-					IdleAfter:  time.Minute,
+			Want: loadedVariables{
+				Shared: Config{
+					OTLPAddr:            "0.0.0.0:4317",
+					APIAddr:             "[::1]:8081",
+					RouteRulesFile:      "/etc/faultline/routes.yaml",
+					LogLevel:            slog.LevelDebug,
+					SelfTracingEndpoint: "collector:4317",
 				},
-				Topology: topology.Limits{
-					PairingTTL:    20 * time.Second,
-					MaxPending:    500,
-					TombstoneTTL:  2 * time.Minute,
-					MaxTombstones: 600,
-					MaxNodes:      20_000,
-					MaxEdges:      1,
-					Windows: stream.Config{
-						Size:            30 * time.Second,
-						Delay:           0,
-						AllowedLateness: 2 * time.Minute,
-						SlackWindows:    4,
+				Graph: graphConfig{
+					Topology: topology.Limits{
+						PairingTTL:    20 * time.Second,
+						MaxPending:    500,
+						TombstoneTTL:  2 * time.Minute,
+						MaxTombstones: 600,
+						MaxNodes:      20_000,
+						MaxEdges:      1,
+						Windows: stream.Config{
+							Size:            30 * time.Second,
+							Delay:           0,
+							AllowedLateness: 2 * time.Minute,
+							SlackWindows:    4,
+						},
+						EarlyFirePeriod:         500 * time.Millisecond,
+						MaxSeries:               200_000,
+						MaxOperationsPerService: 999,
+						SketchEntries:           16 << 20,
 					},
-					EarlyFirePeriod:         500 * time.Millisecond,
-					MaxSeries:               200_000,
-					MaxOperationsPerService: 999,
-					SketchEntries:           16 << 20,
+					APIResponseBudget: 320 << 20,
+					IdleAfter:         time.Minute,
 				},
-				APIResponseBudget:   320 << 20,
-				RouteRulesFile:      "/etc/faultline/routes.yaml",
-				LogLevel:            slog.LevelDebug,
-				SelfTracingEndpoint: "collector:4317",
+				FeedMaxBytes: 128 << 20,
 			},
 		},
 		{
@@ -141,33 +174,33 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 			Args: map[string]string{
 				envSelfTracing: "",
 			},
-			Want: defaultConfig(),
+			Want: defaultVariables(),
 		},
 		{
 			Name: "size at the upper range edge in MiB",
 			Args: map[string]string{
-				envJournalMaxBytes: "512MiB",
+				envFeedMaxBytes: "512MiB",
 			},
-			Want: configWith(func(cfg *Config) {
-				cfg.Journal.MaxBytes = 512 << 20
+			Want: variablesWith(func(loaded *loadedVariables) {
+				loaded.FeedMaxBytes = 512 << 20
 			}),
 		},
 		{
 			Name: "size at the lower range edge in plain bytes",
 			Args: map[string]string{
-				envJournalMaxBytes: "50331648B",
+				envFeedMaxBytes: "50331648B",
 			},
-			Want: configWith(func(cfg *Config) {
-				cfg.Journal.MaxBytes = 48 << 20
+			Want: variablesWith(func(loaded *loadedVariables) {
+				loaded.FeedMaxBytes = 48 << 20
 			}),
 		},
 		{
 			Name: "size in KiB and GiB",
 			Args: map[string]string{
-				envJournalMaxBytes: "131072KiB",
+				envFeedMaxBytes: "131072KiB",
 			},
-			Want: configWith(func(cfg *Config) {
-				cfg.Journal.MaxBytes = 128 << 20
+			Want: variablesWith(func(loaded *loadedVariables) {
+				loaded.FeedMaxBytes = 128 << 20
 			}),
 		},
 		{
@@ -176,17 +209,17 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 				envPairingTTL:   "30s",
 				envTombstoneTTL: "30s",
 			},
-			Want: configWith(func(cfg *Config) {
-				cfg.Topology.PairingTTL = 30 * time.Second
-				cfg.Topology.TombstoneTTL = 30 * time.Second
+			Want: variablesWith(func(loaded *loadedVariables) {
+				loaded.Graph.Topology.PairingTTL = 30 * time.Second
+				loaded.Graph.Topology.TombstoneTTL = 30 * time.Second
 			}),
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
-			got, err := Load(environment(tt.Args))
+			got, err := loadVariables(t, tt.Args)
 			if err != nil {
-				t.Fatalf("Load: %v", err)
+				t.Fatalf("loadVariables: %v", err)
 			}
 			if diff := cmp.Diff(tt.Want, got); diff != "" {
 				t.Errorf("config (-want +got):\n%s", diff)
@@ -285,9 +318,9 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 		{
 			Name: "count with a sign",
 			Args: map[string]string{
-				envJournalMaxBatches: "+5",
+				envTombstoneMax: "+5",
 			},
-			Want:    `JOURNAL_MAX_BATCHES: invalid integer "+5" (not an unsigned decimal integer), want e.g. 4096`,
+			Want:    `TOMBSTONE_MAX: invalid integer "+5" (not an unsigned decimal integer), want e.g. 1000000`,
 			WantErr: errInvalid,
 		},
 		{
@@ -302,41 +335,41 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 		{
 			Name: "size without unit",
 			Args: map[string]string{
-				envJournalMaxBytes: "64",
+				envFeedMaxBytes: "64",
 			},
-			Want:    `JOURNAL_MAX_BYTES: invalid size "64" (unknown size unit), want e.g. 64MiB`,
+			Want:    `FEED_MAX_BYTES: invalid size "64" (unknown size unit), want e.g. 64MiB`,
 			WantErr: errUnknownUnit,
 		},
 		{
 			Name: "size in the wrong case",
 			Args: map[string]string{
-				envJournalMaxBytes: "64mib",
+				envFeedMaxBytes: "64mib",
 			},
-			Want:    `JOURNAL_MAX_BYTES: invalid size "64mib" (unknown size unit), want e.g. 64MiB`,
+			Want:    `FEED_MAX_BYTES: invalid size "64mib" (unknown size unit), want e.g. 64MiB`,
 			WantErr: errUnknownUnit,
 		},
 		{
 			Name: "size below range",
 			Args: map[string]string{
-				envJournalMaxBytes: "32MiB",
+				envFeedMaxBytes: "32MiB",
 			},
-			Want:    "JOURNAL_MAX_BYTES: 32MiB out of range, want 48MiB … 512MiB",
+			Want:    "FEED_MAX_BYTES: 32MiB out of range, want 48MiB … 512MiB",
 			WantErr: errOutOfRange,
 		},
 		{
 			Name: "size above range",
 			Args: map[string]string{
-				envJournalMaxBytes: "1GiB",
+				envFeedMaxBytes: "1GiB",
 			},
-			Want:    "JOURNAL_MAX_BYTES: 1GiB out of range, want 48MiB … 512MiB",
+			Want:    "FEED_MAX_BYTES: 1GiB out of range, want 48MiB … 512MiB",
 			WantErr: errOutOfRange,
 		},
 		{
 			Name: "size overflowing before multiplication",
 			Args: map[string]string{
-				envJournalMaxBytes: "9999999999GiB",
+				envFeedMaxBytes: "9999999999GiB",
 			},
-			Want:    `JOURNAL_MAX_BYTES: invalid size "9999999999GiB" (value overflows int64), want e.g. 64MiB`,
+			Want:    `FEED_MAX_BYTES: invalid size "9999999999GiB" (value overflows int64), want e.g. 64MiB`,
 			WantErr: errOverflow,
 		},
 		{
@@ -542,9 +575,9 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
-			_, err := Load(environment(tt.Args))
+			_, err := loadVariables(t, tt.Args)
 			if !errors.Is(err, tt.WantErr) {
-				t.Fatalf("Load = %v, want %v", err, tt.WantErr)
+				t.Fatalf("loadVariables = %v, want %v", err, tt.WantErr)
 			}
 			if diff := cmp.Diff(tt.Want, err.Error()); diff != "" {
 				t.Errorf("message (-want +got):\n%s", diff)
@@ -554,15 +587,15 @@ func TestLoadRejectsWithAnExactMessage(t *testing.T) {
 }
 
 func TestLoadReportsEveryErrorAtOnce(t *testing.T) {
-	_, err := Load(environment(map[string]string{
-		envPairingTTL:      "10",
-		envGraphMaxNodes:   "30000",
-		envJournalMaxBytes: "64",
-	}))
+	_, err := loadVariables(t, map[string]string{
+		envPairingTTL:    "10",
+		envGraphMaxNodes: "30000",
+		envFeedMaxBytes:  "64",
+	})
 	want := []string{
-		`JOURNAL_MAX_BYTES: invalid size "64" (unknown size unit), want e.g. 64MiB`,
 		`PAIRING_TTL: invalid duration "10", want e.g. 10s`,
 		"GRAPH_MAX_NODES: 30000 out of range, want 1 … 20000",
+		`FEED_MAX_BYTES: invalid size "64" (unknown size unit), want e.g. 64MiB`,
 	}
 	if err == nil {
 		t.Fatal("Load accepted three invalid variables")
@@ -573,7 +606,7 @@ func TestLoadReportsEveryErrorAtOnce(t *testing.T) {
 }
 
 func TestCrossCheckIsSkippedWhenAnInputFailed(t *testing.T) {
-	_, err := Load(environment(map[string]string{
+	_, err := loadGraph(environment(map[string]string{
 		envPairingTTL:   "1h",
 		envTombstoneTTL: "5s",
 	}))

@@ -11,6 +11,8 @@ import (
 const (
 	eventPipelineStats = "pipeline.stats"
 	finalReportBudget  = 100 * time.Millisecond
+	componentStats     = "stats"
+	statsInterval      = 30 * time.Second
 )
 
 type statsUnit struct {

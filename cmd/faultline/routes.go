@@ -18,14 +18,6 @@ type routeRules struct {
 	Hash  uint32
 }
 
-func loadRouteRules(path string) (*operation.Rules, error) {
-	loaded, err := loadRules(path)
-	if err != nil {
-		return nil, err
-	}
-	return loaded.Rules, nil
-}
-
 func loadRules(path string) (routeRules, error) {
 	if path == "" {
 		rules, err := operation.NewRules(nil)

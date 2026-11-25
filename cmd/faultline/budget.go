@@ -7,11 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/DmytroLysenko1/faultline/internal/application/processing"
-	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
-	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memgraph"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/selftrace"
-	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
 )
 
 const (
@@ -27,22 +23,6 @@ var errOverBudget = errors.New("worst-case memory exceeds the budget")
 type contribution struct {
 	name  string
 	bytes int64
-}
-
-func contributions(cfg *Config) []contribution {
-	return append(coreContributions(cfg), selfTracingContribution(cfg)...)
-}
-
-func coreContributions(cfg *Config) []contribution {
-	view := cfg.Topology.ViewHeapBytes()
-	return []contribution{
-		{name: "journal", bytes: cfg.Journal.WorstCaseHeapBytes()},
-		{name: "pairing, graph and traffic", bytes: cfg.Topology.WorstCaseHeapBytes()},
-		{name: "snapshots", bytes: (memgraph.HeldSnapshots + processing.HeldSnapshots) * view},
-		{name: "batch apply", bytes: topology.ApplyHeapBytes(otlp.MaxSpansPerRequest)},
-		{name: "api responses", bytes: cfg.APIResponseBudget},
-		{name: "otlp requests", bytes: otlp.WorstHeapBytes()},
-	}
 }
 
 func selfTracingContribution(cfg *Config) []contribution {

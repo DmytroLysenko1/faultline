@@ -20,7 +20,14 @@ const (
 	layerOTLP       = "otlp"
 	stageOTLPListen = "otlp/listen"
 	otlpStopGrace   = 3500 * time.Millisecond
+	componentOTLP   = "otlp"
 )
+
+type ingestServer interface {
+	Serve(listener net.Listener) error
+	GracefulStop()
+	Stop()
+}
 
 type journalSource interface {
 	opened() *journal.Journal

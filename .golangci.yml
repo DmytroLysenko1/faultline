@@ -257,6 +257,8 @@ linters:
               desc: test harnesses stay in tests
             - pkg: github.com/DmytroLysenko1/faultline/internal/infrastructure/journaltest
               desc: test harnesses stay in tests
+            - pkg: github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal
+              desc: test harnesses stay in tests
             - pkg: github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest
               desc: test harnesses stay in tests
             - pkg: github.com/DmytroLysenko1/faultline/internal/domain/topology/topologytest

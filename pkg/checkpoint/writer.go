@@ -166,3 +166,7 @@ func chunkLength(length int) uint32 {
 	}
 	return uint32(length)
 }
+
+func WriterHeapBytes() int64 {
+	return frameBytes + maxChunkBytes + crcBytes
+}

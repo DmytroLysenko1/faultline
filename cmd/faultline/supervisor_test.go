@@ -34,6 +34,8 @@ type supervision struct {
 	logs   *logBuffer
 }
 
+const waitAttempts = 200
+
 func newTestSupervisor(t *testing.T) supervision {
 	t.Helper()
 	logs := &logBuffer{}
@@ -97,8 +99,15 @@ func TestOnlyTheFirstUnexpectedExitIsAnError(t *testing.T) {
 		exitNow(under.sup, "a", errA)
 		exitNow(under.sup, "b", errB)
 		want := []map[string]any{
-			{"level": levelError, "component": "a"},
-			{"level": levelWarn, "component": "b", "followup": true},
+			{
+				"level":     levelError,
+				"component": "a",
+			},
+			{
+				"level":     levelWarn,
+				"component": "b",
+				"followup":  true,
+			},
 		}
 		got := picked(under.logs.all(t, eventComponentExit), "level", "component", "followup")
 		if diff := cmp.Diff(want, got); diff != "" {
@@ -125,7 +134,11 @@ func TestALostLeaseExitIsLeftToTheOutcome(t *testing.T) {
 				"p0/lease",
 			},
 			Want: []map[string]any{
-				{"level": levelWarn, "component": "p0/lease", "followup": true},
+				{
+					"level":     levelWarn,
+					"component": "p0/lease",
+					"followup":  true,
+				},
 			},
 		},
 		{
@@ -135,8 +148,16 @@ func TestALostLeaseExitIsLeftToTheOutcome(t *testing.T) {
 				"b",
 			},
 			Want: []map[string]any{
-				{"level": levelWarn, "component": "p0/lease", "followup": true},
-				{"level": levelWarn, "component": "b", "followup": true},
+				{
+					"level":     levelWarn,
+					"component": "p0/lease",
+					"followup":  true,
+				},
+				{
+					"level":     levelWarn,
+					"component": "b",
+					"followup":  true,
+				},
 			},
 		},
 	}
@@ -292,7 +313,9 @@ func TestOutlivedReportsWhatWaitDidNotClaim(t *testing.T) {
 		{
 			Name: "a clean exit is no failure",
 			Args: outlivedArgs{
-				Units: []outlivedUnit{{Name: "a"}},
+				Units: []outlivedUnit{{
+					Name: "a",
+				}},
 			},
 		},
 		{
@@ -506,8 +529,15 @@ func TestTheFirstExitIsSeenEitherNowOrLate(t *testing.T) {
 				assertOnlyTheFirst(t, "decide", now, tt.Want.Now)
 				assertOnlyTheFirst(t, "late", late, tt.Want.Late)
 				want := []map[string]any{
-					{"level": levelError, "component": "a"},
-					{"level": levelWarn, "component": "b", "followup": true},
+					{
+						"level":     levelError,
+						"component": "a",
+					},
+					{
+						"level":     levelWarn,
+						"component": "b",
+						"followup":  true,
+					},
 				}
 				got := picked(under.logs.all(t, eventComponentExit), "level", "component", "followup")
 				if diff := cmp.Diff(want, got); diff != "" {
@@ -589,7 +619,11 @@ func TestAnExitAfterAnErrorOutcomeIsAFollowup(t *testing.T) {
 		}
 		exitNow(under.sup, "a", errA)
 		want := []map[string]any{
-			{"level": levelWarn, "component": "a", "followup": true},
+			{
+				"level":     levelWarn,
+				"component": "a",
+				"followup":  true,
+			},
 		}
 		got := picked(under.logs.all(t, eventComponentExit), "level", "component", "followup")
 		if diff := cmp.Diff(want, got); diff != "" {
@@ -625,7 +659,11 @@ func TestAnExitWhileTheOutcomeIsDecidedIsAFollowup(t *testing.T) {
 		t.Fatalf("outcome level = %v, want %v", outcome.level, slog.LevelError)
 	}
 	want := []map[string]any{
-		{"level": levelWarn, "component": "x/run", "followup": true},
+		{
+			"level":     levelWarn,
+			"component": "x/run",
+			"followup":  true,
+		},
 	}
 	got := picked(under.logs.all(t, eventComponentExit), "level", "component", "followup")
 	if diff := cmp.Diff(want, got); diff != "" {

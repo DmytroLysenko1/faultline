@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,6 +16,9 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/application/selfalert"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memgraph"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/checkpoint"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/record"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/graphservice"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
@@ -36,6 +38,7 @@ const (
 	minCheckpointInterval     = time.Second
 	maxCheckpointInterval     = time.Minute
 	processorMaxPending       = 200_000
+	lagSlack                  = 30 * time.Second
 )
 
 type processorSetup struct {
@@ -45,26 +48,14 @@ type processorSetup struct {
 	Partition partitionConfig
 }
 
-func runProcessor(current process) int {
-	role, life, err := prepareProcessor(current)
-	if err != nil {
-		return fail(current.Stderr, err)
+func processorRole() roleRecipe[processorSetup] {
+	return roleRecipe[processorSetup]{
+		Load: loadProcessor,
+		Level: func(setup *processorSetup) slog.Level {
+			return setup.Config.LogLevel
+		},
+		Build: processorStack,
 	}
-	return launchStack(context.Background(), signalNotify, role, life)
-}
-
-func prepareProcessor(current process) (*stack, *lifecycle, error) {
-	setup, err := loadProcessor(current)
-	if err != nil {
-		return nil, nil, err
-	}
-	logger := roleLogger(current.Stderr, setup.Config.LogLevel)
-	life := newLifecycle(logger)
-	role := processorStack(&setup, life, logger)
-	if err := enforceRoleBudget(current, role, logger); err != nil {
-		return nil, nil, err
-	}
-	return role, life, nil
 }
 
 func loadProcessor(current process) (processorSetup, error) {
@@ -94,13 +85,9 @@ func loadProcessing(lookup, graphLookup lookupFunc, base *roleBase) (graphConfig
 }
 
 func processorDefaults(lookup lookupFunc) lookupFunc {
-	return func(name string) (string, bool) {
-		value, set := lookup(name)
-		if set || name != envPairingMaxPending {
-			return value, set
-		}
-		return strconv.Itoa(processorMaxPending), true
-	}
+	return withDefaults(lookup, map[string]string{
+		envPairingMaxPending: strconv.Itoa(processorMaxPending),
+	})
 }
 
 func loadPartition(lookup lookupFunc) (partitionConfig, error) {
@@ -156,6 +143,7 @@ func processorStack(setup *processorSetup, life *lifecycle, logger *slog.Logger)
 	graph := &memgraph.Store{}
 	tracing, tracer := tracingLayer(&setup.Config, logger)
 	conn, conns := connLayer(&setup.NATS, life, logger)
+	conn.contributions = connContributions(record.MaxRecordBytes, checkpoint.ChunkBytes())
 	ready := readiness{
 		life:   life,
 		layers: role.hooks,
@@ -233,7 +221,7 @@ func partitionContributions(cfg *partitionConfig) []contribution {
 	return []contribution{
 		{
 			name:  "feed credit and pull",
-			bytes: cfg.FeedMaxBytes + feedPullMaxBytes,
+			bytes: cfg.FeedMaxBytes + feedPullMaxBytes + natsjs.MaxMessageBytes,
 		},
 		{
 			name:  "pairing, graph and traffic",
@@ -246,6 +234,10 @@ func partitionContributions(cfg *partitionConfig) []contribution {
 		{
 			name:  "batch apply",
 			bytes: topology.ApplyHeapBytes(otlp.MaxSpansPerRequest),
+		},
+		{
+			name:  "checkpoint",
+			bytes: checkpoint.WorstHeapBytes() + cfg.Limits.CheckpointIndexBytes(),
 		},
 	}
 }
