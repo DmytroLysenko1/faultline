@@ -12,5 +12,6 @@ func main() {
 		ReadCgroup:     readCgroupMemoryMax,
 		SetMemoryLimit: debug.SetMemoryLimit,
 		Stderr:         os.Stderr,
+		Hostname:       os.Hostname,
 	}))
 }

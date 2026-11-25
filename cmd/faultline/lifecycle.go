@@ -10,23 +10,26 @@ type lifecycleState string
 const eventState = "lifecycle.state"
 
 const (
-	stateStarting   lifecycleState = "starting"
-	stateConnecting lifecycleState = "connecting"
-	stateServing    lifecycleState = "serving"
-	stateDraining   lifecycleState = "draining"
-	stateAborting   lifecycleState = "aborting"
-	stateStopped    lifecycleState = "stopped"
+	stateStarting       lifecycleState = "starting"
+	stateConnecting     lifecycleState = "connecting"
+	stateWaitingStreams lifecycleState = "waiting_streams"
+	stateServing        lifecycleState = "serving"
+	stateDraining       lifecycleState = "draining"
+	stateAborting       lifecycleState = "aborting"
+	stateStopped        lifecycleState = "stopped"
 )
 
 const (
-	reasonStarted       = "started"
-	reasonSignal        = "signal"
-	reasonComponentExit = "component_exit"
-	reasonShutdown      = "shutdown_complete"
-	reasonLaunched      = "launched"
-	reasonStartFailed   = "start_failed"
-	reasonUnexplained   = "unexplained"
-	reasonDialing       = "dialing"
+	reasonStarted              = "started"
+	reasonSignal               = "signal"
+	reasonComponentExit        = "component_exit"
+	reasonShutdown             = "shutdown_complete"
+	reasonLaunched             = "launched"
+	reasonStartFailed          = "start_failed"
+	reasonUnexplained          = "unexplained"
+	reasonDialing              = "dialing"
+	reasonStreamsNotReady      = "streams_not_ready"
+	reasonJetStreamUnavailable = "jetstream_unavailable"
 )
 
 type lifecycle struct {

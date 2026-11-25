@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"os"
 
@@ -12,19 +13,38 @@ import (
 
 var errNotRegular = errors.New("not a regular file")
 
+type routeRules struct {
+	Rules *operation.Rules
+	Hash  uint32
+}
+
 func loadRouteRules(path string) (*operation.Rules, error) {
+	loaded, err := loadRules(path)
+	if err != nil {
+		return nil, err
+	}
+	return loaded.Rules, nil
+}
+
+func loadRules(path string) (routeRules, error) {
 	if path == "" {
-		return operation.NewRules(nil)
+		rules, err := operation.NewRules(nil)
+		return routeRules{
+			Rules: rules,
+		}, err
 	}
 	data, err := readAtMost(path, routerules.MaxFileBytes)
 	if err != nil {
-		return nil, fmt.Errorf("%s %s: %w", envRouteRulesFile, path, err)
+		return routeRules{}, fmt.Errorf("%s %s: %w", envRouteRulesFile, path, err)
 	}
 	rules, err := routerules.Parse(data)
 	if err != nil {
-		return nil, fmt.Errorf("%s %s: %w", envRouteRulesFile, path, err)
+		return routeRules{}, fmt.Errorf("%s %s: %w", envRouteRulesFile, path, err)
 	}
-	return rules, nil
+	return routeRules{
+		Rules: rules,
+		Hash:  crc32.Checksum(data, crc32.MakeTable(crc32.Castagnoli)),
+	}, nil
 }
 
 func readAtMost(path string, limit int64) ([]byte, error) {

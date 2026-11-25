@@ -194,7 +194,7 @@ func meaningOfReason() map[natsjs.Reason]error {
 		natsjs.ReasonSealed:                ingest.ErrUnavailable,
 		natsjs.ReasonAccountLimits:         ingest.ErrUnavailable,
 		natsjs.ReasonStreamFull:            ingest.ErrOverloaded,
-		natsjs.ReasonTooLarge:              ingest.ErrBatchTooLarge,
+		natsjs.ReasonTooLarge:              ingest.ErrUnavailable,
 		natsjs.ReasonCanceled:              ingest.ErrUnavailable,
 		natsjs.ReasonClosed:                ingest.ErrUnavailable,
 	}
@@ -248,8 +248,8 @@ func TestTheMostFinalFailureDecidesTheAnswer(t *testing.T) {
 			wantErr: ingest.ErrUnavailable},
 		{name: "overloaded over unavailable", args: map[uint16]answer{0: unavailable, 3: full},
 			wantErr: ingest.ErrOverloaded},
-		{name: "too large, though it answers last", args: map[uint16]answer{0: full, 1: unavailable, 3: tooLarge},
-			wantErr: ingest.ErrBatchTooLarge},
+		{name: "a server that refuses the size is unavailable, not too large", args: map[uint16]answer{0: unavailable,
+			3: tooLarge}, wantErr: ingest.ErrUnavailable},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -604,10 +604,10 @@ func TestADecoratedPublisherKeepsTheFinalMeaningOfItsReason(t *testing.T) {
 	}{
 		{name: "unavailable around a full stream", args: args{reason: natsjs.ReasonStreamFull, added: ingest.ErrUnavailable},
 			want: []string{ingest.ErrOverloaded.Error(), ingest.ErrUnavailable.Error()}},
-		{name: "unavailable around a record too large", args: args{reason: natsjs.ReasonTooLarge, added: ingest.ErrUnavailable},
-			want: []string{ingest.ErrBatchTooLarge.Error(), ingest.ErrUnavailable.Error()}},
-		{name: "overloaded around a record too large", args: args{reason: natsjs.ReasonTooLarge, added: ingest.ErrOverloaded},
-			want: []string{ingest.ErrOverloaded.Error(), ingest.ErrBatchTooLarge.Error()}},
+		{name: "unavailable around a server that refuses the size", args: args{reason: natsjs.ReasonTooLarge,
+			added: ingest.ErrUnavailable}, want: []string{ingest.ErrUnavailable.Error()}},
+		{name: "overloaded around a server that refuses the size", args: args{reason: natsjs.ReasonTooLarge,
+			added: ingest.ErrOverloaded}, want: []string{ingest.ErrOverloaded.Error()}},
 		{name: "unavailable around a lost quorum", args: args{reason: natsjs.ReasonNoResponders, added: ingest.ErrUnavailable},
 			want: []string{ingest.ErrUnavailable.Error()}},
 	}

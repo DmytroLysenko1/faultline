@@ -52,8 +52,6 @@ func meaningOfReason(reason natsjs.Reason) error {
 	switch reason {
 	case natsjs.ReasonStreamFull:
 		return ingest.ErrOverloaded
-	case natsjs.ReasonTooLarge:
-		return ingest.ErrBatchTooLarge
 	default:
 		return ingest.ErrUnavailable
 	}

@@ -13,7 +13,7 @@ import (
 
 const (
 	commandAll  = "all"
-	usage       = "usage: faultline all"
+	usage       = "usage: faultline all | ingester"
 	exitOK      = 0
 	exitFailure = 1
 	exitConfig  = 2
@@ -27,6 +27,7 @@ type process struct {
 	ReadCgroup     cgroupReader
 	SetMemoryLimit func(limit int64) int64
 	Stderr         io.Writer
+	Hostname       func() (string, error)
 }
 
 type startup struct {
@@ -39,7 +40,7 @@ func start(current process) (startup, error) {
 	if err != nil {
 		return startup{}, err
 	}
-	memory, err := enforceMemoryBudget(current, &cfg)
+	memory, err := enforceMemoryBudget(current, contributions(&cfg))
 	if err != nil {
 		return startup{}, err
 	}
@@ -60,13 +61,13 @@ func loadConfig(lookup lookupFunc) (Config, error) {
 	return cfg, nil
 }
 
-func enforceMemoryBudget(current process, cfg *Config) (memorySetting, error) {
+func enforceMemoryBudget(current process, parts []contribution) (memorySetting, error) {
 	memory, err := memoryLimit(current.Lookup, current.ReadCgroup)
 	if err != nil {
 		return memorySetting{}, err
 	}
 	current.SetMemoryLimit(memory.Bytes)
-	if err := checkBudget(cfg, memory.Bytes); err != nil {
+	if err := checkParts(parts, memory.Bytes); err != nil {
 		return memorySetting{}, err
 	}
 	return memory, nil

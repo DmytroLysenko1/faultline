@@ -46,6 +46,7 @@ type layer struct {
 	contributions []contribution
 	statsGroups   func(ctx context.Context) []slog.Attr
 	sample        func(ctx context.Context, sample *selfalert.Sample)
+	ready         func() bool
 }
 
 func (l *layer) supervisedBy(sup *supervisor) layerSupervisor {
@@ -135,6 +136,12 @@ func (s *stack) components() []string {
 		names = append(names, s.layers[index].components...)
 	}
 	return names
+}
+
+func (s *stack) contributions() []contribution {
+	return lo.FlatMap(s.layers, func(current layer, _ int) []contribution {
+		return current.contributions
+	})
 }
 
 func (s *stack) enter(ctx context.Context, sup *supervisor, index int) error {

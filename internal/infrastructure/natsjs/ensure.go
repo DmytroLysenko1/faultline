@@ -183,6 +183,15 @@ type Verification struct {
 	Notes    []Drift
 }
 
+func (v Verification) RepairedByEnsure() bool {
+	return len(v.Blocking) > 0 && lo.EveryBy(v.Blocking, ensureRepairs)
+}
+
+func ensureRepairs(drift Drift) bool {
+	return drift.Field == fieldStream ||
+		drift.Field == fieldDuplicateWindow
+}
+
 func (c *Conn) VerifyTopology(ctx context.Context, topology Topology) (Verification, error) {
 	js, err := c.control(topology)
 	if err != nil {

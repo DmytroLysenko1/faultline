@@ -230,7 +230,9 @@ func connect(ctx context.Context, options *ConnOptions, role string) (*Link, err
 		return nil, fmt.Errorf("connect %s: %w", role, err)
 	}
 	closed := make(chan struct{})
-	link := &Link{Closed: closed}
+	link := &Link{
+		Closed: closed,
+	}
 	settings := append(baseOptions(options, role, timeout), handlers(loggerOf(options), role, link, closed)...)
 	nc, err := connectWith(ctx, strings.Join(options.URLs, ","), settings)
 	if err != nil {
@@ -410,9 +412,13 @@ func asyncClassOf(err error) asyncKey {
 		}
 	}
 	if failure, found := errors.AsType[*net.OpError](err); found {
-		return asyncKey{name: asyncNetPrefix + failure.Op}
+		return asyncKey{
+			name: asyncNetPrefix + failure.Op,
+		}
 	}
-	return asyncKey{name: err.Error()}
+	return asyncKey{
+		name: err.Error(),
+	}
 }
 
 func asyncErrorClasses() []error {

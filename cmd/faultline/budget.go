@@ -57,14 +57,15 @@ func selfTracingContribution(cfg *Config) []contribution {
 	}
 }
 
-func checkBudget(cfg *Config, limit int64) error {
-	parts := contributions(cfg)
+func checkParts(parts []contribution, limit int64) error {
 	worst := total(parts)
 	allowed := limit / percent * budgetSharePercent
 	if worst <= allowed {
 		return nil
 	}
-	return fmt.Errorf("%w: %s > %d%% of GOMEMLIMIT %s (%s)", errOverBudget, inMiB(worst), budgetSharePercent,
+	return fmt.Errorf(
+		"%w: %s > %d%% of GOMEMLIMIT %s (%s)",
+		errOverBudget, inMiB(worst), budgetSharePercent,
 		inMiB(limit), breakdown(parts))
 }
 

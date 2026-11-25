@@ -32,7 +32,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('Makefile') }}
 
       - name: Verify
-        run: make verify
+        run: make verify LINESTYLE_BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
 
       - name: Image
         run: docker build -f deploy/dev/Dockerfile .

@@ -22,7 +22,7 @@ const (
 	MaxConnectionIdle     = time.Minute
 	MaxConnectionAge      = 5 * time.Minute
 	MaxConnectionAgeGrace = 10 * time.Second
-	ConnectionTimeout     = 10 * time.Second
+	ConnectionTimeout     = 3 * time.Second
 	RetryDelay            = time.Second
 	LogInterval           = 10 * time.Second
 	MaxErrorMessageBytes  = 1 << 10

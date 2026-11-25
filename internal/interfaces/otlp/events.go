@@ -22,6 +22,8 @@ type events struct {
 	overloads  *throttle.Throttle
 	rejections *throttle.Throttle
 	outages    *throttle.Throttle
+	oversized  *throttle.Throttle
+	failures   *throttle.Throttle
 }
 
 func newEvents(options Options) *events {
@@ -31,6 +33,8 @@ func newEvents(options Options) *events {
 		overloads:  throttle.New(LogInterval, options.Clock),
 		rejections: throttle.New(LogInterval, options.Clock),
 		outages:    throttle.New(LogInterval, options.Clock),
+		oversized:  throttle.New(LogInterval, options.Clock),
+		failures:   throttle.New(LogInterval, options.Clock),
 	}
 }
 
@@ -61,11 +65,28 @@ func (e *events) overloaded(ctx context.Context, _ error) {
 }
 
 func (e *events) tooLarge(ctx context.Context, err error) {
-	e.logger.LogAttrs(ctx, slog.LevelError, "otlp.export.too_large", withTrace(ctx, slog.Any("error", err))...)
+	e.throttled(ctx, e.oversized, slog.LevelWarn, "otlp.export.too_large", err)
 }
 
 func (e *events) internal(ctx context.Context, err error) {
-	e.logger.LogAttrs(ctx, slog.LevelError, "otlp.export.failed", withTrace(ctx, slog.Any("error", err))...)
+	e.throttled(ctx, e.failures, slog.LevelError, "otlp.export.failed", err)
+}
+
+func (e *events) throttled(
+	ctx context.Context,
+	gate *throttle.Throttle,
+	level slog.Level,
+	message string,
+	err error,
+) {
+	suppressed, admitted := gate.Admit(0)
+	if !admitted {
+		return
+	}
+	e.logger.LogAttrs(ctx, level, message, withTrace(ctx,
+		slog.Any("error", err),
+		slog.Int64("suppressed_requests", suppressed.Events),
+	)...)
 }
 
 func (e *events) unavailable(ctx context.Context, err error) {

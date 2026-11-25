@@ -89,9 +89,12 @@ mod-check: ## Fail if go.mod/go.sum are not tidy
 	go mod tidy -diff
 
 .PHONY: lint
-lint: $(GOLANGCI_LINT) ## Run golangci-lint
+LINESTYLE_BASE ?= HEAD
+
+lint: $(GOLANGCI_LINT) ## Run golangci-lint and the one-line style check on changed lines
 ifneq ($(GO_PACKAGES),)
 	$(GOLANGCI_LINT) run ./...
+	./hack/linestyle-check.sh "$(LINESTYLE_BASE)"
 	@if command -v shellcheck >/dev/null; then shellcheck -x hack/*.sh; else echo "lint: shellcheck not installed, skipping hack/*.sh"; fi
 else
 	@echo "lint: no Go packages yet, skipping"
@@ -137,7 +140,9 @@ SHUTDOWN_NAMES := TestShutdownOrder TestDrainIncompleteReportsTheJournalRemainde
 	TestEveryComponentReportsExactlyOneExit TestOTLPStuckAfterStopIsReported TestSlowComponentsAtTheEndOfShutdown \
 	TestStatsReporterWritesWhileIdleAndOnceMoreOnStop TestStopOnATickIsNotAFailure \
 	TestAServedStackStopsInReverseOnASignal TestRollbackGetsTheFullBudgetAfterASignal \
-	TestALateUnitFailureIsCountedOnce TestAStuckLayerStopIsAbandonedAndNamed TestASecondSignalIsLeftToTheSystem
+	TestALateUnitFailureIsCountedOnce TestAStuckLayerStopIsAbandonedAndNamed TestASecondSignalIsLeftToTheSystem \
+	TestIngesterStopOrder TestAForcedOTLPStopIsAWarningOnlyWhenItsGoroutineExits \
+	TestASecondSignalReachesTheSystemThroughTheIngesterWiring
 SHUTDOWN_TESTS := ^($(subst $(space),|,$(strip $(SHUTDOWN_NAMES))))$$
 
 BENCH_DIR := tmp/bench

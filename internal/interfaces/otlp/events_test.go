@@ -154,17 +154,17 @@ func TestFailuresLogOnlyWhatAnOperatorMustSee(t *testing.T) {
 			},
 		},
 		{
-			Name: "too large is an error every time",
+			Name: "too large is the client's data: a warning, throttled to one per interval",
 			Args: ingest.ErrBatchTooLarge,
 			Want: map[string]int{
-				"ERROR otlp.export.too_large": 2,
+				"WARN otlp.export.too_large": 1,
 			},
 		},
 		{
-			Name: "internal failure is an error every time",
+			Name: "internal failure is an error, throttled to one per interval",
 			Args: errJournalBroken,
 			Want: map[string]int{
-				"ERROR otlp.export.failed": 2,
+				"ERROR otlp.export.failed": 1,
 			},
 		},
 		{
@@ -244,5 +244,38 @@ func TestRejectedAndOverloadedAreThrottledIndependently(t *testing.T) {
 	}
 	if got := overloads[1]["suppressed_requests"]; got != float64(overloadRounds/2-1) {
 		t.Errorf("second overloaded record suppressed_requests = %v, want %d", got, overloadRounds/2-1)
+	}
+}
+
+func TestEveryFailureHasItsOwnThrottle(t *testing.T) {
+	var calls atomic.Int64
+	answers := []error{ingest.ErrUnavailable, ingest.ErrBatchTooLarge, errJournalBroken}
+	h := start(t, func(context.Context, ingest.AcceptCommand) (ingest.AcceptResult, error) {
+		return ingest.AcceptResult{}, answers[(calls.Add(1)-1)%int64(len(answers))]
+	})
+	for range 2 * len(answers) {
+		if _, err := h.Client.Export(t.Context(), requestOf(1)); err == nil {
+			t.Fatal("Export succeeded, want the acceptor error")
+		}
+	}
+	h.Clock.Advance(otlp.LogInterval)
+	for range len(answers) {
+		if _, err := h.Client.Export(t.Context(), requestOf(1)); err == nil {
+			t.Fatal("Export succeeded, want the acceptor error")
+		}
+	}
+
+	want := map[string]int{
+		"ERROR otlp.export.unavailable": 2,
+		"WARN otlp.export.too_large":    2,
+		"ERROR otlp.export.failed":      2,
+	}
+	if diff := cmp.Diff(want, eventCounts(t, h)); diff != "" {
+		t.Errorf("logged events (-want +got):\n%s", diff)
+	}
+	for _, message := range []string{"otlp.export.unavailable", "otlp.export.too_large", "otlp.export.failed"} {
+		if reopened := h.Logs.Events(t, message)[1]; reopened["suppressed_requests"] != float64(1) {
+			t.Errorf("the reopened %s line = %v, want 1 suppressed request", message, reopened)
+		}
 	}
 }

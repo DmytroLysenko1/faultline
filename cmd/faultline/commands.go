@@ -9,6 +9,9 @@ func commands() map[string]command {
 		commandAll: {
 			run: runAll,
 		},
+		commandIngester: {
+			run: runIngester,
+		},
 	}
 }
 

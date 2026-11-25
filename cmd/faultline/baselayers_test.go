@@ -12,6 +12,8 @@ import (
 
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
+
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/natsjstest"
 )
 
 var (
@@ -57,10 +59,42 @@ func stopLayer(t *testing.T, current *layer, view layerSupervisor) error {
 }
 
 func TestTheRealLayersStopWithoutALateExit(t *testing.T) {
-	logs, notify := &logBuffer{}, newFakeNotify()
+	tests := []struct {
+		name string
+		args func(t *testing.T, life *lifecycle, logs *logBuffer) *stack
+	}{
+		{
+			name: "tracing, http and stats",
+			args: baseStack,
+		},
+		{
+			name: "the ingester on NATS",
+			args: func(t *testing.T, life *lifecycle, logs *logBuffer) *stack {
+				cluster := natsjstest.Start(t, singleNATSNode)
+				ensureStreams(t, cluster.URLs()...)
+				setup, _, _ := ingesterOn(t, cluster.URLs())
+				return ingesterStack(setup, life, testLogger(logs))
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logs, notify := &logBuffer{}, newFakeNotify()
+			life := newLifecycle(testLogger(logs))
+			done := launchRoleWith(t, tt.args(t, life, logs), notify.notify, life)
+			eventually(t, "serving", life.Served)
+			notify.send()
+			assertCode(t, <-done, exitOK, logs)
+			assertNoLine(t, logs, eventComponentExit)
+			assertNoLine(t, logs, eventForcedStop)
+			assertNoLine(t, logs, eventLayerStopFailed)
+		})
+	}
+}
+
+func baseStack(_ *testing.T, life *lifecycle, logs *logBuffer) *stack {
 	logger := testLogger(logs)
 	cfg := &Config{APIAddr: loopback}
-	life := newLifecycle(logger)
 	role := &stack{}
 	tracing, traced := tracingLayer(cfg, logger)
 	role.layers = []layer{
@@ -68,12 +102,7 @@ func TestTheRealLayersStopWithoutALateExit(t *testing.T) {
 		httpLayer(cfg, traced, healthRoutes, "", logger),
 		statsLayer(role.hooks, life.Served, calmThresholds, logger),
 	}
-	done := launchRoleWith(t, role, notify.notify, life)
-	eventually(t, "serving", life.Served)
-	notify.send()
-	assertCode(t, <-done, exitOK, logs)
-	assertNoLine(t, logs, eventComponentExit)
-	assertNoLine(t, logs, eventForcedStop)
+	return role
 }
 
 func TestABrokenTracingEndpointFailsItsStage(t *testing.T) {

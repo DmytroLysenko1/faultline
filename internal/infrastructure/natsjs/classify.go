@@ -227,10 +227,22 @@ type dialRule struct {
 
 func dialRules() []dialRule {
 	return []dialRule{
-		{matches: lookupFailed, reason: DialDNS},
-		{matches: greetingMissing, reason: DialNoNATSGreeting},
-		{matches: networkFailed, reason: DialNetwork},
-		{matches: noServers, reason: DialNoServers},
+		{
+			matches: lookupFailed,
+			reason:  DialDNS,
+		},
+		{
+			matches: greetingMissing,
+			reason:  DialNoNATSGreeting,
+		},
+		{
+			matches: networkFailed,
+			reason:  DialNetwork,
+		},
+		{
+			matches: noServers,
+			reason:  DialNoServers,
+		},
 	}
 }
 

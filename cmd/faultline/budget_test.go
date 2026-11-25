@@ -66,8 +66,8 @@ func TestBudgetAtTheMemoryLimit(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
-			if err := checkBudget(&tt.Args.cfg, tt.Args.limit); !errors.Is(err, tt.WantErr) {
-				t.Errorf("checkBudget = %v, want %v", err, tt.WantErr)
+			if err := checkParts(contributions(&tt.Args.cfg), tt.Args.limit); !errors.Is(err, tt.WantErr) {
+				t.Errorf("checkParts = %v, want %v", err, tt.WantErr)
 			}
 		})
 	}
