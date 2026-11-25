@@ -33,6 +33,7 @@ var (
 	errNotDivisor   = errors.New("must divide")
 	errAbove        = errors.New("must not be above")
 	errPowerOfTwo   = errors.New("must be a power of two")
+	errRemoved      = errors.New("removed")
 )
 
 type lookupFunc func(name string) (string, bool)
@@ -192,6 +193,14 @@ func (r *envReader) path(name string) string {
 		return ""
 	}
 	return raw
+}
+
+func (r *envReader) refuseRemoved(removed []removedVariable) {
+	for _, variable := range removed {
+		if _, set := r.lookup(variable.name); set {
+			r.fail(variable.name, fmt.Errorf("%w, %s", errRemoved, variable.hint))
+		}
+	}
 }
 
 func (r *envReader) distinct(name, value, otherName, other string) {

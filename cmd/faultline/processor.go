@@ -41,6 +41,7 @@ const (
 type processorSetup struct {
 	Config    Config
 	NATS      natsConfig
+	Graph     graphConfig
 	Partition partitionConfig
 }
 
@@ -67,24 +68,29 @@ func prepareProcessor(current process) (*stack, *lifecycle, error) {
 }
 
 func loadProcessor(current process) (processorSetup, error) {
-	cfg, rules, cfgErr := loadRoleConfig(processorDefaults(current.Lookup))
-	nats, natsErr := loadNATS(current.Lookup, current.Hostname)
-	streams, streamsErr := loadStreams(current.Lookup)
-	partition, partitionErr := loadPartition(current.Lookup)
-	if err := errors.Join(cfgErr, natsErr, streamsErr, partitionErr); err != nil {
+	base, baseErr := loadBase(current)
+	graph, partition, processingErr := loadProcessing(current.Lookup, processorDefaults(current.Lookup), &base)
+	if err := errors.Join(baseErr, processingErr); err != nil {
 		return processorSetup{}, err
 	}
-	partition.Instance = nats.Instance
-	partition.Streams = streams
-	partition.Limits = cfg.Topology
-	partition.RulesHash = rules.Hash
-	partition.IdleAfter = cfg.Journal.IdleAfter
-	partition.RestoreBudget = restoreBudget(cfg.Topology.WorstCheckpointBytes())
 	return processorSetup{
-		Config:    cfg,
-		NATS:      nats,
+		Config:    base.Config,
+		NATS:      base.NATS,
+		Graph:     graph,
 		Partition: partition,
 	}, nil
+}
+
+func loadProcessing(lookup, graphLookup lookupFunc, base *roleBase) (graphConfig, partitionConfig, error) {
+	graph, graphErr := loadGraph(graphLookup)
+	partition, partitionErr := loadPartition(lookup)
+	partition.Instance = base.NATS.Instance
+	partition.Streams = base.Streams
+	partition.Limits = graph.Topology
+	partition.RulesHash = base.Rules.Hash
+	partition.IdleAfter = graph.IdleAfter
+	partition.RestoreBudget = restoreBudget(graph.Topology.WorstCheckpointBytes())
+	return graph, partition, errors.Join(graphErr, partitionErr)
 }
 
 func processorDefaults(lookup lookupFunc) lookupFunc {
@@ -154,20 +160,28 @@ func processorStack(setup *processorSetup, life *lifecycle, logger *slog.Logger)
 		life:   life,
 		layers: role.hooks,
 	}
-	api := httpLayer(
-		&setup.Config, tracer,
-		graphRoutes(graph, ready, setup.Config.APIResponseBudget, logger),
-		"", logger,
-	)
-	api.contributions = apiContributions(&setup.Config)
 	role.layers = []layer{
 		tracing,
-		api,
+		graphAPILayer(&setup.Config, setup.Graph.APIResponseBudget, tracer, graph, ready, "", logger),
 		conn,
 		statsLayer(role.hooks, life.Served, processorThresholds(&setup.Partition), logger),
 		observedPartition(&setup.Partition, conns, graph, life, logger),
 	}
 	return role
+}
+
+func graphAPILayer(
+	cfg *Config,
+	responseBudget int64,
+	tracer tracerSource,
+	graph *memgraph.Store,
+	ready readiness,
+	otlpProbe string,
+	logger *slog.Logger,
+) layer {
+	api := httpLayer(cfg, tracer, graphRoutes(graph, ready, responseBudget, logger), otlpProbe, logger)
+	api.contributions = apiContributions(responseBudget)
+	return api
 }
 
 func observedPartition(
@@ -199,11 +213,11 @@ func graphRoutes(graph *memgraph.Store, ready readiness, responseBudget int64, l
 	}
 }
 
-func apiContributions(cfg *Config) []contribution {
+func apiContributions(responseBudget int64) []contribution {
 	return []contribution{
 		{
 			name:  "api responses",
-			bytes: cfg.APIResponseBudget,
+			bytes: responseBudget,
 		},
 	}
 }

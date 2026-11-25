@@ -53,6 +53,7 @@ type outcome struct {
 }
 
 func TestRealMain(t *testing.T) {
+	checkpoints := t.TempDir()
 	tests := []struct {
 		Name string
 		Args process
@@ -102,6 +103,8 @@ func TestRealMain(t *testing.T) {
 					commandAll,
 				},
 				Lookup: environment(map[string]string{
+					envNATSURL:       testNATSURL,
+					envCheckpointDir: checkpoints,
 					envGraphMaxNodes: "abc",
 				}),
 			},
@@ -118,7 +121,9 @@ func TestRealMain(t *testing.T) {
 					commandAll,
 				},
 				Lookup: environment(map[string]string{
-					envMemoryLimit: "off",
+					envNATSURL:       testNATSURL,
+					envCheckpointDir: checkpoints,
+					envMemoryLimit:   "off",
 				}),
 			},
 			Want: outcome{
@@ -133,7 +138,9 @@ func TestRealMain(t *testing.T) {
 					commandAll,
 				},
 				Lookup: environment(map[string]string{
-					envMemoryLimit: "1GiB",
+					envNATSURL:       testNATSURL,
+					envCheckpointDir: checkpoints,
+					envMemoryLimit:   "1GiB",
 				}),
 			},
 			Want: outcome{
@@ -141,9 +148,10 @@ func TestRealMain(t *testing.T) {
 				Limits: []int64{
 					1 << 30,
 				},
-				Stderr: "worst-case memory exceeds the budget: 1262.5 MiB > 85% of GOMEMLIMIT 1024.0 MiB " +
+				Stderr: "worst-case memory exceeds the budget: 1347.1 MiB > 85% of GOMEMLIMIT 1024.0 MiB " +
 					"(pairing, graph and traffic 450.9 MiB, otlp requests 440.0 MiB, api responses 256.0 MiB, " +
-					"journal 64.4 MiB, batch apply 27.8 MiB, snapshots 23.5 MiB)\n",
+					"feed credit and pull 80.0 MiB, records before pubAck 60.0 MiB, batch apply 27.8 MiB, " +
+					"snapshots 23.5 MiB, publish buffer 8.0 MiB, nats connections 1.0 MiB)\n",
 			},
 		},
 	}
@@ -155,6 +163,10 @@ func TestRealMain(t *testing.T) {
 			current.ReadCgroup = noCgroup
 			current.SetMemoryLimit = limits.setLimit
 			current.Stderr = &stderr
+			current.Hostname = podHostname
+			if tt.Want.Code == exitConfig {
+				assertAllRefusedBeforeItsStack(t, current)
+			}
 			code := realMain(current)
 			got := outcome{
 				Code:   code,

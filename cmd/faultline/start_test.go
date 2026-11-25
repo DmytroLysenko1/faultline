@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
+	"slices"
 	"strings"
 	"testing"
 
@@ -49,9 +51,11 @@ func freeAddress(t *testing.T) string {
 func startWith(t *testing.T, values map[string]string) (int, []map[string]any) {
 	t.Helper()
 	values[envMemoryLimit] = tinyLimit
+	values[envNATSURL] = testNATSURL
+	values[envCheckpointDir] = t.TempDir()
 	var stderr bytes.Buffer
 	limits := &recordedLimit{}
-	code := realMain(process{
+	current := process{
 		Args: []string{
 			commandAll,
 		},
@@ -59,11 +63,32 @@ func startWith(t *testing.T, values map[string]string) (int, []map[string]any) {
 		ReadCgroup:     noCgroup,
 		SetMemoryLimit: limits.setLimit,
 		Stderr:         &stderr,
-	})
+		Hostname:       podHostname,
+	}
+	assertTheHTTPLayerRefusesTheBusyPort(t, current)
+	code := realMain(current)
 	if diff := cmp.Diff([]int64{tinyLimitBytes}, limits.set); diff != "" {
 		t.Errorf("memory limit set (-want +got):\n%s", diff)
 	}
 	return code, jsonLines(t, stderr.String())
+}
+
+func assertTheHTTPLayerRefusesTheBusyPort(t *testing.T, current process) {
+	t.Helper()
+	current.SetMemoryLimit = (&recordedLimit{}).setLimit
+	current.Stderr = io.Discard
+	role, _, err := prepareAll(current)
+	if err != nil {
+		t.Fatalf("prepareAll: %v", err)
+	}
+	api := role.layers[slices.IndexFunc(role.layers, func(candidate layer) bool { return candidate.name == layerHTTP })]
+	listener, err := api.unit.(*apiUnit).listen(t.Context())
+	if err == nil {
+		if closeErr := listener.Close(); closeErr != nil {
+			t.Errorf("close listener: %v", closeErr)
+		}
+		t.Fatalf("the http layer of all takes both ports, realMain would go on to dial NATS")
+	}
 }
 
 func jsonLines(t *testing.T, output string) []map[string]any {

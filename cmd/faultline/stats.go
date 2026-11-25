@@ -74,7 +74,7 @@ func (r *statsReporter) report(ctx context.Context, final bool) {
 	logCtx := context.WithoutCancel(ctx)
 	snapshot, err := r.snapshots.Latest(logCtx)
 	if err != nil {
-		r.logger.WarnContext(logCtx, "pipeline.stats_failed", "error", err)
+		r.logger.WarnContext(logCtx, eventStatsFailed, "error", err)
 		return
 	}
 	timings := r.timings.TakeTimings()

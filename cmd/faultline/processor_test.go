@@ -343,7 +343,7 @@ func TestThePartitionFillsTheSample(t *testing.T) {
 		t.Errorf("the role's partition layer has no stats groups or memory contributions")
 	}
 
-	empty := newPartitionUnit(&partitionConfig{}, nil, &memgraph.Store{}, nil, nil)
+	empty := newPartitionUnit(&partitionConfig{}, nil, &memgraph.Store{}, nil, testLogger(&logBuffer{}))
 	untouched := selfalert.Sample{
 		Now: now,
 	}

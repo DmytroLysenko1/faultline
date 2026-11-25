@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/selfalert"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/journal"
 )
 
@@ -40,30 +41,51 @@ func prepareIngester(current process) (*stack, *lifecycle, error) {
 	return role, life, nil
 }
 
+type roleBase struct {
+	Config  Config
+	Rules   routeRules
+	NATS    natsConfig
+	Streams natsjs.Topology
+}
+
 func loadIngester(current process) (ingesterSetup, error) {
-	cfg, rules, cfgErr := loadRoleConfig(current.Lookup)
-	nats, natsErr := loadNATS(current.Lookup, current.Hostname)
-	topology, streamsErr := loadStreams(current.Lookup)
+	base, baseErr := loadBase(current)
 	publish, publishErr := loadPublish(current.Lookup)
-	if err := errors.Join(cfgErr, natsErr, streamsErr, publishErr); err != nil {
+	if err := errors.Join(baseErr, publishErr); err != nil {
 		return ingesterSetup{}, err
 	}
-	cfg.RouteRules = rules.Rules
 	return ingesterSetup{
-		Config: cfg,
-		NATS:   nats,
-		Journal: journal.Options{
-			Tenant:         publish.Tenant,
-			Topology:       topology,
-			RulesVersion:   rules.Hash,
-			PublishTimeout: publish.PublishTimeout,
-			Clock:          systemClock{},
-		},
+		Config:  base.Config,
+		NATS:    base.NATS,
+		Journal: journalOptions(&base, &publish),
 	}, nil
 }
 
+func loadBase(current process) (roleBase, error) {
+	cfg, rules, cfgErr := loadRoleConfig(current.Lookup)
+	nats, natsErr := loadNATS(current.Lookup, current.Hostname)
+	streams, streamsErr := loadStreams(current.Lookup)
+	cfg.RouteRules = rules.Rules
+	return roleBase{
+		Config:  cfg,
+		Rules:   rules,
+		NATS:    nats,
+		Streams: streams,
+	}, errors.Join(cfgErr, natsErr, streamsErr)
+}
+
+func journalOptions(base *roleBase, publish *publishConfig) journal.Options {
+	return journal.Options{
+		Tenant:         publish.Tenant,
+		Topology:       base.Streams,
+		RulesVersion:   base.Rules.Hash,
+		PublishTimeout: publish.PublishTimeout,
+		Clock:          systemClock{},
+	}
+}
+
 func loadRoleConfig(lookup lookupFunc) (Config, routeRules, error) {
-	cfg, err := Load(lookup)
+	cfg, err := loadShared(lookup)
 	if err != nil {
 		return Config{}, routeRules{}, err
 	}

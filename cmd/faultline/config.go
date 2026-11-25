@@ -99,33 +99,91 @@ type Config struct {
 	SelfTracingEndpoint string
 }
 
+type graphConfig struct {
+	Topology          topology.Limits
+	APIResponseBudget int64
+	IdleAfter         time.Duration
+}
+
 func Load(lookup lookupFunc) (Config, error) {
 	reader := newEnvReader(lookup)
+	cfg := sharedConfig(reader)
+	cfg.Journal = journalLimits(reader)
+	cfg.Topology = topologyLimits(reader)
+	cfg.APIResponseBudget = responseBudget(reader)
+	graphChecks(reader, &graphConfig{
+		Topology:          cfg.Topology,
+		APIResponseBudget: cfg.APIResponseBudget,
+		IdleAfter:         cfg.Journal.IdleAfter,
+	})
+	return cfg, errors.Join(reader.errs...)
+}
+
+type removedVariable struct {
+	name string
+	hint string
+}
+
+func loadShared(lookup lookupFunc) (Config, error) {
+	reader := newEnvReader(lookup)
+	cfg := sharedConfig(reader)
+	reader.refuseRemoved(removedVariables())
+	return cfg, errors.Join(reader.errs...)
+}
+
+func removedVariables() []removedVariable {
+	return []removedVariable{
+		{
+			name: envJournalMaxBytes,
+			hint: "use " + envFeedMaxBytes,
+		},
+		{
+			name: envJournalMaxBatches,
+			hint: "the feed is bounded by " + envFeedMaxBytes + " alone",
+		},
+	}
+}
+
+func loadGraph(lookup lookupFunc) (graphConfig, error) {
+	reader := newEnvReader(lookup)
+	cfg := graphConfig{
+		Topology:          topologyLimits(reader),
+		APIResponseBudget: responseBudget(reader),
+		IdleAfter:         idleAfter(reader),
+	}
+	graphChecks(reader, &cfg)
+	return cfg, errors.Join(reader.errs...)
+}
+
+func sharedConfig(reader *envReader) Config {
 	cfg := Config{
-		OTLPAddr: reader.address(envOTLPAddr, defaultOTLPAddr),
-		APIAddr:  reader.address(envAPIAddr, defaultAPIAddr),
-		Journal:  journalLimits(reader),
-		Topology: topologyLimits(reader),
-		APIResponseBudget: reader.size(envAPIResponseBudget, connectapi.DefaultResponseBudget, minAPIResponseBudget,
-			maxAPIResponseBudget),
+		OTLPAddr:            reader.address(envOTLPAddr, defaultOTLPAddr),
+		APIAddr:             reader.address(envAPIAddr, defaultAPIAddr),
 		RouteRulesFile:      reader.path(envRouteRulesFile),
 		LogLevel:            reader.level(envLogLevel, slog.LevelInfo),
 		SelfTracingEndpoint: reader.endpoint(envSelfTracing),
 	}
-	crossCheck(reader, &cfg)
-	return cfg, errors.Join(reader.errs...)
+	reader.distinct(envSelfTracing, cfg.SelfTracingEndpoint, envOTLPAddr, cfg.OTLPAddr)
+	return cfg
 }
 
-func crossCheck(reader *envReader, cfg *Config) {
+func responseBudget(reader *envReader) int64 {
+	return reader.size(envAPIResponseBudget, connectapi.DefaultResponseBudget, minAPIResponseBudget, maxAPIResponseBudget)
+}
+
+func idleAfter(reader *envReader) time.Duration {
+	return reader.duration(envIdleAdvanceAfter, defaultIdleAdvanceAfter, minIdleAdvanceAfter, maxIdleAdvanceAfter)
+}
+
+func graphChecks(reader *envReader, cfg *graphConfig) {
 	topology := &cfg.Topology
 	reader.notBelow(envTombstoneTTL, topology.TombstoneTTL, envPairingTTL, topology.PairingTTL)
-	reader.distinct(envSelfTracing, cfg.SelfTracingEndpoint, envOTLPAddr, cfg.OTLPAddr)
 	reader.atLeast(envAPIResponseBudget, cfg.APIResponseBudget, worstResponseAtLimit,
 		graphservice.ResponseWeight(topology.MaxNodes, topology.MaxEdges))
 	reader.divides(envWindowSize, topology.Windows.Size, windowsDivide)
 	reader.valid(envWindowSize, topology.Windows.Validate())
 	reader.notAbove(envEarlyFirePeriod, topology.EarlyFirePeriod, envWindowSize, topology.Windows.Size)
-	reader.notBelow(envIdleAdvanceAfter, cfg.Journal.IdleAfter, envEarlyFirePeriod, topology.EarlyFirePeriod)
+	reader.notBelow(envIdleAdvanceAfter, cfg.IdleAfter, envEarlyFirePeriod, topology.EarlyFirePeriod)
 	reader.powerOfTwo(envSketchEntries, int64(topology.SketchEntries))
 }
 
@@ -133,7 +191,7 @@ func journalLimits(reader *envReader) memjournal.Limits {
 	return memjournal.Limits{
 		MaxBytes:   reader.size(envJournalMaxBytes, defaultJournalMaxBytes, minJournalMaxBytes, maxJournalMaxBytes),
 		MaxBatches: reader.count(envJournalMaxBatches, defaultJournalMaxBatches, maxJournalMaxBatches),
-		IdleAfter:  reader.duration(envIdleAdvanceAfter, defaultIdleAdvanceAfter, minIdleAdvanceAfter, maxIdleAdvanceAfter),
+		IdleAfter:  idleAfter(reader),
 	}
 }
 

@@ -26,14 +26,6 @@ func commandOf(args []string) (command, bool) {
 	return selected, found
 }
 
-func runAll(current process) int {
-	setup, err := start(current)
-	if err != nil {
-		return fail(current.Stderr, err)
-	}
-	return serve(current.Stderr, &setup)
-}
-
 func realMain(current process) int {
 	selected, found := commandOf(current.Args)
 	if !found {

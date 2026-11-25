@@ -403,11 +403,6 @@ linters:
         linters:
           - forbidigo
         text: only launchstack.go registers the stop signals
-      - path: cmd/faultline/app\.go
-        source: ^\tctx, stop := signal\.NotifyContext\(context\.Background\(\), os\.Interrupt, syscall\.SIGTERM\)$
-        linters:
-          - forbidigo
-        text: only launchstack.go registers the stop signals
       - path: (_test\.go$|internal/infrastructure/natsjs/checkpoint/)
         linters:
           - forbidigo

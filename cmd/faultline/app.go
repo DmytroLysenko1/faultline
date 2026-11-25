@@ -1,14 +1,9 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
-	"os"
-	"os/signal"
-	"syscall"
 )
 
 const (
@@ -71,34 +66,6 @@ func enforceMemoryBudget(current process, parts []contribution) (memorySetting, 
 		return memorySetting{}, err
 	}
 	return memory, nil
-}
-
-func serve(stderr io.Writer, setup *startup) int {
-	logger := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{
-		Level: setup.Config.LogLevel,
-	}))
-	logger.Info("config.memory_limit", "bytes", setup.Memory.Bytes, "source", setup.Memory.Source)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	if err := launch(ctx, stop, setup, logger); err != nil {
-		return exitFailure
-	}
-	return exitOK
-}
-
-func launch(ctx context.Context, stop context.CancelFunc, setup *startup, logger *slog.Logger) error {
-	sys, err := newSystem(ctx, &setup.Config, logger)
-	if err != nil {
-		logger.Error("lifecycle.start_failed", "error", err)
-		return err
-	}
-	open, err := listen(ctx, &setup.Config)
-	if err != nil {
-		err = errors.Join(err, discardTracing(ctx, sys.tracing))
-		logger.Error("lifecycle.start_failed", "error", err)
-		return err
-	}
-	return run(ctx, stop, sys, open, defaultShutdownBudget())
 }
 
 func fail(stderr io.Writer, reason error) int {
