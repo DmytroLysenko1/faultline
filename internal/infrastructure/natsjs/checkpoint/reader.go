@@ -86,6 +86,10 @@ func readContext(ctx context.Context, size uint64) (context.Context, context.Can
 	return context.WithTimeout(ctx, readBudget(size))
 }
 
+func ReadTime(size int64) time.Duration {
+	return time.Duration((size+defaultReadRate-1)/defaultReadRate) * time.Second
+}
+
 func readBudget(size uint64) time.Duration {
 	return time.Duration(float64(size)/defaultReadRate*float64(time.Second)) + readSlack
 }

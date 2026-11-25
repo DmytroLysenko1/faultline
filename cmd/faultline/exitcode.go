@@ -15,6 +15,7 @@ const (
 	eventStartCanceled = "lifecycle.start_canceled"
 	eventSignal        = "lifecycle.signal"
 	eventLeaseLost     = "lease.lost"
+	eventRestoreFailed = "checkpoint.restore_failed"
 	reasonLeaseLost    = "lease_lost"
 	stageStopping      = "stopping"
 )
@@ -116,7 +117,36 @@ func independentStartFailure(seen *observed) bool {
 }
 
 func startFailureOutcome(seen *observed) exitOutcome {
-	return failureOutcome(seen, reasonStartFailed, seen.err)
+	outcome := failureOutcome(seen, reasonStartFailed, seen.err)
+	failure, found := errors.AsType[*restoreError](seen.err)
+	if !found {
+		return outcome
+	}
+	outcome.event = eventRestoreFailed
+	outcome.attrs = restoreAttrs(stageOf(seen), failure, seen.err)
+	return outcome
+}
+
+func restoreAttrs(stage string, failure *restoreError, err error) []slog.Attr {
+	return append([]slog.Attr{
+		slog.String("stage", stage),
+		causeAfterStage(stage, err),
+		slog.Bool("discardable", failure.discardable),
+		slog.Int("attempts", failure.attempts),
+	}, hintAttrs(failure.hint)...)
+}
+
+func causeAfterStage(stage string, err error) slog.Attr {
+	cause := errorAfterStage(stage, err)
+	cause.Key = "cause"
+	return cause
+}
+
+func hintAttrs(hint string) []slog.Attr {
+	if hint == "" {
+		return nil
+	}
+	return []slog.Attr{slog.String("hint", hint)}
 }
 
 func unexplainedOutcome(seen *observed) exitOutcome {

@@ -13,6 +13,8 @@ const (
 	stateStarting       lifecycleState = "starting"
 	stateConnecting     lifecycleState = "connecting"
 	stateWaitingStreams lifecycleState = "waiting_streams"
+	stateWaitingLease   lifecycleState = "waiting_lease"
+	stateRestoring      lifecycleState = "restoring"
 	stateServing        lifecycleState = "serving"
 	stateDraining       lifecycleState = "draining"
 	stateAborting       lifecycleState = "aborting"
@@ -30,6 +32,8 @@ const (
 	reasonDialing              = "dialing"
 	reasonStreamsNotReady      = "streams_not_ready"
 	reasonJetStreamUnavailable = "jetstream_unavailable"
+	reasonAcquiring            = "acquiring"
+	reasonLeaseAcquired        = "lease_acquired"
 )
 
 type lifecycle struct {

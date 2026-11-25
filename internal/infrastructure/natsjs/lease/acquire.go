@@ -64,7 +64,7 @@ func claim(
 		}
 		if err := retry.Sleep(ctx, started+options.RetryEvery-lease.now()); err != nil {
 			lease.abandon(ctx)
-			return nil, fmt.Errorf("acquire lease %s: %w", lease.key, err)
+			return nil, fmt.Errorf("acquire lease %s: %w", lease.key, errors.Join(err, lease.attempt))
 		}
 	}
 }
@@ -89,6 +89,7 @@ func (l *Lease) claimOnce(ctx context.Context, sent time.Duration) bool {
 		l.claimed(sent, revision)
 		return true
 	}
+	l.attempt = err
 	if !errors.Is(err, jetstream.ErrKeyExists) || !l.reclaimOwnWrite(attempt) {
 		return false
 	}

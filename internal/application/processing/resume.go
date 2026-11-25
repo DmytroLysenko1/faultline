@@ -112,13 +112,17 @@ func (r *ResumeRequest) discarded(ctx context.Context, store checkpointResumer, 
 	}
 	staked, err := store.Discard(ctx, *r.Discard)
 	if err != nil {
-		return Resumed{}, fmt.Errorf("discard the checkpoint of partition %d: %w", r.Partition, err)
+		return Resumed{}, fmt.Errorf("discard the checkpoint of partition %d: %w", r.Partition, errors.Join(err, cause))
 	}
 	return Resumed{
 		Builder:      fresh.Builder,
 		Staked:       staked,
 		DiscardCause: cause,
 	}, nil
+}
+
+func ResumeBudget(read time.Duration) time.Duration {
+	return movedAttempts*read + (movedAttempts-1)*movedPause
 }
 
 func (r *ResumeRequest) restoreRequest() *restoreRequest {

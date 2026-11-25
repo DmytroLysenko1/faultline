@@ -125,6 +125,15 @@ type Lease struct {
 	lost      chan struct{}
 	markLost  func()
 	counters  counters
+	attempt   error
+}
+
+type HeldError struct {
+	Holder string
+}
+
+func (e *HeldError) Error() string {
+	return "lease held by " + e.Holder
 }
 
 func newLease(store keyValue, deleteKey deleteAt, maxAge time.Duration, options *Options, nonce string) *Lease {
@@ -199,7 +208,13 @@ func (l *Lease) reclaimOwnWrite(ctx context.Context) bool {
 
 func (l *Lease) ownRevision(ctx context.Context) (uint64, bool) {
 	found, err := l.store.Get(ctx, l.key)
-	if err != nil || !bytes.Equal(found.Value(), l.token) {
+	if err != nil {
+		return 0, false
+	}
+	if !bytes.Equal(found.Value(), l.token) {
+		l.attempt = &HeldError{
+			Holder: string(found.Value()),
+		}
 		return 0, false
 	}
 	return found.Revision(), true

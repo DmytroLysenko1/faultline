@@ -143,7 +143,9 @@ SHUTDOWN_NAMES := TestShutdownOrder TestDrainIncompleteReportsTheJournalRemainde
 	TestALateUnitFailureIsCountedOnce TestAStuckLayerStopIsAbandonedAndNamed TestASecondSignalIsLeftToTheSystem \
 	TestIngesterStopOrder TestAForcedOTLPStopIsAWarningOnlyWhenItsGoroutineExits \
 	TestASecondSignalReachesTheSystemThroughTheIngesterWiring \
-	TestOneErrorAndOneLeaseLineInEveryOrder TestTwoExitsBeforeTheSnapshotLogOneErrorAndOneLeaseLine
+	TestOneErrorAndOneLeaseLineInEveryOrder TestTwoExitsBeforeTheSnapshotLogOneErrorAndOneLeaseLine \
+	TestAPartitionServesAndReleasesItsLeaseOnSigterm TestTheDrainWaitsForThePipelineThenCancelsItThenGivesUp \
+	TestTheReleaseStepSeversBeforeItCancelsTheRenewalOnlyWhenAWriterWasAbandoned
 SHUTDOWN_TESTS := ^($(subst $(space),|,$(strip $(SHUTDOWN_NAMES))))$$
 
 BENCH_DIR := tmp/bench

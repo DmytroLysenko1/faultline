@@ -198,10 +198,29 @@ func (u *uploader) takeQueued() {
 }
 
 func (u *uploader) queueAtStop(next *spool) {
-	if next.final {
-		u.queued = next
+	if u.finalQueued() && !next.final {
+		u.giveUp(next)
 		return
 	}
+	if u.queued != nil {
+		u.displace(u.queued)
+	}
+	u.queued = next
+}
+
+func (u *uploader) finalQueued() bool {
+	return u.queued != nil && u.queued.final
+}
+
+func (u *uploader) displace(old *spool) {
+	if old.final {
+		u.release(old)
+		return
+	}
+	u.giveUp(old)
+}
+
+func (u *uploader) giveUp(next *spool) {
 	u.release(next)
 	u.store.stats.skip(skipNotStarted)
 }

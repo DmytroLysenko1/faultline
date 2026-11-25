@@ -48,12 +48,30 @@ type stopRule struct {
 }
 
 var stopRules = []stopRule{
-	{target: processing.ErrFeedClosed, reason: StopClosed},
-	{target: processing.ErrLeaseLost, reason: StopLeaseLost},
-	{target: ErrStreamIdentity, reason: StopIdentity},
-	{target: ErrUnknownRecordVersion, reason: StopUnknownVersion},
-	{target: ErrSystemicCorruption, reason: StopSystemicCorruption},
-	{target: ErrDeadLetterRejected, reason: StopDeadLetterRejected},
+	{
+		target: processing.ErrFeedClosed,
+		reason: StopClosed,
+	},
+	{
+		target: processing.ErrLeaseLost,
+		reason: StopLeaseLost,
+	},
+	{
+		target: ErrStreamIdentity,
+		reason: StopIdentity,
+	},
+	{
+		target: ErrUnknownRecordVersion,
+		reason: StopUnknownVersion,
+	},
+	{
+		target: ErrSystemicCorruption,
+		reason: StopSystemicCorruption,
+	},
+	{
+		target: ErrDeadLetterRejected,
+		reason: StopDeadLetterRejected,
+	},
 }
 
 func stopReasonOf(cause error) StopReason {
@@ -89,6 +107,15 @@ type Stats struct {
 	HeartbeatsUnconditional  uint64
 	PurgedThrough            uint64
 	PurgeFailures            uint64
+}
+
+func (s *Stats) Unreleased() uint64 {
+	handed := s.DeliveredBatches + s.Heartbeats
+	return handed - min(s.Released, handed)
+}
+
+func (s *Stats) CaughtUp() bool {
+	return s.Read > 0 && s.PendingRecords == 0 && s.Held == 0
 }
 
 type counters struct {
@@ -154,12 +181,13 @@ func (c *counters) handed(heartbeat bool) {
 }
 
 func (c *counters) snapshot() Stats {
+	released := c.released.Load()
 	return Stats{
 		Read:                     c.reads.Load(),
 		DeliveredBatches:         c.delivered.Load(),
 		Heartbeats:               c.heartbeats.Load(),
 		Held:                     c.held.Load(),
-		Released:                 c.released.Load(),
+		Released:                 released,
 		ConsumerResets:           c.resets.Load(),
 		IdentityCheckFailures:    c.identityFailures.Load(),
 		SequenceGapRecords:       c.gaps.Load(),

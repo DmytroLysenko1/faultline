@@ -412,6 +412,7 @@ func TestOnlyOneSideReportsAClosedConnection(t *testing.T) {
 			stopFirst := []error{}
 			if tt.args {
 				stopFirst = append(stopFirst, closedOrNil(watched.claimClosedBefore()))
+				close(watched.stopping)
 			}
 
 			watchErr := watched.watch()

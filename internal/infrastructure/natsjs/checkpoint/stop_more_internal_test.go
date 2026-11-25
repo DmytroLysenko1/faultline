@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/nats-io/nats.go"
+	"github.com/samber/lo"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/processing"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/natsjstest"
@@ -41,7 +42,11 @@ func spoolStore(t *testing.T) *Store {
 	if err := os.WriteFile(filepath.Join(dir, spoolName), []byte("image"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return &Store{options: Options{SpoolDir: dir}}
+	return &Store{
+		options: Options{
+			SpoolDir: dir,
+		},
+	}
 }
 
 func TestASpoolTakenAfterTheStopIsNeverUploaded(t *testing.T) {
@@ -57,13 +62,35 @@ func TestASpoolTakenAfterTheStopIsNeverUploaded(t *testing.T) {
 		args bool
 		want want
 	}{
-		{name: "an ordinary spool is given up and frees its slot", want: want{NotStarted: 1}},
-		{name: "the final waits for its plan", args: true, want: want{Slots: 1, Queued: true, OnDisk: true}},
+		{
+			name: "an ordinary spool waits for the plan as the stop candidate",
+			want: want{
+				Slots:  1,
+				Queued: true,
+				OnDisk: true,
+			},
+		},
+		{
+			name: "the final waits for its plan",
+			args: true,
+			want: want{
+				Slots:  1,
+				Queued: true,
+				OnDisk: true,
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			up := &uploader{store: spoolStore(t), stopping: closedStopping(), slots: 1}
-			uploaded := up.taken(t.Context(), t.Context(), &spool{name: spoolName, final: tt.args})
+			up := &uploader{
+				store:    spoolStore(t),
+				stopping: closedStopping(),
+				slots:    1,
+			}
+			uploaded := up.taken(t.Context(), t.Context(), &spool{
+				name:  spoolName,
+				final: tt.args,
+			})
 			_, statErr := os.Stat(filepath.Join(up.store.options.SpoolDir, spoolName))
 			got := want{Uploaded: uploaded, Slots: up.slots, Queued: up.queued != nil,
 				NotStarted: up.store.stats.skipped[skipNotStarted].Load(), OnDisk: statErr == nil}
@@ -74,9 +101,110 @@ func TestASpoolTakenAfterTheStopIsNeverUploaded(t *testing.T) {
 	}
 }
 
+func TestOnlyOneStopCandidateHoldsASlotAndTheFinalWins(t *testing.T) {
+	const (
+		ordinaryName = "ordinary.spool"
+		finalName    = "final.spool"
+	)
+	type want struct {
+		QueuedName string
+		Slots      int
+		NotStarted uint64
+		OnDisk     []string
+	}
+	tests := []struct {
+		name  string
+		order []bool
+		want  want
+	}{
+		{
+			name:  "a final after an ordinary frees the ordinary",
+			order: []bool{false, true},
+			want: want{
+				QueuedName: finalName,
+				Slots:      1,
+				NotStarted: 1,
+				OnDisk:     []string{finalName},
+			},
+		},
+		{
+			name:  "an ordinary after a final is given up",
+			order: []bool{true, false},
+			want: want{
+				QueuedName: finalName,
+				Slots:      1,
+				NotStarted: 1,
+				OnDisk:     []string{finalName},
+			},
+		},
+		{
+			name:  "a newer ordinary replaces the older one",
+			order: []bool{false, false},
+			want: want{
+				QueuedName: ordinaryName + "2",
+				Slots:      1,
+				NotStarted: 1,
+				OnDisk:     []string{ordinaryName + "2"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			up := &uploader{
+				store: &Store{
+					options: Options{
+						SpoolDir: dir,
+					},
+				},
+				stopping: closedStopping(),
+				slots:    len(tt.order),
+			}
+			names := map[bool]string{
+				true:  finalName,
+				false: ordinaryName,
+			}
+			for index, final := range tt.order {
+				name := names[final]
+				if index > 0 && !final && !tt.order[0] {
+					name += "2"
+				}
+				if err := os.WriteFile(filepath.Join(dir, name), []byte("image"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				up.queueAtStop(&spool{
+					name:  name,
+					final: final,
+				})
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := want{
+				Slots:      up.slots,
+				NotStarted: up.store.stats.skipped[skipNotStarted].Load(),
+				OnDisk: lo.Map(entries, func(entry os.DirEntry, _ int) string {
+					return entry.Name()
+				}),
+			}
+			if up.queued != nil {
+				got.QueuedName = up.queued.name
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("stop candidate (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestAFinalThePlanSkipsFreesItsSlotAndSpool(t *testing.T) {
 	up := &uploader{store: spoolStore(t), stopping: closedStopping(), slots: 1,
-		queued: &spool{name: spoolName, final: true, size: mebibyte}, stopAt: time.Now()}
+		queued: &spool{
+			name:  spoolName,
+			final: true,
+			size:  mebibyte,
+		}, stopAt: time.Now()}
 	up.store.options.UploadRate = oneMiBPerSec
 
 	up.startQueued(t.Context(), t.Context())
@@ -87,18 +215,38 @@ func TestAFinalThePlanSkipsFreesItsSlotAndSpool(t *testing.T) {
 }
 
 func TestOnlyAMetaThisUploadMaySendIsPurged(t *testing.T) {
-	up := &uploader{store: &Store{}}
-	ref := objectRef{Name: leftName}
+	up := &uploader{
+		store: &Store{},
+	}
+	ref := objectRef{
+		Name: leftName,
+	}
 	tests := []struct {
 		name     string
 		found    metaFound
 		metaSent bool
 		want     string
 	}{
-		{name: "its own meta", found: metaOwn, want: up.store.metaSubject(leftName)},
-		{name: "no meta yet but one was sent", found: metaNone, metaSent: true, want: up.store.metaSubject(leftName)},
-		{name: "no meta and none sent", found: metaNone},
-		{name: "another object's meta of that name", found: metaForeign, metaSent: true},
+		{
+			name:  "its own meta",
+			found: metaOwn,
+			want:  up.store.metaSubject(leftName),
+		},
+		{
+			name:     "no meta yet but one was sent",
+			found:    metaNone,
+			metaSent: true,
+			want:     up.store.metaSubject(leftName),
+		},
+		{
+			name:  "no meta and none sent",
+			found: metaNone,
+		},
+		{
+			name:     "another object's meta of that name",
+			found:    metaForeign,
+			metaSent: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -115,8 +263,15 @@ func TestADeadParentIsAStopOnlyWhenTheStopKilledIt(t *testing.T) {
 		stopped bool
 		want    error
 	}{
-		{name: "the upload budget ran out", want: context.DeadlineExceeded},
-		{name: "the cut edge fired", stopped: true, want: errNoTimeLeft},
+		{
+			name: "the upload budget ran out",
+			want: context.DeadlineExceeded,
+		},
+		{
+			name:    "the cut edge fired",
+			stopped: true,
+			want:    errNoTimeLeft,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -213,7 +368,9 @@ func (w *world) casOutcome(t *testing.T) casOutcome {
 func TestAFinalWhosePointerWriteGotNoAnswerAtTheStopIsKeptAndLeft(t *testing.T) {
 	w := startWorld(t)
 	sink, _ := w.started(t)
-	script := &pointerScript{write: natsjstest.Drop()}
+	script := &pointerScript{
+		write: natsjstest.Drop(),
+	}
 	script.dropReads.Store(true)
 	w.scripted(script)
 	if err := spoolFinal(t, sink, firstPosition, checkpointImage(t)); err != nil {
@@ -225,7 +382,13 @@ func TestAFinalWhosePointerWriteGotNoAnswerAtTheStopIsKeptAndLeft(t *testing.T) 
 
 	w.closeAfter(t, casSettleStop)
 
-	want := casOutcome{Unknown: 1, LeftAtStop: 1, FailedCAS: 1, FinalSkipped: 1, Objects: 1}
+	want := casOutcome{
+		Unknown:      1,
+		LeftAtStop:   1,
+		FailedCAS:    1,
+		FinalSkipped: 1,
+		Objects:      1,
+	}
 	if diff := cmp.Diff(want, w.casOutcome(t)); diff != "" {
 		t.Errorf("outcome (-want +got):\n%s", diff)
 	}
@@ -235,7 +398,10 @@ func TestAFinalWhosePointerWriteGotNoAnswerAtTheStopIsKeptAndLeft(t *testing.T) 
 func TestARetryOfASentWriteWithNoTimeLeftWaitsInsteadOfDropping(t *testing.T) {
 	w := startWorld(t)
 	sink, _ := w.started(t)
-	script := &pointerScript{write: natsjstest.Drop(), holdRead: make(chan time.Time, 1)}
+	script := &pointerScript{
+		write:    natsjstest.Drop(),
+		holdRead: make(chan time.Time, 1),
+	}
 	w.scripted(script)
 	if err := spoolCheckpoint(t, sink, firstPosition, checkpointImage(t)); err != nil {
 		t.Fatalf("spool: %v", err)
@@ -257,7 +423,9 @@ func TestARetryOfASentWriteWithNoTimeLeftWaitsInsteadOfDropping(t *testing.T) {
 func TestAnUnknownFinalTheStopFindsInThePointerIsCountedAsAFinal(t *testing.T) {
 	w := startWorld(t)
 	sink, _ := w.started(t)
-	script := &pointerScript{write: natsjstest.LoseReply()}
+	script := &pointerScript{
+		write: natsjstest.LoseReply(),
+	}
 	script.dropReads.Store(true)
 	w.scripted(script)
 	if err := spoolFinal(t, sink, firstPosition, checkpointImage(t)); err != nil {
@@ -270,7 +438,12 @@ func TestAnUnknownFinalTheStopFindsInThePointerIsCountedAsAFinal(t *testing.T) {
 
 	w.closeAfter(t, stopWithin)
 
-	want := casOutcome{Unknown: 1, FailedCAS: 1, Finals: 1, Objects: 1}
+	want := casOutcome{
+		Unknown:   1,
+		FailedCAS: 1,
+		Finals:    1,
+		Objects:   1,
+	}
 	if diff := cmp.Diff(want, w.casOutcome(t)); diff != "" {
 		t.Errorf("outcome (-want +got):\n%s", diff)
 	}
@@ -280,7 +453,9 @@ func TestAnUnknownFinalTheStopFindsInThePointerIsCountedAsAFinal(t *testing.T) {
 func TestAWaitingListCutByTheStopIsAStopNotAFailure(t *testing.T) {
 	w := startWorld(t)
 	sink, _ := w.started(t)
-	script := &pointerScript{write: natsjstest.Drop()}
+	script := &pointerScript{
+		write: natsjstest.Drop(),
+	}
 	script.dropReads.Store(true)
 	w.scripted(script)
 	w.spoolAndSettle(t, sink, firstPosition, func(stats *Stats) bool {
@@ -326,7 +501,11 @@ func TestAVerifyThatNoLongerFitsIsDroppedForTheQueuedFinal(t *testing.T) {
 
 	w.closeAfter(t, bothFitStop)
 
-	want := stopOutcome{Committed: 1, Finals: 1, Stopped: 1}
+	want := stopOutcome{
+		Committed: 1,
+		Finals:    1,
+		Stopped:   1,
+	}
 	if diff := cmp.Diff(want, w.outcome(retention), cmpEmptyAsNil()); diff != "" {
 		t.Errorf("outcome (-want +got):\n%s", diff)
 	}
@@ -394,7 +573,9 @@ func TestSpoolsLeftAtATerminalEndAreCountedAsNotStarted(t *testing.T) {
 	store.done = make(chan struct{})
 	up := &uploader{store: store, spools: make(chan spool, spoolSlots), exited: make(chan struct{}), slots: 1,
 		cancels: [edges]func(){func() {}, func() {}, func() {}}}
-	up.spools <- spool{name: spoolName}
+	up.spools <- spool{
+		name: spoolName,
+	}
 
 	up.exit()
 
@@ -440,7 +621,10 @@ func TestABeginWithACanceledContextLeavesNoSpool(t *testing.T) {
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
 	for name, begin := range map[string]func(context.Context, *processing.CheckpointMeta) (
-		processing.CheckpointWriter, error){"Begin": sink.Begin, "BeginOnStop": sink.BeginOnStop} {
+		processing.CheckpointWriter, error){
+		"Begin":       sink.Begin,
+		"BeginOnStop": sink.BeginOnStop,
+	} {
 		if _, err := begin(canceled, spoolAt(firstPosition)); !errors.Is(err, context.Canceled) {
 			t.Errorf("%s with a canceled context = %v, want the cancel", name, err)
 		}

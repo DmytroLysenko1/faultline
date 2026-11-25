@@ -57,7 +57,11 @@ func TestResumeStakesWhatLatestFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
-	want := processing.Staked{After: last.Position, ReceivedAt: last.ReceivedAt, Created: last.StreamCreated}
+	want := processing.Staked{
+		After:      last.Position,
+		ReceivedAt: last.ReceivedAt,
+		Created:    last.StreamCreated,
+	}
 	if diff := gocmp.Diff(want, resumed.Staked); diff != "" {
 		t.Errorf("staked (-want +got):\n%s", diff)
 	}
@@ -94,7 +98,10 @@ func resumeInBackground(ctx context.Context, store *processingtest.CheckpointSto
 	done := make(chan resumeOutcome, 1)
 	go func() {
 		resumed, err := processing.Resume(ctx, store, resumeRequest(nil))
-		done <- resumeOutcome{resumed: resumed, err: err}
+		done <- resumeOutcome{
+			resumed: resumed,
+			err:     err,
+		}
 	}()
 	return done
 }
@@ -187,22 +194,33 @@ func TestResumeDiscardsOnlyWhatTheOperatorMayLose(t *testing.T) {
 	}{
 		{
 			name: "an unusable checkpoint is discarded",
-			args: args{latest: unusableLatest()},
-			want: want{discards: 1, staked: true},
+			args: args{
+				latest: unusableLatest(),
+			},
+			want: want{
+				discards: 1,
+				staked:   true,
+			},
 		},
 		{
-			name:    "a refused store keeps its checkpoint",
-			args:    args{latest: processing.ErrCheckpointRefused},
+			name: "a refused store keeps its checkpoint",
+			args: args{
+				latest: processing.ErrCheckpointRefused,
+			},
 			wantErr: processing.ErrCheckpointRefused,
 		},
 		{
-			name:    "an unavailable store keeps its checkpoint",
-			args:    args{latest: processing.ErrCheckpointUnavailable},
+			name: "an unavailable store keeps its checkpoint",
+			args: args{
+				latest: processing.ErrCheckpointUnavailable,
+			},
 			wantErr: processing.ErrCheckpointUnavailable,
 		},
 		{
-			name:    "a lost lease keeps the checkpoint",
-			args:    args{latest: errors.Join(processing.ErrCheckpointUnusable, processing.ErrLeaseLost)},
+			name: "a lost lease keeps the checkpoint",
+			args: args{
+				latest: errors.Join(processing.ErrCheckpointUnusable, processing.ErrLeaseLost),
+			},
 			wantErr: processing.ErrLeaseLost,
 		},
 	}
@@ -219,7 +237,10 @@ func TestResumeDiscardsOnlyWhatTheOperatorMayLose(t *testing.T) {
 				t.Fatalf("Resume = %v, want %v", err, tt.wantErr)
 			}
 			_, staked := store.StakedAs()
-			got := want{discards: store.Discards(), staked: staked}
+			got := want{
+				discards: store.Discards(),
+				staked:   staked,
+			}
 			if diff := gocmp.Diff(tt.want, got, gocmp.AllowUnexported(want{})); diff != "" {
 				t.Errorf("store (-want +got):\n%s", diff)
 			}
@@ -234,7 +255,9 @@ func TestResumeStartsADiscardedPartitionEmpty(t *testing.T) {
 	store := processingtest.NewCheckpointStore(t, nil)
 	store.FailLatest(unusableLatest())
 
-	resumed, err := processing.Resume(t.Context(), store, resumeRequest(&processing.DiscardTarget{Partition: partition}))
+	resumed, err := processing.Resume(t.Context(), store, resumeRequest(&processing.DiscardTarget{
+		Partition: partition,
+	}))
 
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
@@ -249,7 +272,12 @@ func TestResumeStartsADiscardedPartitionEmpty(t *testing.T) {
 
 func TestResumeNeverStakesAnImageItFailedToRestore(t *testing.T) {
 	store := processingtest.NewCheckpointStore(t, nil)
-	store.Put(partition, &processing.CheckpointMeta{Position: processing.Position{Partition: partition, Sequence: 9}},
+	store.Put(partition, &processing.CheckpointMeta{
+		Position: processing.Position{
+			Partition: partition,
+			Sequence:  9,
+		},
+	},
 		errNotAnImage)
 
 	_, err := processing.Resume(t.Context(), store, resumeRequest(nil))
@@ -266,7 +294,9 @@ func TestResumeRefusesATargetOfAnotherPartition(t *testing.T) {
 	store := processingtest.NewCheckpointStore(t, nil)
 	store.FailLatest(unusableLatest())
 
-	_, err := processing.Resume(t.Context(), store, resumeRequest(&processing.DiscardTarget{Partition: otherPartition}))
+	_, err := processing.Resume(t.Context(), store, resumeRequest(&processing.DiscardTarget{
+		Partition: otherPartition,
+	}))
 
 	if !errors.Is(err, processing.ErrDiscardRefused) {
 		t.Fatalf("Resume = %v, want %v", err, processing.ErrDiscardRefused)
@@ -308,9 +338,21 @@ func TestResumeKeepsTheClassOfAStakeFailure(t *testing.T) {
 		args    error
 		wantErr error
 	}{
-		{name: "a lost lease", args: processing.ErrLeaseLost, wantErr: processing.ErrLeaseLost},
-		{name: "an unavailable store", args: processing.ErrCheckpointUnavailable, wantErr: processing.ErrCheckpointUnavailable},
-		{name: "a refused stake", args: processing.ErrCheckpointRefused, wantErr: processing.ErrCheckpointRefused},
+		{
+			name:    "a lost lease",
+			args:    processing.ErrLeaseLost,
+			wantErr: processing.ErrLeaseLost,
+		},
+		{
+			name:    "an unavailable store",
+			args:    processing.ErrCheckpointUnavailable,
+			wantErr: processing.ErrCheckpointUnavailable,
+		},
+		{
+			name:    "a refused stake",
+			args:    processing.ErrCheckpointRefused,
+			wantErr: processing.ErrCheckpointRefused,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -336,7 +378,12 @@ func TestResumeLatestsAgainWhenTheStakeFindsThePointerMoved(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		store := committedStore(t)
 		store.FailStake(processing.ErrCheckpointMoved)
-		newer := processing.CheckpointMeta{Position: processing.Position{Partition: partition, Sequence: newerCheckpoint}}
+		newer := processing.CheckpointMeta{
+			Position: processing.Position{
+				Partition: partition,
+				Sequence:  newerCheckpoint,
+			},
+		}
 		image := store.LatestBytes(partition)
 		go func() {
 			time.Sleep(time.Second / 2)
@@ -364,8 +411,15 @@ func TestResumeDiscardsAMissingCheckpointOnlyAtTheIncidentStart(t *testing.T) {
 		args    uint64
 		wantErr error
 	}{
-		{name: "the target names where the stream starts", args: streamStart},
-		{name: "the target names another start", args: streamStart + 1, wantErr: processing.ErrDiscardRefused},
+		{
+			name: "the target names where the stream starts",
+			args: streamStart,
+		},
+		{
+			name:    "the target names another start",
+			args:    streamStart + 1,
+			wantErr: processing.ErrDiscardRefused,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -391,7 +445,9 @@ func TestResumeDiscardsAMissingCheckpointOnlyAtTheIncidentStart(t *testing.T) {
 func TestResumeKeepsTheCheckpointWhenAFreshBuilderCannotBeMade(t *testing.T) {
 	store := processingtest.NewCheckpointStore(t, nil)
 	store.FailLatest(unusableLatest())
-	request := resumeRequest(&processing.DiscardTarget{Partition: partition})
+	request := resumeRequest(&processing.DiscardTarget{
+		Partition: partition,
+	})
 	broken := *request.Limits
 	broken.MaxNodes = 0
 	request.Limits = &broken
@@ -408,7 +464,12 @@ func TestResumeKeepsTheCheckpointWhenAFreshBuilderCannotBeMade(t *testing.T) {
 
 func TestResumeDiscardsAnImageTheDomainRefusedByItsName(t *testing.T) {
 	store := processingtest.NewCheckpointStore(t, nil)
-	refused := processing.CheckpointMeta{Position: processing.Position{Partition: partition, Sequence: 9}}
+	refused := processing.CheckpointMeta{
+		Position: processing.Position{
+			Partition: partition,
+			Sequence:  9,
+		},
+	}
 	store.Put(partition, &refused, errNotAnImage)
 
 	resumed, err := processing.Resume(t.Context(), store, resumeRequest(&processing.DiscardTarget{
@@ -429,14 +490,22 @@ func TestResumeDiscardsAnImageTheDomainRefusedByItsName(t *testing.T) {
 
 func TestResumeNamesTheTargetItCouldNotDiscardAndThatTargetResumes(t *testing.T) {
 	store := processingtest.NewCheckpointStore(t, nil)
-	refused := processing.CheckpointMeta{Position: processing.Position{Partition: partition, Sequence: 9}}
+	refused := processing.CheckpointMeta{
+		Position: processing.Position{
+			Partition: partition,
+			Sequence:  9,
+		},
+	}
 	store.Put(partition, &refused, errNotAnImage)
 
 	first, err := processing.Resume(t.Context(), store, resumeRequest(nil))
 	if !errors.Is(err, processing.ErrCheckpointUnusable) {
 		t.Fatalf("first Resume = %v, want %v", err, processing.ErrCheckpointUnusable)
 	}
-	want := processing.DiscardTarget{Partition: partition, Checkpoint: processingtest.CheckpointName(&refused)}
+	want := processing.DiscardTarget{
+		Partition:  partition,
+		Checkpoint: processingtest.CheckpointName(&refused),
+	}
 	if diff := gocmp.Diff(&want, first.Refused); diff != "" {
 		t.Fatalf("refused target (-want +got):\n%s", diff)
 	}
@@ -480,9 +549,36 @@ func TestResumeNamesTheTargetOfItsLastAttempt(t *testing.T) {
 		if !errors.Is(err, processing.ErrCheckpointUnusable) || resumed.Attempts != 2 {
 			t.Fatalf("Resume = %v after %d attempts, want an unusable checkpoint on the second", err, resumed.Attempts)
 		}
-		want := processing.DiscardTarget{Partition: partition, FirstSeq: streamStart}
+		want := processing.DiscardTarget{
+			Partition: partition,
+			FirstSeq:  streamStart,
+		}
 		if diff := gocmp.Diff(&want, resumed.Refused); diff != "" {
 			t.Errorf("refused target (-want +got):\n%s", diff)
 		}
 	})
+}
+
+func TestResumeKeepsTheCauseWhenTheDiscardOfAStaleTargetFails(t *testing.T) {
+	store := processingtest.NewCheckpointStore(t, nil)
+	refused := processing.CheckpointMeta{
+		Position: processing.Position{
+			Partition: partition,
+			Sequence:  9,
+		},
+	}
+	store.Put(partition, &refused, errNotAnImage)
+	stale := processing.DiscardTarget{
+		Partition:  partition,
+		Checkpoint: "a-checkpoint-that-is-no-longer-latest",
+	}
+
+	_, err := processing.Resume(t.Context(), store, resumeRequest(&stale))
+
+	if !errors.Is(err, processing.ErrCheckpointUnusable) {
+		t.Errorf("Resume = %v, want it to keep the cause %v", err, processing.ErrCheckpointUnusable)
+	}
+	if store.DiscardCalls() != 1 {
+		t.Errorf("discard calls = %d, want 1", store.DiscardCalls())
+	}
 }

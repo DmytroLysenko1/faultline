@@ -91,6 +91,7 @@ func (u *connUnit) watch() error {
 	default:
 	}
 	if !u.claimed.CompareAndSwap(false, true) {
+		<-u.stopping
 		return nil
 	}
 	return closedCause(closed)
@@ -141,6 +142,16 @@ func (u *connUnit) stop(ctx context.Context) error {
 
 func (u *connUnit) conns() *natsjs.Conn {
 	return u.conn
+}
+
+func (u *connUnit) sever(ctx context.Context) error {
+	closed := u.claimClosedBefore()
+	u.claimed.Store(true)
+	err := u.conn.Close(ctx)
+	if closed == nil {
+		return err
+	}
+	return errors.Join(closedCause(closed), err)
 }
 
 func (u *connUnit) dial(ctx context.Context) (*natsjs.Conn, error) {
@@ -238,6 +249,7 @@ func newDialWait(now time.Time) *dialWait {
 	}
 	wait.reminder = reminder{
 		state:  stateConnecting,
+		level:  slog.LevelWarn,
 		began:  now,
 		next:   now.Add(waitReportPeriod),
 		detail: wait.details,
@@ -261,6 +273,7 @@ func (w *dialWait) details() []any {
 
 type reminder struct {
 	state  lifecycleState
+	level  slog.Level
 	began  time.Time
 	next   time.Time
 	detail func() []any
@@ -276,7 +289,7 @@ func (r *reminder) remind(ctx context.Context, logger *slog.Logger) {
 		"state", string(r.state),
 		slog.Float64("elapsed_seconds", now.Sub(r.began).Seconds()),
 	}, r.detail()...)
-	logger.WarnContext(ctx, eventStillWaiting, attrs...)
+	logger.Log(ctx, r.level, eventStillWaiting, attrs...)
 }
 
 func pause(ctx context.Context, wait time.Duration) error {

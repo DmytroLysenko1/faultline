@@ -187,6 +187,7 @@ func (u *journalUnit) enterWait(wait *streamWait, reason string) {
 	now := time.Now()
 	wait.reminder = reminder{
 		state:  stateWaitingStreams,
+		level:  slog.LevelWarn,
 		began:  now,
 		next:   now.Add(waitReportPeriod),
 		detail: wait.details,
