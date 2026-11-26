@@ -134,6 +134,10 @@ STRESS_PACKAGES := ./internal/application/ingest/... ./internal/application/proc
 STRESS_COUNT := 200
 STREAM_STRESS_COUNT := 2
 STREAM_STRESS_TIMEOUT := 20m
+KILL_NAMES := TestAKilledProcessorRestartsToTheSameGraphAsAnUninterruptedRun TestAKilledIngesterLosesNoAcknowledgedRequest \
+	TestALeaseLostWhileServingStopsWithoutRelease
+KILL_STRESS_POINTS := 10
+KILL_STRESS_TIMEOUT := 45m
 empty :=
 space := $(empty) $(empty)
 SHUTDOWN_NAMES := TestAServedStackStopsInReverseOnASignal TestRollbackGetsTheFullBudgetAfterASignal \
@@ -146,6 +150,7 @@ SHUTDOWN_NAMES := TestAServedStackStopsInReverseOnASignal TestRollbackGetsTheFul
 	TestAnAbandonedPartitionStopToleratesTheClosedConnection TestAPipelineExitWhileServingIsCodeOneAndAborting \
 	TestAllRoleServesAnExportedCallAndStopsCleanly TestAllIngestStartFailureStopsTheProcessorThroughItsLayers
 SHUTDOWN_TESTS := ^($(subst $(space),|,$(strip $(SHUTDOWN_NAMES))))$$
+KILL_TEST := ^($(subst $(space),|,$(strip $(KILL_NAMES))))$$
 
 BENCH_DIR := tmp/bench
 BENCH_BASELINE := test/bench/baseline.txt
@@ -183,6 +188,7 @@ test-stress: ## Repeat concurrency-sensitive tests under the race detector (nigh
 	go test -race -count=$(STRESS_COUNT) $(STRESS_PACKAGES)
 	go test -race -count=$(STRESS_COUNT) -run '$(SHUTDOWN_TESTS)' ./cmd/faultline/
 	go test -race -count=$(STREAM_STRESS_COUNT) -timeout=$(STREAM_STRESS_TIMEOUT) ./pkg/stream/...
+	TEST_KILL_STRESS=1 TEST_KILL_RANDOM_POINTS=$(KILL_STRESS_POINTS) TEST_KILL_REAL_TTL=1 go test -count=1 -timeout=$(KILL_STRESS_TIMEOUT) -run '$(KILL_TEST)' ./cmd/faultline/
 
 .PHONY: cover-check
 cover-check: test-race ## Enforce per-package coverage thresholds (NFR-MAINT-001)

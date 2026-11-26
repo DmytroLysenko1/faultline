@@ -154,6 +154,7 @@ type Proxy struct {
 	done     chan struct{}
 	mu       sync.Mutex
 	inspect  func(f *Frame) Verdict
+	withhold func(f *Frame) bool
 	answers  map[string]Verdict
 	conns    []net.Conn
 	closed   bool
@@ -193,6 +194,12 @@ func (p *Proxy) Intercept(inspect func(f *Frame) Verdict) {
 	p.inspect = inspect
 }
 
+func (p *Proxy) Withhold(withhold func(f *Frame) bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.withhold = withhold
+}
+
 func (p *Proxy) AnswersAltered() int {
 	return int(p.altered.Load())
 }
@@ -230,7 +237,7 @@ func (p *Proxy) relay(ctx context.Context, client net.Conn) bool {
 	p.wg.Go(func() {
 		p.pump(server, &lockedConn{
 			Conn: client,
-		}, p.toClient)
+		}, p.passToClient)
 	})
 	return true
 }
@@ -311,11 +318,30 @@ func (p *Proxy) toServer(f *Frame, judged Verdict) bool {
 	return true
 }
 
-func (p *Proxy) toClient(f *Frame) relay {
+func (p *Proxy) pendingAnswer(f *Frame) (Verdict, bool) {
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	judged, pending := p.answers[f.Subject]
 	delete(p.answers, f.Subject)
+	return judged, pending
+}
+
+func (p *Proxy) withheld(f *Frame) bool {
+	p.mu.Lock()
+	withhold := p.withhold
 	p.mu.Unlock()
+	return withhold != nil && withhold(f)
+}
+
+func (p *Proxy) passToClient(f *Frame) relay {
+	if p.withheld(f) {
+		return relay{}
+	}
+	return p.toClient(f)
+}
+
+func (p *Proxy) toClient(f *Frame) relay {
+	judged, pending := p.pendingAnswer(f)
 	if !pending {
 		return passed()
 	}
