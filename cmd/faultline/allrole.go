@@ -64,6 +64,7 @@ func allStack(setup *allSetup, life *lifecycle, logger *slog.Logger) *stack {
 	conn, conns := connLayer(&setup.NATS, life, logger)
 	conn.contributions = connContributions(record.MaxRecordBytes)
 	publishing, journals := journalLayer(conns, &setup.Journal, life, logger)
+	guard, taps := directoryLayer(conns, setup.Journal.Tenant, life, logger)
 	ready := readiness{
 		life:   life,
 		layers: role.hooks,
@@ -74,8 +75,9 @@ func allStack(setup *allSetup, life *lifecycle, logger *slog.Logger) *stack {
 		conn,
 		statsLayer(role.hooks, life.Served, processorThresholds(&setup.Partition), logger),
 		observedPartition(&setup.Partition, conns, graph, life, logger),
+		guard,
 		publishing,
-		otlpLayer(&setup.Config, journals, logger),
+		otlpLayer(&setup.Config, journals, taps, logger),
 	}
 	return role
 }

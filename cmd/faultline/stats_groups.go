@@ -6,11 +6,14 @@ import (
 	"time"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
+	"github.com/DmytroLysenko1/faultline/internal/application/ingestauth"
 	"github.com/DmytroLysenko1/faultline/internal/application/processing"
 	"github.com/DmytroLysenko1/faultline/internal/application/selfalert"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/matcher"
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/traffic"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/tokens"
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
 	"github.com/DmytroLysenko1/faultline/pkg/stream"
 )
 
@@ -141,5 +144,48 @@ func ingestGroup(stats ingest.Stats) slog.Attr {
 		slog.Int64("rejected_spans", stats.RejectedSpans),
 		slog.Int64("overloaded_responses", stats.OverloadedResponses),
 		slog.Int64("too_large_responses", stats.TooLargeResponses),
+	)
+}
+
+func authGroup(gate otlp.TapStats, auth ingestauth.Stats, directory *tokens.DirectoryStats) slog.Attr {
+	return slog.Group("auth",
+		slog.Uint64("accepted", auth.Accepted),
+		slog.Uint64("missing", gate.Missing),
+		slog.Uint64("header", gate.Header),
+		slog.Uint64("failed", gate.Failed),
+		rejectedGroup(auth.Rejected),
+		slog.Uint64("stale_rejections", auth.StaleRejections),
+		slog.Float64("age_seconds", auth.Age.Seconds()),
+		tokensGroup(directory),
+	)
+}
+
+func rejectedGroup(rejected [ingestauth.ReasonCount]uint64) slog.Attr {
+	attrs := make([]any, 0, len(rejected))
+	for reason, count := range rejected {
+		attrs = append(attrs, slog.Uint64(ingestauth.Reason(reason).String(), count))
+	}
+	return slog.Group("rejected", attrs...)
+}
+
+func tokensGroup(stats *tokens.DirectoryStats) slog.Attr {
+	return slog.Group("tokens",
+		slog.Int("grants", stats.Tokens),
+		slog.Uint64("checks", stats.Checks),
+		slog.Uint64("check_failures", stats.CheckFailures),
+		slog.Uint64("leaderless_checks", stats.LeaderlessChecks),
+		slog.Uint64("quorumless_checks", stats.QuorumlessChecks),
+		slog.Uint64("regressed_checks", stats.RegressedChecks),
+		slog.Uint64("drifted_checks", stats.DriftedChecks),
+		slog.Uint64("rereads", stats.Rereads),
+		slog.Uint64("reread_failures", stats.RereadFailures),
+		slog.Float64("reread_seconds", stats.RereadDuration.Seconds()),
+		slog.Uint64("invalid_entries", stats.InvalidEntries),
+		slog.Uint64("mass_revokes", stats.MassRevokes),
+		slog.Uint64("epoch_changes", stats.EpochChanges),
+		slog.Uint64("last_sequence", stats.LastSequence),
+		slog.Bool("regressed", stats.Regressed),
+		slog.Bool("revoke_blocked", stats.RevokeBlocked),
+		slog.Bool("config_drift", stats.ConfigDrift),
 	)
 }

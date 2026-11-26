@@ -355,7 +355,7 @@ func TestAStreamWaitWarnsOncePerClassAndRemindsWithTheCurrentError(t *testing.T)
 
 		for _, round := range rounds {
 			time.Sleep(time.Until(began.Add(round.at)))
-			waiting.keepWaiting(t.Context(), wait, round.reason, round.err)
+			waiting.waits().keep(t.Context(), wait, round.reason, round.err)
 		}
 
 		assertDiff(t, "one warning per class", []any{errA.Error(), errB.Error()}, append(

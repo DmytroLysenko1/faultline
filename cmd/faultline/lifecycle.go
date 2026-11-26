@@ -14,6 +14,7 @@ const (
 	stateConnecting     lifecycleState = "connecting"
 	stateWaitingStreams lifecycleState = "waiting_streams"
 	stateWaitingLease   lifecycleState = "waiting_lease"
+	stateWaitingTokens  lifecycleState = "waiting_tokens"
 	stateRestoring      lifecycleState = "restoring"
 	stateServing        lifecycleState = "serving"
 	stateDraining       lifecycleState = "draining"

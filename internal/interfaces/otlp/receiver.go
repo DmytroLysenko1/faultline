@@ -14,7 +14,6 @@ type spanAcceptor interface {
 }
 
 type traceReceiver struct {
-	ptraceotlp.UnimplementedGRPCServer
 	acceptor spanAcceptor
 	events   *events
 }

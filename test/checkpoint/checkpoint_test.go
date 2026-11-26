@@ -31,6 +31,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/graphservice"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/otlptest"
 )
 
 const (
@@ -123,7 +124,8 @@ func startAPI(t *testing.T, store *memgraph.Store) faultlinev1connect.GraphServi
 func (s *system) startOTLP(t *testing.T) ptraceotlp.GRPCClient {
 	t.Helper()
 	settings := otlp.DefaultOptions(slog.New(slog.DiscardHandler), fixedClock{})
-	s.otlp = otlp.NewServer(ingest.NewAcceptBatch(s.journal, operation.NewNormalizer(nil)), settings)
+	accept := ingest.NewAcceptBatch(s.journal, operation.NewNormalizer(nil))
+	s.otlp = otlp.NewServer(accept, otlp.NewTap(otlptest.Admitting(), settings), settings)
 	listener := bufconn.Listen(bufferBytes)
 	s.serving.Go(func() {
 		if err := s.otlp.Serve(listener); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
@@ -135,6 +137,7 @@ func (s *system) startOTLP(t *testing.T) ptraceotlp.GRPCClient {
 			return listener.DialContext(ctx)
 		}),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		otlptest.WithTestToken(),
 	)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)

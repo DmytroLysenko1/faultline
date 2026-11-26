@@ -23,8 +23,8 @@ import (
 
 const (
 	refusedWithin     = time.Second
-	ingesterBudgetMiB = 509.0
-	allWorstBytes     = 1_382_581_641
+	ingesterBudgetMiB = 510.0
+	allWorstBytes     = 1_383_630_217
 	budgetMiB         = float64(mib)
 )
 
@@ -49,6 +49,12 @@ func ingesterOn(t *testing.T, urls []string) (*ingesterSetup, string, string) {
 
 func serveIngester(t *testing.T, setup *ingesterSetup, logs *logBuffer) (*fakeNotify, <-chan int, *lifecycle) {
 	t.Helper()
+	grantTestToken(t, setup.Journal.Tenant, setup.NATS.URLs...)
+	return launchIngester(t, setup, logs)
+}
+
+func launchIngester(t *testing.T, setup *ingesterSetup, logs *logBuffer) (*fakeNotify, <-chan int, *lifecycle) {
+	t.Helper()
 	notify := newFakeNotify()
 	life := newLifecycle(testLogger(logs))
 	done := launchRoleWith(t, ingesterStack(setup, life, testLogger(logs)), notify.notify, life)
@@ -67,7 +73,7 @@ func TestIngesterStopOrder(t *testing.T) {
 
 	assertCode(t, <-done, exitOK, logs)
 	stopped := valuesOf(logs.all(t, eventLayerStopped), "layer")
-	assertDiff(t, "stop order", []any{"otlp", "journal", "stats", "conn", "http", "tracing"}, stopped)
+	assertDiff(t, "stop order", []any{"otlp", "journal", "directory", "stats", "conn", "http", "tracing"}, stopped)
 	want := []string{"starting", "connecting", "serving", "draining", timelineFinalStats, "stopped"}
 	assertDiff(t, "timeline", want, logs.timeline(t))
 	final := logs.all(t, eventPipelineStats)
@@ -131,7 +137,8 @@ func TestEveryRoleFitsItsMemoryBudgetAtDefaults(t *testing.T) {
 	if err := checkParts(parts, defaultMemoryLimit); err != nil {
 		t.Errorf("the ingester does not fit the default GOMEMLIMIT: %v", err)
 	}
-	want := "otlp requests 440.0 MiB, records before pubAck 60.0 MiB, publish buffer 8.0 MiB, nats connections 1.0 MiB"
+	want := "otlp requests 440.0 MiB, records before pubAck 60.0 MiB, publish buffer 8.0 MiB, nats connections 1.0 MiB, " +
+		"token directory 1.0 MiB"
 	assertDiff(t, "breakdown", want, breakdown(parts))
 
 	everything := allContributions(t, map[string]string{})
@@ -172,7 +179,7 @@ func TestTheIngesterCommandRefusesItsConfigWithCodeTwo(t *testing.T) {
 				envNATSURL:     testNATSURL,
 				envMemoryLimit: "512MiB",
 			},
-			want: "worst-case memory exceeds the budget: 509.0 MiB > 85% of GOMEMLIMIT 512.0 MiB",
+			want: "worst-case memory exceeds the budget: 510.0 MiB > 85% of GOMEMLIMIT 512.0 MiB",
 		},
 	}
 	for _, tt := range tests {
@@ -203,6 +210,7 @@ func TestTheIngesterCommandRefusesItsConfigWithCodeTwo(t *testing.T) {
 func TestASecondSignalReachesTheSystemThroughTheIngesterWiring(t *testing.T) {
 	cluster := natsjstest.Start(t, singleNATSNode)
 	ensureStreams(t, cluster.URLs()...)
+	grantTestToken(t, defaultTenant, cluster.URLs()...)
 	otlpAddress := localAddress(t)
 	ctx, cancel := context.WithTimeout(t.Context(), secondSignalCap)
 	defer cancel()

@@ -135,7 +135,7 @@ func TestTheIngesterNamesOperationsWithItsRouteRules(t *testing.T) {
 				RouteRules: rules.Rules,
 			}, openedJournal{
 				journal: opened,
-			}, testLogger(logs))
+			}, admittingTaps(), testLogger(logs))
 			view := newLayerSupervisor(t, logs, &current)
 			if err := current.unit.start(t.Context(), view); err != nil {
 				t.Fatalf("start: %v", err)
@@ -285,6 +285,7 @@ func startTracedRoles(t *testing.T, urls []string) *tracedRoles {
 	ingester, api, otlpAddress := ingesterOn(t, urls)
 	ingester.Journal.Topology = setup.Partition.Streams
 	traced.ingesterAPI, traced.ingesterOTLP = api, otlpAddress
+	grantTestToken(t, ingester.Journal.Tenant, urls...)
 	life := newLifecycle(testLogger(traced.ingesterLogs))
 	role := ingesterStack(ingester, life, testLogger(traced.ingesterLogs))
 	traced.ingesterSpan = recordTracing(t, role)

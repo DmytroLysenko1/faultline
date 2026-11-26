@@ -3,7 +3,6 @@ package tokens
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -28,21 +27,34 @@ type failureCounter struct {
 }
 
 var failureCounters = []failureCounter{
-	{target: ErrNoLeader, counter: func(c *counters) *atomic.Uint64 { return &c.leaderlessChecks }},
-	{target: ErrNoQuorum, counter: func(c *counters) *atomic.Uint64 { return &c.quorumlessChecks }},
-	{target: ErrBucketDrift, counter: func(c *counters) *atomic.Uint64 { return &c.driftedChecks }},
+	{
+		target: ErrNoLeader,
+		counter: func(c *counters) *atomic.Uint64 {
+			return &c.leaderlessChecks
+		},
+	},
+	{
+		target: ErrNoQuorum,
+		counter: func(c *counters) *atomic.Uint64 {
+			return &c.quorumlessChecks
+		},
+	},
+	{
+		target: ErrBucketDrift,
+		counter: func(c *counters) *atomic.Uint64 {
+			return &c.driftedChecks
+		},
+	},
 }
 
 func (d *Directory) Run(ctx context.Context) error {
 	if !d.running.CompareAndSwap(false, true) {
 		return ErrAlreadyRunning
 	}
-	for {
-		if err := retry.Sleep(ctx, time.Until(d.epoch.next)); err != nil {
-			return fmt.Errorf("token directory stopped: %w", err)
-		}
+	for retry.Sleep(ctx, time.Until(d.epoch.next)) == nil {
 		d.epoch.next = d.check(ctx)
 	}
+	return nil
 }
 
 func (d *Directory) load(ctx context.Context) error {
@@ -166,7 +178,9 @@ func (d *Directory) followEpoch(state bucketState) {
 	}
 	d.stats.epochChanges.Add(1)
 	d.logger.Error("tokens.bucket_epoch_changed", "was", covered.Created, "now", state.Created)
-	d.epoch = epoch{next: d.epoch.next}
+	d.epoch = epoch{
+		next: d.epoch.next,
+	}
 	d.stats.regressed.Store(false)
 }
 

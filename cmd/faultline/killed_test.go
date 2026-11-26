@@ -378,6 +378,9 @@ func (w *killWorld) start(t *testing.T) *processorLife {
 
 func startRole(t *testing.T, role string, values map[string]string) *processorLife {
 	t.Helper()
+	if role != commandProcessor {
+		grantTestToken(t, tenantOf(values), strings.Split(values[envNATSURL], ",")...)
+	}
 	command := exec.CommandContext(t.Context(), os.Args[0], role)
 	command.Env = append(os.Environ(), reexecFlag+"=1")
 	for name, value := range values {
@@ -1125,4 +1128,11 @@ func stopWatching(t *testing.T, watcher jetstream.KeyWatcher) {
 	if err := watcher.Stop(); err != nil {
 		t.Errorf("stop watching the lease key: %v", err)
 	}
+}
+
+func tenantOf(values map[string]string) string {
+	if tenant, set := values[envTenant]; set {
+		return tenant
+	}
+	return defaultTenant
 }

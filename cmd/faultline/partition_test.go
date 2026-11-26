@@ -324,7 +324,7 @@ func TestTheWaitRemindersCarryTheirLevel(t *testing.T) {
 	streams := &streamWait{}
 	(&journalUnit{
 		phases: newLifecycle(testLogger(&logBuffer{})),
-	}).enterWait(streams, reasonStreamsNotReady)
+	}).waits().enter(streams, reasonStreamsNotReady)
 	streams.began, streams.next = began, began
 	dials := newDialWait(began)
 	dials.next = began

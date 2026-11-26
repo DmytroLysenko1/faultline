@@ -187,6 +187,7 @@ func (s *stack) stageAt(served bool) string {
 type stageError struct {
 	stage string
 	err   error
+	hint  string
 }
 
 func (e *stageError) Error() string {

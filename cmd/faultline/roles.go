@@ -89,6 +89,7 @@ func ingesterStack(setup *ingesterSetup, life *lifecycle, logger *slog.Logger) *
 	tracing, tracer := tracingLayer(&setup.Config, logger)
 	conn, conns := connLayer(&setup.NATS, life, logger)
 	publishing, journals := journalLayer(conns, &setup.Journal, life, logger)
+	guard, taps := directoryLayer(conns, setup.Journal.Tenant, life, logger)
 	routes := roleRoutes(readiness{
 		life:   life,
 		layers: role.hooks,
@@ -98,8 +99,9 @@ func ingesterStack(setup *ingesterSetup, life *lifecycle, logger *slog.Logger) *
 		httpLayer(&setup.Config, tracer, routes, setup.Config.OTLPAddr, logger),
 		conn,
 		statsLayer(role.hooks, life.Served, selfalert.Thresholds{}, logger),
+		guard,
 		publishing,
-		otlpLayer(&setup.Config, journals, logger),
+		otlpLayer(&setup.Config, journals, taps, logger),
 	}
 	return role
 }

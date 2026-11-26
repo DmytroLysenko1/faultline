@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -24,26 +23,10 @@ const (
 
 	verifyBudget = 2 * time.Second
 	verifyPause  = time.Second
-	lineBreak    = "\n"
-	lineJoin     = "; "
 )
 
 type connSource interface {
 	conns() *natsjs.Conn
-}
-
-type streamWait struct {
-	reminder
-	warned    map[string]bool
-	current   string
-	lastError string
-}
-
-func (w *streamWait) details() []any {
-	return []any{
-		"reason", w.current,
-		"last_error", w.lastError,
-	}
 }
 
 type journalUnit struct {
@@ -155,7 +138,7 @@ func (u *journalUnit) verifyOnce(ctx context.Context, conn *natsjs.Conn, wait *s
 	if !waits {
 		return false, err
 	}
-	u.keepWaiting(ctx, wait, reason, err)
+	u.waits().keep(ctx, wait, reason, err)
 	return false, pause(ctx, verifyPause)
 }
 
@@ -165,34 +148,13 @@ func (u *journalUnit) verify(ctx context.Context, conn *natsjs.Conn) (natsjs.Ver
 	return conn.VerifyTopology(verifyCtx, u.options.Topology)
 }
 
-func (u *journalUnit) keepWaiting(
-	ctx context.Context,
-	wait *streamWait,
-	reason string,
-	err error,
-) {
-	wait.current = reason
-	wait.lastError = strings.ReplaceAll(err.Error(), lineBreak, lineJoin)
-	if wait.began.IsZero() {
-		u.enterWait(wait, reason)
-	}
-	if !wait.warned[reason] {
-		wait.warned[reason] = true
-		u.logger.WarnContext(ctx, eventWaitPrefix+reason, "error", wait.lastError)
-	}
-	wait.remind(ctx, u.logger)
-}
-
-func (u *journalUnit) enterWait(wait *streamWait, reason string) {
-	now := time.Now()
-	wait.reminder = reminder{
+func (u *journalUnit) waits() waitLog {
+	return waitLog{
 		state:  stateWaitingStreams,
-		level:  slog.LevelWarn,
-		began:  now,
-		next:   now.Add(waitReportPeriod),
-		detail: wait.details,
+		prefix: eventWaitPrefix,
+		phases: u.phases,
+		logger: u.logger,
 	}
-	u.phases.transition(stateWaitingStreams, reason)
 }
 
 func (u *journalUnit) note(ctx context.Context, notes []natsjs.Drift) {

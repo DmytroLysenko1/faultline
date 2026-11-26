@@ -1,9 +1,9 @@
 package otlp
 
 import (
+	"errors"
 	"net"
 
-	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"golang.org/x/net/netutil"
 	"google.golang.org/grpc"
 	_ "google.golang.org/grpc/encoding/gzip"
@@ -13,13 +13,22 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/recovery"
 )
 
-func NewServer(acceptor spanAcceptor, options Options) *grpc.Server {
+var errNoTap = errors.New("otlp server needs a token tap")
+
+func NewServer(acceptor spanAcceptor, gate *Tap, options Options) *grpc.Server {
+	if gate == nil {
+		panic(errNoTap)
+	}
 	shared := newEvents(options)
-	server := grpc.NewServer(serverOptions(shared, options)...)
-	ptraceotlp.RegisterGRPCServer(server, &traceReceiver{
+	server := grpc.NewServer(serverOptions(shared, gate, options)...)
+	receiver := &traceReceiver{
 		acceptor: acceptor,
 		events:   shared,
-	})
+	}
+	server.RegisterService(traceServiceDesc(guardedExport{
+		gate:     gate,
+		receiver: receiver,
+	}), receiver)
 	return server
 }
 
@@ -27,8 +36,9 @@ func LimitListener(listener net.Listener) net.Listener {
 	return netutil.LimitListener(listener, MaxConnections)
 }
 
-func serverOptions(shared *events, options Options) []grpc.ServerOption {
+func serverOptions(shared *events, gate *Tap, options Options) []grpc.ServerOption {
 	return []grpc.ServerOption{
+		grpc.InTapHandle(gate.handle),
 		grpc.ForceServerCodecV2(decodeCodec(shared)),
 		grpc.MaxRecvMsgSize(MaxRecvMsgBytes),
 		grpc.MaxHeaderListSize(MaxHeaderListBytes),

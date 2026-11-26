@@ -16,6 +16,10 @@ type protoUnmarshaler interface {
 	UnmarshalProto(wire []byte) error
 }
 
+type protoMarshaler interface {
+	MarshalProto() ([]byte, error)
+}
+
 type Codec struct {
 	weigher  *Weigher
 	onReject func(err error, weight int64)
@@ -33,6 +37,9 @@ func (c *Codec) Name() string {
 }
 
 func (c *Codec) Marshal(value any) (mem.BufferSlice, error) {
+	if message, ok := value.(protoMarshaler); ok {
+		return marshal(message)
+	}
 	delegate, err := protoDelegate()
 	if err != nil {
 		return nil, err
@@ -83,4 +90,14 @@ func protoDelegate() (encoding.CodecV2, error) {
 		return nil, errNoDelegate
 	}
 	return delegate, nil
+}
+
+func marshal(message protoMarshaler) (mem.BufferSlice, error) {
+	wire, err := message.MarshalProto()
+	if err != nil {
+		return nil, fmt.Errorf("marshal: %w", err)
+	}
+	return mem.BufferSlice{
+		mem.SliceBuffer(wire),
+	}, nil
 }

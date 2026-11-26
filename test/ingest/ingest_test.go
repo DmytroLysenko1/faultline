@@ -63,7 +63,8 @@ func startPipeline(t *testing.T, limits journaltest.Limits) pipeline {
 		t.Fatalf("journaltest.NewMemory: %v", err)
 	}
 	settings := otlp.DefaultOptions(slog.New(slog.DiscardHandler), fixedClock{})
-	server := otlp.NewServer(ingest.NewAcceptBatch(journal, operation.NewNormalizer(nil)), settings)
+	accept := ingest.NewAcceptBatch(journal, operation.NewNormalizer(nil))
+	server := otlp.NewServer(accept, otlp.NewTap(otlptest.Admitting(), settings), settings)
 	listener := bufconn.Listen(bufferBytes)
 	var serving sync.WaitGroup
 	serving.Go(func() {
@@ -88,6 +89,7 @@ func dial(t *testing.T, listener *bufconn.Listener) *grpc.ClientConn {
 			return listener.DialContext(ctx)
 		}),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		otlptest.WithTestToken(),
 	)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)

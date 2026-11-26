@@ -59,7 +59,7 @@ func (s servingOTLP) start(_ context.Context, sup unitSupervisor) error {
 }
 
 func stuckOTLPLayer(logs *logBuffer, server *fakeServer) layer {
-	current := otlpLayer(&Config{}, nil, testLogger(logs))
+	current := otlpLayer(&Config{}, nil, nil, testLogger(logs))
 	unit := current.unit.(*otlpUnit)
 	unit.server = server
 	current.unit = servingOTLP{
@@ -156,7 +156,7 @@ func TestTheOTLPLayerAcceptsOneConnectionBeforeServing(t *testing.T) {
 	address := localAddress(t)
 	current := otlpLayer(&Config{
 		OTLPAddr: address,
-	}, acceptingJournal(t), testLogger(logs))
+	}, acceptingJournal(t), admittingTaps(), testLogger(logs))
 	view := newLayerSupervisor(t, logs, &current)
 	if err := current.unit.start(t.Context(), view); err != nil {
 		t.Fatalf("start: %v", err)
@@ -184,11 +184,36 @@ func TestTheOTLPLayerAcceptsOneConnectionBeforeServing(t *testing.T) {
 	}
 }
 
+func TestTheOTLPLayerRefusesToStartBeforeTheTokenDirectory(t *testing.T) {
+	logs := &logBuffer{}
+	address := localAddress(t)
+	current := otlpLayer(&Config{
+		OTLPAddr: address,
+	}, acceptingJournal(t), &directoryUnit{}, testLogger(logs))
+	view := newLayerSupervisor(t, logs, &current)
+
+	err := current.unit.start(t.Context(), view)
+
+	failure, found := errors.AsType[*stageError](err)
+	if !found {
+		t.Fatalf("start = %v, want a stage error", err)
+	}
+	assertDiff(t, "stage", stageOTLPTap, failure.stage)
+	var config net.ListenConfig
+	listener, err := config.Listen(t.Context(), network, address)
+	if err != nil {
+		t.Fatalf("the refused layer holds its port: %v", err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Errorf("close: %v", err)
+	}
+}
+
 func TestTheOTLPLayerKeepsASignalDuringItsStart(t *testing.T) {
 	logs := &logBuffer{}
 	current := otlpLayer(&Config{
 		OTLPAddr: loopback,
-	}, acceptingJournal(t), testLogger(logs))
+	}, acceptingJournal(t), admittingTaps(), testLogger(logs))
 	view := newLayerSupervisor(t, logs, &current)
 	signalled, cancel := context.WithCancelCause(t.Context())
 	cancel(errTestSignal)

@@ -103,6 +103,7 @@ type harness struct {
 	Conn   *grpc.ClientConn
 	Logs   *logBuffer
 	Clock  *fakeClock
+	Tap    *otlp.Tap
 }
 
 func options(logs *logBuffer, clock *fakeClock) otlp.Options {
@@ -113,7 +114,12 @@ func options(logs *logBuffer, clock *fakeClock) otlp.Options {
 
 func serve(t *testing.T, listener net.Listener, acceptor acceptorFunc, settings otlp.Options) {
 	t.Helper()
-	server := otlp.NewServer(acceptor, settings)
+	serveTapped(t, listener, acceptor, otlp.NewTap(otlptest.Admitting(), settings), settings)
+}
+
+func serveTapped(t *testing.T, listener net.Listener, acceptor acceptorFunc, gate *otlp.Tap, settings otlp.Options) {
+	t.Helper()
+	server := otlp.NewServer(acceptor, gate, settings)
 	var serving sync.WaitGroup
 	serving.Go(func() {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
@@ -128,29 +134,52 @@ func serve(t *testing.T, listener net.Listener, acceptor acceptorFunc, settings 
 
 func start(t *testing.T, acceptor acceptorFunc) harness {
 	t.Helper()
+	return startGuarded(t, acceptor, otlptest.Admitting(), otlptest.WithTestToken())
+}
+
+func startGuarded(
+	t *testing.T,
+	acceptor acceptorFunc,
+	authenticator otlptest.AuthenticatorFunc,
+	credentials ...grpc.DialOption,
+) harness {
+	t.Helper()
 	logs := &logBuffer{}
 	clock := &fakeClock{
 		now: time.Unix(0, 0),
 	}
 	listener := bufconn.Listen(bufferBytes)
-	serve(t, listener, acceptor, options(logs, clock))
-	conn := dial(t, func(ctx context.Context, _ string) (net.Conn, error) {
+	settings := options(logs, clock)
+	gate := otlp.NewTap(authenticator, settings)
+	serveTapped(t, listener, acceptor, gate, settings)
+	conn := dialWith(t, func(ctx context.Context, _ string) (net.Conn, error) {
 		return listener.DialContext(ctx)
-	})
+	}, credentials...)
 	return harness{
 		Client: ptraceotlp.NewGRPCClient(conn),
 		Conn:   conn,
 		Logs:   logs,
 		Clock:  clock,
+		Tap:    gate,
 	}
 }
 
 func dial(t *testing.T, dialer func(context.Context, string) (net.Conn, error)) *grpc.ClientConn {
 	t.Helper()
-	conn, err := grpc.NewClient(bufconnAddr,
+	return dialWith(t, dialer, otlptest.WithTestToken())
+}
+
+func dialWith(
+	t *testing.T,
+	dialer func(context.Context, string) (net.Conn, error),
+	credentials ...grpc.DialOption,
+) *grpc.ClientConn {
+	t.Helper()
+	settings := append([]grpc.DialOption{
 		grpc.WithContextDialer(dialer),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	}, credentials...)
+	conn, err := grpc.NewClient(bufconnAddr, settings...)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

@@ -148,10 +148,11 @@ func TestRealMain(t *testing.T) {
 				Limits: []int64{
 					1 << 30,
 				},
-				Stderr: "worst-case memory exceeds the budget: 1318.5 MiB > 85% of GOMEMLIMIT 1024.0 MiB " +
+				Stderr: "worst-case memory exceeds the budget: 1319.5 MiB > 85% of GOMEMLIMIT 1024.0 MiB " +
 					"(otlp requests 440.0 MiB, pairing, graph and traffic 402.1 MiB, api responses 256.0 MiB, " +
 					"feed credit and pull 88.0 MiB, records before pubAck 60.0 MiB, batch apply 27.8 MiB, " +
-					"snapshots 23.5 MiB, publish buffer 8.0 MiB, nats connections 7.0 MiB, checkpoint 6.2 MiB)\n",
+					"snapshots 23.5 MiB, publish buffer 8.0 MiB, nats connections 7.0 MiB, checkpoint 6.2 MiB, " +
+					"token directory 1.0 MiB)\n",
 			},
 		},
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/application/processing/processingtest"
 	faultlinev1 "github.com/DmytroLysenko1/faultline/internal/gen/proto/faultline/v1"
 	"github.com/DmytroLysenko1/faultline/internal/gen/proto/faultline/v1/faultlinev1connect"
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/otlptest"
 )
 
 const (
@@ -42,7 +43,10 @@ func h2cClient(t *testing.T) *http.Client {
 
 func dialOTLP(t *testing.T, address string) *grpc.ClientConn {
 	t.Helper()
-	conn, err := grpc.NewClient("passthrough:///"+address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient("passthrough:///"+address,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		otlptest.WithTestToken(),
+	)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

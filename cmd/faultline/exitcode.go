@@ -160,8 +160,16 @@ func failureOutcome(seen *observed, reason string, err error) exitOutcome {
 		reason: reason,
 		level:  slog.LevelError,
 		event:  eventStartFailed,
-		attrs:  stageAttrs(seen, err),
+		attrs:  append(stageAttrs(seen, err), hintAttrs(stageHint(err))...),
 	}
+}
+
+func stageHint(err error) string {
+	failure, found := errors.AsType[*stageError](err)
+	if !found {
+		return ""
+	}
+	return failure.hint
 }
 
 func stageAttrs(seen *observed, err error) []slog.Attr {

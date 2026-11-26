@@ -146,7 +146,11 @@ func (w *world) readEntries(ctx context.Context) (bucketEntries, configVerdict, 
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return bucketEntries{State: state, Grants: grants, Invalid: w.invalid}, verdictOf(&w.config), nil
+	return bucketEntries{
+		State:   state,
+		Grants:  grants,
+		Invalid: w.invalid,
+	}, verdictOf(&w.config), nil
 }
 
 func budgetOf(ctx context.Context) time.Duration {
@@ -202,8 +206,8 @@ func start(t *testing.T, w *world) *running {
 func (r *running) stop(t *testing.T) {
 	t.Helper()
 	r.cancel()
-	if err := <-r.done; err != nil && !errors.Is(err, context.Canceled) {
-		t.Errorf("Run = %v, want a canceled stop", err)
+	if err := <-r.done; err != nil {
+		t.Errorf("Run = %v, want nil on the cancel of its own context", err)
 	}
 	r.done <- nil
 }
@@ -348,8 +352,16 @@ func TestALeaderlessAnswerDoesNotRefreshTheDirectory(t *testing.T) {
 		fault error
 		count func(DirectoryStats) uint64
 	}{
-		{name: "no leader", fault: ErrNoLeader, count: func(s DirectoryStats) uint64 { return s.LeaderlessChecks }},
-		{name: "no quorum", fault: ErrNoQuorum, count: func(s DirectoryStats) uint64 { return s.QuorumlessChecks }},
+		{
+			name:  "no leader",
+			fault: ErrNoLeader,
+			count: func(s DirectoryStats) uint64 { return s.LeaderlessChecks },
+		},
+		{
+			name:  "no quorum",
+			fault: ErrNoQuorum,
+			count: func(s DirectoryStats) uint64 { return s.QuorumlessChecks },
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -493,7 +505,12 @@ func TestAnEpochChangeDuringARereadIsNoRegression(t *testing.T) {
 		r := start(t, w)
 		w.revoke(grants[0].ID)
 		w.change(func(w *world) {
-			w.rereadOverride = &bucketState{LastSeq: 1, FirstSeq: 1, Msgs: 1, Created: time.Now()}
+			w.rereadOverride = &bucketState{
+				LastSeq:  1,
+				FirstSeq: 1,
+				Msgs:     1,
+				Created:  time.Now(),
+			}
 		})
 		time.Sleep(reload + time.Second)
 		if stats := r.directory.Stats(); stats.Regressed || stats.EpochChanges != 1 {
@@ -517,10 +534,17 @@ func TestAStopIsNoFailedCheck(t *testing.T) {
 
 func TestLeaderWithQuorum(t *testing.T) {
 	peer := func(active time.Duration, offline, pending bool) *jetstream.PeerInfo {
-		return &jetstream.PeerInfo{Active: active, Offline: offline, Pending: pending}
+		return &jetstream.PeerInfo{
+			Active:  active,
+			Offline: offline,
+			Pending: pending,
+		}
 	}
 	led := func(peers ...*jetstream.PeerInfo) *jetstream.ClusterInfo {
-		return &jetstream.ClusterInfo{Leader: "n0", Replicas: peers}
+		return &jetstream.ClusterInfo{
+			Leader:   "n0",
+			Replicas: peers,
+		}
 	}
 	fresh := time.Second
 	tests := []struct {
@@ -529,9 +553,24 @@ func TestLeaderWithQuorum(t *testing.T) {
 		cluster  *jetstream.ClusterInfo
 		wantErr  error
 	}{
-		{name: "no cluster info", replicas: 1, wantErr: ErrNoLeader},
-		{name: "no leader", replicas: 3, cluster: &jetstream.ClusterInfo{}, wantErr: ErrNoLeader},
-		{name: "a single server", replicas: 1, cluster: &jetstream.ClusterInfo{Leader: "n0"}},
+		{
+			name:     "no cluster info",
+			replicas: 1,
+			wantErr:  ErrNoLeader,
+		},
+		{
+			name:     "no leader",
+			replicas: 3,
+			cluster:  &jetstream.ClusterInfo{},
+			wantErr:  ErrNoLeader,
+		},
+		{
+			name:     "a single server",
+			replicas: 1,
+			cluster: &jetstream.ClusterInfo{
+				Leader: "n0",
+			},
+		},
 		{
 			name: "two fresh peers", replicas: 3,
 			cluster: led(peer(fresh, false, false), peer(fresh, false, false)),
@@ -567,8 +606,14 @@ func TestLeaderWithQuorum(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := jetstream.StreamConfig{Name: streamName, Replicas: tt.replicas}
-			info := &jetstream.StreamInfo{Config: config, Cluster: tt.cluster}
+			config := jetstream.StreamConfig{
+				Name:     streamName,
+				Replicas: tt.replicas,
+			}
+			info := &jetstream.StreamInfo{
+				Config:  config,
+				Cluster: tt.cluster,
+			}
 			if err := leaderWithQuorum(info); !errors.Is(err, tt.wantErr) {
 				t.Errorf("err = %v, want %v", err, tt.wantErr)
 			}
@@ -578,7 +623,11 @@ func TestLeaderWithQuorum(t *testing.T) {
 
 func TestADriftedBucketDoesNotRefreshTheDirectory(t *testing.T) {
 	drifts := map[string]func(c *jetstream.StreamConfig){
-		"sources":   func(c *jetstream.StreamConfig) { c.Sources = []*jetstream.StreamSource{{Name: "X"}} },
+		"sources": func(c *jetstream.StreamConfig) {
+			c.Sources = []*jetstream.StreamSource{{
+				Name: "X",
+			}}
+		},
 		"max msgs":  func(c *jetstream.StreamConfig) { c.MaxMsgs = -1 },
 		"max age":   func(c *jetstream.StreamConfig) { c.MaxAge = time.Hour },
 		"retention": func(c *jetstream.StreamConfig) { c.Retention = jetstream.WorkQueuePolicy },
@@ -684,10 +733,25 @@ func TestAMassRevokeIsReported(t *testing.T) {
 		total   int
 		wantOne bool
 	}{
-		{name: "a few revokes", revoke: 3},
-		{name: "the last token alone", revoke: 1, total: 1},
-		{name: "half and one more", revoke: manyGrants/2 + 1, wantOne: true},
-		{name: "everything", revoke: manyGrants, wantOne: true},
+		{
+			name:   "a few revokes",
+			revoke: 3,
+		},
+		{
+			name:   "the last token alone",
+			revoke: 1,
+			total:  1,
+		},
+		{
+			name:    "half and one more",
+			revoke:  manyGrants/2 + 1,
+			wantOne: true,
+		},
+		{
+			name:    "everything",
+			revoke:  manyGrants,
+			wantOne: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -732,13 +796,21 @@ func TestAFailedFirstLoadOpensNothing(t *testing.T) {
 			config:  func(*jetstream.StreamConfig) {},
 			wantErr: ErrBucketMissing,
 		},
-		{name: "a leaderless bucket", fault: ErrNoLeader, config: func(*jetstream.StreamConfig) {}, wantErr: ErrNoLeader},
+		{
+			name:    "a leaderless bucket",
+			fault:   ErrNoLeader,
+			config:  func(*jetstream.StreamConfig) {},
+			wantErr: ErrNoLeader,
+		},
 		{
 			name:    "a bucket injecting grants",
 			config:  func(c *jetstream.StreamConfig) { c.MaxAge = time.Hour },
 			wantErr: ErrBucketDrift,
 		},
-		{name: "an irreversible bucket opens", config: func(c *jetstream.StreamConfig) { c.Sealed = true }},
+		{
+			name:   "an irreversible bucket opens",
+			config: func(c *jetstream.StreamConfig) { c.Sealed = true },
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -764,14 +836,43 @@ func TestWaitsForTable(t *testing.T) {
 		args error
 		want bool
 	}{
-		{name: "a missing bucket", args: fmt.Errorf("open: %w", ErrBucketMissing), want: true},
-		{name: "no leader", args: ErrNoLeader, want: true},
-		{name: "no quorum", args: ErrNoQuorum, want: true},
-		{name: "no responders", args: nats.ErrNoResponders, want: true},
-		{name: "a timeout", args: context.DeadlineExceeded, want: true},
-		{name: "a grant injecting drift", args: ErrBucketDrift},
-		{name: "too many keys", args: ErrTooManyKeys},
-		{name: "nothing", args: nil},
+		{
+			name: "a missing bucket",
+			args: fmt.Errorf("open: %w", ErrBucketMissing),
+			want: true,
+		},
+		{
+			name: "no leader",
+			args: ErrNoLeader,
+			want: true,
+		},
+		{
+			name: "no quorum",
+			args: ErrNoQuorum,
+			want: true,
+		},
+		{
+			name: "no responders",
+			args: nats.ErrNoResponders,
+			want: true,
+		},
+		{
+			name: "a timeout",
+			args: context.DeadlineExceeded,
+			want: true,
+		},
+		{
+			name: "a grant injecting drift",
+			args: ErrBucketDrift,
+		},
+		{
+			name: "too many keys",
+			args: ErrTooManyKeys,
+		},
+		{
+			name: "nothing",
+			args: nil,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -788,15 +889,29 @@ func TestRetryMayNotExceedReload(t *testing.T) {
 		change  func(o *DirectoryOptions)
 		wantErr error
 	}{
-		{name: "the defaults", change: func(*DirectoryOptions) {}},
-		{name: "retry equal to reload", change: func(o *DirectoryOptions) { o.RetryEvery = o.ReloadInterval }},
+		{
+			name:   "the defaults",
+			change: func(*DirectoryOptions) {},
+		},
+		{
+			name:   "retry equal to reload",
+			change: func(o *DirectoryOptions) { o.RetryEvery = o.ReloadInterval },
+		},
 		{
 			name:    "retry past reload",
 			change:  func(o *DirectoryOptions) { o.RetryEvery = o.ReloadInterval + 1 },
 			wantErr: ErrInvalidOptions,
 		},
-		{name: "zero reread", change: func(o *DirectoryOptions) { o.RereadTime = 0 }, wantErr: ErrInvalidOptions},
-		{name: "negative check", change: func(o *DirectoryOptions) { o.CheckTime = -1 }, wantErr: ErrInvalidOptions},
+		{
+			name:    "zero reread",
+			change:  func(o *DirectoryOptions) { o.RereadTime = 0 },
+			wantErr: ErrInvalidOptions,
+		},
+		{
+			name:    "negative check",
+			change:  func(o *DirectoryOptions) { o.CheckTime = -1 },
+			wantErr: ErrInvalidOptions,
+		},
 		{
 			name:    "reads as long as the reload",
 			change:  func(o *DirectoryOptions) { o.RereadTime = o.ReloadInterval - o.CheckTime },
@@ -824,29 +939,94 @@ func TestTheHorizonIsTwoReloadsAndBothReads(t *testing.T) {
 }
 
 func TestRolledBack(t *testing.T) {
-	covered := bucketState{LastSeq: 10, FirstSeq: 3, Msgs: 5, Created: issuedAt}
+	covered := bucketState{
+		LastSeq:  10,
+		FirstSeq: 3,
+		Msgs:     5,
+		Created:  issuedAt,
+	}
 	tests := []struct {
 		name  string
 		state bucketState
 		want  bool
 	}{
-		{name: "the same", state: covered},
-		{name: "a new issue", state: bucketState{LastSeq: 11, FirstSeq: 3, Msgs: 6, Created: issuedAt}},
-		{name: "a revoke", state: bucketState{LastSeq: 10, FirstSeq: 3, Msgs: 4, Created: issuedAt}},
-		{name: "a revoke of the first", state: bucketState{LastSeq: 10, FirstSeq: 5, Msgs: 4, Created: issuedAt}},
-		{name: "a lower last sequence", state: bucketState{LastSeq: 9, FirstSeq: 3, Msgs: 5, Created: issuedAt}, want: true},
-		{name: "a lower first sequence", state: bucketState{LastSeq: 10, FirstSeq: 2, Msgs: 5, Created: issuedAt}, want: true},
 		{
-			name:  "more messages at the same sequence",
-			state: bucketState{LastSeq: 10, FirstSeq: 3, Msgs: 6, Created: issuedAt},
-			want:  true,
+			name:  "the same",
+			state: covered,
 		},
 		{
-			name:  "two more messages after one issue",
-			state: bucketState{LastSeq: 11, FirstSeq: 3, Msgs: 7, Created: issuedAt},
-			want:  true,
+			name: "a new issue",
+			state: bucketState{
+				LastSeq:  11,
+				FirstSeq: 3,
+				Msgs:     6,
+				Created:  issuedAt,
+			},
 		},
-		{name: "nothing covered yet", state: bucketState{LastSeq: 1}},
+		{
+			name: "a revoke",
+			state: bucketState{
+				LastSeq:  10,
+				FirstSeq: 3,
+				Msgs:     4,
+				Created:  issuedAt,
+			},
+		},
+		{
+			name: "a revoke of the first",
+			state: bucketState{
+				LastSeq:  10,
+				FirstSeq: 5,
+				Msgs:     4,
+				Created:  issuedAt,
+			},
+		},
+		{
+			name: "a lower last sequence",
+			state: bucketState{
+				LastSeq:  9,
+				FirstSeq: 3,
+				Msgs:     5,
+				Created:  issuedAt,
+			},
+			want: true,
+		},
+		{
+			name: "a lower first sequence",
+			state: bucketState{
+				LastSeq:  10,
+				FirstSeq: 2,
+				Msgs:     5,
+				Created:  issuedAt,
+			},
+			want: true,
+		},
+		{
+			name: "more messages at the same sequence",
+			state: bucketState{
+				LastSeq:  10,
+				FirstSeq: 3,
+				Msgs:     6,
+				Created:  issuedAt,
+			},
+			want: true,
+		},
+		{
+			name: "two more messages after one issue",
+			state: bucketState{
+				LastSeq:  11,
+				FirstSeq: 3,
+				Msgs:     7,
+				Created:  issuedAt,
+			},
+			want: true,
+		},
+		{
+			name: "nothing covered yet",
+			state: bucketState{
+				LastSeq: 1,
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -898,10 +1078,27 @@ func TestAFirstLoadOfMostlyInvalidEntriesIsAnError(t *testing.T) {
 		invalid uint64
 		want    bool
 	}{
-		{name: "only invalid entries", grants: 0, invalid: 3, want: true},
-		{name: "as many invalid as grants", grants: 2, invalid: 2, want: true},
-		{name: "fewer invalid than grants", grants: 3, invalid: 1},
-		{name: "no invalid entries", grants: 2},
+		{
+			name:    "only invalid entries",
+			grants:  0,
+			invalid: 3,
+			want:    true,
+		},
+		{
+			name:    "as many invalid as grants",
+			grants:  2,
+			invalid: 2,
+			want:    true,
+		},
+		{
+			name:    "fewer invalid than grants",
+			grants:  3,
+			invalid: 1,
+		},
+		{
+			name:   "no invalid entries",
+			grants: 2,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

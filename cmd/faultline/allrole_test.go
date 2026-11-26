@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -30,12 +31,11 @@ import (
 const (
 	acceptedBeforeSigterm = 200
 	tinyPairingTTL        = "1ms"
-	layersUpToTheJournal  = 6
 )
 
 var (
 	errOTLPRefused = errors.New("otlp port refused")
-	allStopOrder   = []any{"otlp", "journal", "p0", "stats", "conn", "http", "tracing"}
+	allStopOrder   = []any{"otlp", "journal", "directory", "p0", "stats", "conn", "http", "tracing"}
 )
 
 type allRun struct {
@@ -74,6 +74,7 @@ func buildAll(t *testing.T, values map[string]string) *allRun {
 
 func (r *allRun) launch(t *testing.T) *allRun {
 	t.Helper()
+	grantTestToken(t, r.setup.Journal.Tenant, r.setup.NATS.URLs...)
 	r.done = launchRoleWith(t, r.role, r.sig.notify, r.life)
 	return r
 }
@@ -93,6 +94,12 @@ func (r *allRun) graphs(t *testing.T) faultlinev1connect.GraphServiceClient {
 func (r *allRun) exporter(t *testing.T) ptraceotlp.GRPCClient {
 	t.Helper()
 	return ptraceotlp.NewGRPCClient(dialOTLP(t, r.setup.Config.OTLPAddr))
+}
+
+func (r *allRun) layersUpTo(name string) int {
+	return slices.IndexFunc(r.role.layers, func(entry layer) bool {
+		return entry.name == name
+	}) + 1
 }
 
 func (r *allRun) layer(t *testing.T, name string) *layer {
@@ -308,6 +315,7 @@ func TestAllIngestStartFailureStopsTheProcessorThroughItsLayers(t *testing.T) {
 	assertDiff(t, "stop lines", []string{
 		"layer_stopped otlp",
 		"layer_stopped journal",
+		"layer_stopped directory",
 		"layer_stopped p0",
 		"layer_stopped stats",
 		"layer_stopped conn",
@@ -349,7 +357,7 @@ func TestALostLeaseWhileAllWaitsForStreamsStopsWithCodeOne(t *testing.T) {
 	assertDiff(t, "lease.lost", []any{"p0", "journal/await_streams"}, []any{lost["partition"], lost["stage"]})
 	assertDiff(t, "served", false, run.life.Served())
 	assertNoLine(t, run.logs, eventPipelineStats)
-	assertDiff(t, "layers entered", layersUpToTheJournal, run.role.entered)
+	assertDiff(t, "layers entered", run.layersUpTo(layerJournal), run.role.entered)
 }
 
 func TestTheAllRoleFitsTheDefaultMemoryLimit(t *testing.T) {
@@ -390,6 +398,10 @@ func TestTheAllRoleFitsTheDefaultMemoryLimit(t *testing.T) {
 		{
 			name:  "checkpoint",
 			bytes: 6491273,
+		},
+		{
+			name:  "token directory",
+			bytes: directoryHeap,
 		},
 		{
 			name:  "records before pubAck",

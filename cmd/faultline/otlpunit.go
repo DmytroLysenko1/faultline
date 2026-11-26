@@ -19,6 +19,7 @@ import (
 const (
 	layerOTLP       = "otlp"
 	stageOTLPListen = "otlp/listen"
+	stageOTLPTap    = "otlp/tap"
 	otlpStopGrace   = 3500 * time.Millisecond
 	componentOTLP   = "otlp"
 )
@@ -33,9 +34,14 @@ type journalSource interface {
 	opened() *journal.Journal
 }
 
+type tapSource interface {
+	tap() (*otlp.Tap, error)
+}
+
 type otlpUnit struct {
 	address  string
 	journals journalSource
+	taps     tapSource
 	rules    *operation.Rules
 	logger   *slog.Logger
 	sup      unitSupervisor
@@ -43,10 +49,11 @@ type otlpUnit struct {
 	accepted atomic.Pointer[ingest.AcceptBatch]
 }
 
-func otlpLayer(cfg *Config, journals journalSource, logger *slog.Logger) layer {
+func otlpLayer(cfg *Config, journals journalSource, taps tapSource, logger *slog.Logger) layer {
 	receiver := &otlpUnit{
 		address:  cfg.OTLPAddr,
 		journals: journals,
+		taps:     taps,
 		rules:    cfg.RouteRules,
 		logger:   logger,
 	}
@@ -67,6 +74,13 @@ func otlpLayer(cfg *Config, journals journalSource, logger *slog.Logger) layer {
 
 func (u *otlpUnit) start(ctx context.Context, sup unitSupervisor) error {
 	u.sup = sup
+	gate, err := u.taps.tap()
+	if err != nil {
+		return &stageError{
+			stage: stageOTLPTap,
+			err:   err,
+		}
+	}
 	var config net.ListenConfig
 	listener, err := config.Listen(ctx, network, u.address)
 	if err != nil {
@@ -77,7 +91,7 @@ func (u *otlpUnit) start(ctx context.Context, sup unitSupervisor) error {
 	}
 	accept := ingest.NewAcceptBatch(u.journals.opened(), operation.NewNormalizer(u.rules))
 	u.accepted.Store(accept)
-	u.server = otlp.NewServer(accept, otlp.DefaultOptions(u.logger, systemClock{}))
+	u.server = otlp.NewServer(accept, gate, otlp.DefaultOptions(u.logger, systemClock{}))
 	limited := otlp.LimitListener(listener)
 	sup.spawn(componentOTLP, func() error {
 		return withoutSentinel(u.server.Serve(limited), grpc.ErrServerStopped)

@@ -21,6 +21,7 @@ import (
 
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/otlptest"
 )
 
 const (
@@ -41,9 +42,10 @@ const (
 var outcomeFrameSizeReset = "reset " + http2.ErrCodeFrameSize.String()
 
 type transportOutcome struct {
-	Advertised    uint32
-	Outcome       string
-	AcceptorCalls int64
+	Advertised         uint32
+	Outcome            string
+	AuthenticatorCalls int64
+	AcceptorCalls      int64
 }
 
 type rawClient struct {
@@ -69,7 +71,10 @@ func dialRaw(t *testing.T, address string) rawClient {
 	if _, err := io.WriteString(conn, http2.ClientPreface); err != nil {
 		t.Fatalf("write preface: %v", err)
 	}
-	client := rawClient{conn: conn, framer: http2.NewFramer(conn, conn)}
+	client := rawClient{
+		conn:   conn,
+		framer: http2.NewFramer(conn, conn),
+	}
 	if err := client.framer.WriteSettings(); err != nil {
 		t.Fatalf("write settings: %v", err)
 	}
@@ -81,12 +86,34 @@ func headerBlock(t *testing.T, padding padding) []byte {
 	var block bytes.Buffer
 	encoder := hpack.NewEncoder(&block)
 	for _, field := range []hpack.HeaderField{
-		{Name: ":method", Value: "POST"},
-		{Name: ":scheme", Value: "http"},
-		{Name: ":path", Value: exportMethod},
-		{Name: ":authority", Value: "localhost"},
-		{Name: "content-type", Value: "application/grpc"},
-		{Name: "te", Value: "trailers"},
+		{
+			Name:  ":method",
+			Value: "POST",
+		},
+		{
+			Name:  ":scheme",
+			Value: "http",
+		},
+		{
+			Name:  ":path",
+			Value: exportMethod,
+		},
+		{
+			Name:  ":authority",
+			Value: "localhost",
+		},
+		{
+			Name:  "content-type",
+			Value: "application/grpc",
+		},
+		{
+			Name:  "te",
+			Value: "trailers",
+		},
+		{
+			Name:  "authorization",
+			Value: "Bearer " + otlptest.Token,
+		},
 	} {
 		if err := encoder.WriteField(field); err != nil {
 			t.Fatalf("encode %s: %v", field.Name, err)
@@ -94,7 +121,10 @@ func headerBlock(t *testing.T, padding padding) []byte {
 	}
 	value := strings.Repeat(paddingSymbol, padding.valueBytes)
 	for index := range padding.headers {
-		field := hpack.HeaderField{Name: paddingHeader + strconv.Itoa(index), Value: value}
+		field := hpack.HeaderField{
+			Name:  paddingHeader + strconv.Itoa(index),
+			Value: value,
+		}
 		if err := encoder.WriteField(field); err != nil {
 			t.Fatalf("encode %s: %v", field.Name, err)
 		}
@@ -188,41 +218,90 @@ func TestHugeMetadataIsRefusedByTheTransport(t *testing.T) {
 	}{
 		{
 			name: "one value under the limit",
-			args: args{padding: padding{headers: 1, valueBytes: limit / 2}},
-			want: transportOutcome{Advertised: otlp.MaxHeaderListBytes, Outcome: outcomeAnswered, AcceptorCalls: 1},
+			args: args{
+				padding: padding{
+					headers:    1,
+					valueBytes: limit / 2,
+				},
+			},
+			want: transportOutcome{
+				Advertised:         otlp.MaxHeaderListBytes,
+				Outcome:            outcomeAnswered,
+				AuthenticatorCalls: 1,
+				AcceptorCalls:      1,
+			},
 		},
 		{
 			name: "many headers under the limit",
-			args: args{padding: padding{headers: smallHeaders, valueBytes: headerValueBytes}},
-			want: transportOutcome{Advertised: otlp.MaxHeaderListBytes, Outcome: outcomeAnswered, AcceptorCalls: 1},
+			args: args{
+				padding: padding{
+					headers:    smallHeaders,
+					valueBytes: headerValueBytes,
+				},
+			},
+			want: transportOutcome{
+				Advertised:         otlp.MaxHeaderListBytes,
+				Outcome:            outcomeAnswered,
+				AuthenticatorCalls: 1,
+				AcceptorCalls:      1,
+			},
 		},
 		{
 			name: "many headers over the limit",
-			args: args{padding: padding{headers: manyHeaders, valueBytes: headerValueBytes}},
-			want: transportOutcome{Advertised: otlp.MaxHeaderListBytes, Outcome: outcomeFrameSizeReset},
+			args: args{
+				padding: padding{
+					headers:    manyHeaders,
+					valueBytes: headerValueBytes,
+				},
+			},
+			want: transportOutcome{
+				Advertised: otlp.MaxHeaderListBytes,
+				Outcome:    outcomeFrameSizeReset,
+			},
 		},
 		{
 			name: "one value over the limit",
-			args: args{padding: padding{headers: 1, valueBytes: limit + 1}},
-			want: transportOutcome{Advertised: otlp.MaxHeaderListBytes, Outcome: outcomeClosed},
+			args: args{
+				padding: padding{
+					headers:    1,
+					valueBytes: limit + 1,
+				},
+			},
+			want: transportOutcome{
+				Advertised: otlp.MaxHeaderListBytes,
+				Outcome:    outcomeClosed,
+			},
 		},
 		{
 			name: "sixteen mebibytes of metadata",
-			args: args{padding: padding{headers: 1, valueBytes: sendLimitBytes}},
-			want: transportOutcome{Advertised: otlp.MaxHeaderListBytes, Outcome: outcomeClosed},
+			args: args{
+				padding: padding{
+					headers:    1,
+					valueBytes: sendLimitBytes,
+				},
+			},
+			want: transportOutcome{
+				Advertised: otlp.MaxHeaderListBytes,
+				Outcome:    outcomeClosed,
+			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var calls atomic.Int64
+			var calls, authentications atomic.Int64
 			listener, err := new(net.ListenConfig).Listen(t.Context(), "tcp", loopbackAddress)
 			if err != nil {
 				t.Fatalf("listen: %v", err)
 			}
-			serve(t, listener, func(context.Context, ingest.AcceptCommand) (ingest.AcceptResult, error) {
+			settings := options(&logBuffer{}, &fakeClock{})
+			gate := otlp.NewTap(otlptest.AuthenticatorFunc(func(ctx context.Context, token string) error {
+				authentications.Add(1)
+				return otlptest.AdmitToken(ctx, token)
+			}), settings)
+			serveTapped(t, listener, func(context.Context, ingest.AcceptCommand) (ingest.AcceptResult, error) {
 				calls.Add(1)
 				return ingest.AcceptResult{}, nil
-			}, options(&logBuffer{}, &fakeClock{}))
+			}, gate, settings)
 			client := dialRaw(t, listener.Addr().String())
 
 			sent := client.sendRequest(headerBlock(t, tt.args.padding))
@@ -231,7 +310,12 @@ func TestHugeMetadataIsRefusedByTheTransport(t *testing.T) {
 				t.Logf("the server stopped reading the request: %v", sent)
 			}
 
-			got := transportOutcome{Advertised: advertised, Outcome: outcome, AcceptorCalls: calls.Load()}
+			got := transportOutcome{
+				Advertised:         advertised,
+				Outcome:            outcome,
+				AuthenticatorCalls: authentications.Load(),
+				AcceptorCalls:      calls.Load(),
+			}
 			if diff := cmp.Diff(tt.want, got); diff != "" {
 				t.Errorf("mismatch (-want +got):\n%s", diff)
 			}

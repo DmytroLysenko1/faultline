@@ -86,12 +86,14 @@ func benchServer(b *testing.B, acceptor *ingest.AcceptBatch) ptraceotlp.GRPCClie
 	clock := &fakeClock{
 		now: time.Unix(0, 0),
 	}
-	server := otlp.NewServer(acceptor, otlp.DefaultOptions(slog.New(slog.DiscardHandler), clock))
+	settings := otlp.DefaultOptions(slog.New(slog.DiscardHandler), clock)
+	server := otlp.NewServer(acceptor, otlp.NewTap(otlptest.Admitting(), settings), settings)
 	served := make(chan error, 1)
 	go func() { served <- server.Serve(listener) }()
 	conn, err := grpc.NewClient(bufconnAddr,
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return listener.DialContext(ctx) }),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		otlptest.WithTestToken(),
 	)
 	if err != nil {
 		b.Fatalf("NewClient: %v", err)

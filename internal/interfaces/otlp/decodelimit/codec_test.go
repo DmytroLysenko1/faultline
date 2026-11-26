@@ -116,3 +116,20 @@ func TestCodecDelegatesMessagesItDoesNotOwn(t *testing.T) {
 		t.Errorf("codec name (-want +got):\n%s", diff)
 	}
 }
+
+func TestCodecMarshalsAnExportResponse(t *testing.T) {
+	var seen rejections
+	response := ptraceotlp.NewExportResponse()
+	response.PartialSuccess().SetRejectedSpans(3)
+	encoded, err := newCodec(&seen).Marshal(response)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	decoded := ptraceotlp.NewExportResponse()
+	if err := decoded.UnmarshalProto(encoded.Materialize()); err != nil {
+		t.Fatalf("UnmarshalProto: %v", err)
+	}
+	if diff := cmp.Diff(int64(3), decoded.PartialSuccess().RejectedSpans()); diff != "" {
+		t.Errorf("rejected spans (-want +got):\n%s", diff)
+	}
+}

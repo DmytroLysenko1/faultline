@@ -72,6 +72,7 @@ func TestTheRealLayersStopWithoutALateExit(t *testing.T) {
 			args: func(t *testing.T, life *lifecycle, logs *logBuffer) *stack {
 				cluster := natsjstest.Start(t, singleNATSNode)
 				ensureStreams(t, cluster.URLs()...)
+				grantTestToken(t, defaultTenant, cluster.URLs()...)
 				setup, _, _ := ingesterOn(t, cluster.URLs())
 				return ingesterStack(setup, life, testLogger(logs))
 			},
@@ -94,7 +95,9 @@ func TestTheRealLayersStopWithoutALateExit(t *testing.T) {
 
 func baseStack(_ *testing.T, life *lifecycle, logs *logBuffer) *stack {
 	logger := testLogger(logs)
-	cfg := &Config{APIAddr: loopback}
+	cfg := &Config{
+		APIAddr: loopback,
+	}
 	role := &stack{}
 	tracing, traced := tracingLayer(cfg, logger)
 	role.layers = []layer{
@@ -107,7 +110,9 @@ func baseStack(_ *testing.T, life *lifecycle, logs *logBuffer) *stack {
 
 func TestABrokenTracingEndpointFailsItsStage(t *testing.T) {
 	logs := &logBuffer{}
-	current, _ := tracingLayer(&Config{SelfTracingEndpoint: "%zz"}, testLogger(logs))
+	current, _ := tracingLayer(&Config{
+		SelfTracingEndpoint: "%zz",
+	}, testLogger(logs))
 	view := newLayerSupervisor(t, logs, &current)
 	err := current.unit.start(t.Context(), view)
 	failure, found := errors.AsType[*stageError](err)
@@ -147,7 +152,9 @@ func TestARealLayerKeepsASignalDuringItsStart(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
 			logs := &logBuffer{}
-			current := tt.Args(&Config{APIAddr: loopback}, logs)
+			current := tt.Args(&Config{
+				APIAddr: loopback,
+			}, logs)
 			view := newLayerSupervisor(t, logs, &current)
 			signalled, cancel := context.WithCancelCause(t.Context())
 			cancel(errTestSignal)
@@ -174,7 +181,9 @@ func TestARealLayerKeepsASignalDuringItsStart(t *testing.T) {
 func TestTheHTTPLayerServesUntilStopped(t *testing.T) {
 	logs := &logBuffer{}
 	address := freeAddress(t)
-	current := httpLayer(&Config{APIAddr: address}, noopTracer{}, healthRoutes, "", testLogger(logs))
+	current := httpLayer(&Config{
+		APIAddr: address,
+	}, noopTracer{}, healthRoutes, "", testLogger(logs))
 	view := newLayerSupervisor(t, logs, &current)
 	if err := current.unit.start(t.Context(), view); err != nil {
 		t.Fatalf("start = %v", err)
@@ -247,7 +256,9 @@ func startedAPI(t *testing.T, cfg *Config, routes apiRoutes, probe string) error
 
 func TestTheOTLPProbeLeavesItsPortFree(t *testing.T) {
 	probe := freeAddress(t)
-	if err := startedAPI(t, &Config{APIAddr: loopback}, healthRoutes, probe); err != nil {
+	if err := startedAPI(t, &Config{
+		APIAddr: loopback,
+	}, healthRoutes, probe); err != nil {
 		t.Fatalf("start = %v", err)
 	}
 	assertFree(t, probe, "")
@@ -255,7 +266,9 @@ func TestTheOTLPProbeLeavesItsPortFree(t *testing.T) {
 
 func TestABusyAPIPortFailsTheListenStage(t *testing.T) {
 	busy := occupy(t)
-	err := startedAPI(t, &Config{APIAddr: busy}, healthRoutes, "")
+	err := startedAPI(t, &Config{
+		APIAddr: busy,
+	}, healthRoutes, "")
 	failure, found := errors.AsType[*stageError](err)
 	if !found || failure.stage != stageHTTPListen || !strings.Contains(err.Error(), busy) {
 		t.Fatalf("start = %v, want the %s stage naming %s", err, stageHTTPListen, busy)
@@ -264,7 +277,9 @@ func TestABusyAPIPortFailsTheListenStage(t *testing.T) {
 
 func TestABusyOTLPPortFailsBeforeTheAPIServes(t *testing.T) {
 	address, busy := freeAddress(t), occupy(t)
-	err := startedAPI(t, &Config{APIAddr: address}, healthRoutes, busy)
+	err := startedAPI(t, &Config{
+		APIAddr: address,
+	}, healthRoutes, busy)
 	failure, found := errors.AsType[*stageError](err)
 	if !found || failure.stage != stageHTTPProbe || !strings.Contains(err.Error(), busy) {
 		t.Fatalf("start = %v, want the %s stage naming %s", err, stageHTTPProbe, busy)
@@ -274,7 +289,9 @@ func TestABusyOTLPPortFailsBeforeTheAPIServes(t *testing.T) {
 
 func TestBrokenRoutesFreeTheAPIPort(t *testing.T) {
 	address := freeAddress(t)
-	err := startedAPI(t, &Config{APIAddr: address}, brokenRoutes, "")
+	err := startedAPI(t, &Config{
+		APIAddr: address,
+	}, brokenRoutes, "")
 	failure, found := errors.AsType[*stageError](err)
 	if !found || failure.stage != stageHTTPRoutes || !errors.Is(err, errRoutes) {
 		t.Fatalf("start = %v, want the %s stage carrying %v", err, stageHTTPRoutes, errRoutes)
@@ -305,7 +322,10 @@ func TestAStuckShutdownFallsBackToClose(t *testing.T) {
 		}
 		assertDiff(t, "stop elapsed", httpGrace, elapsed)
 		assertDiff(t, "server calls", []string{componentAPI + ".shutdown", componentAPI + ".close"}, events.list())
-		assertDiff(t, "forced_stop lines", []map[string]any{{"level": levelWarn, "layer": layerHTTP}},
+		assertDiff(t, "forced_stop lines", []map[string]any{{
+			"level": levelWarn,
+			"layer": layerHTTP,
+		}},
 			picked(logs.all(t, eventForcedStop), "level", "layer"))
 	})
 }
@@ -329,7 +349,11 @@ func TestATracingFlushFailureIsAWarning(t *testing.T) {
 	if err := traced.stop(t.Context()); err != nil {
 		t.Fatalf("stop = %v, want nil", err)
 	}
-	want := []map[string]any{{"level": levelWarn, "layer": layerTracing, "error": errFlush.Error()}}
+	want := []map[string]any{{
+		"level": levelWarn,
+		"layer": layerTracing,
+		"error": errFlush.Error(),
+	}}
 	assertDiff(t, "forced_stop lines", want, picked(logs.all(t, eventForcedStop), "level", "layer", "error"))
 	if err := (&tracingUnit{}).stop(t.Context()); err != nil {
 		t.Errorf("stop of an unstarted tracing layer = %v, want nil", err)
@@ -367,7 +391,10 @@ func TestAClosedServerThatKeepsServingIsAbandoned(t *testing.T) {
 		if !errors.Is(err, errStepAbandoned) {
 			t.Fatalf("stop = %v, want %v", err, errStepAbandoned)
 		}
-		assertDiff(t, "forced_stop lines", []map[string]any{{"level": levelWarn, "layer": layerHTTP}},
+		assertDiff(t, "forced_stop lines", []map[string]any{{
+			"level": levelWarn,
+			"layer": layerHTTP,
+		}},
 			picked(logs.all(t, eventForcedStop), "level", "layer"))
 	})
 }
