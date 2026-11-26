@@ -6,13 +6,13 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/grpc/codes"
 
-	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/journaltest"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/otlptest"
 )
 
 func TestExhaustedCreditIsRetryableAndChangesNothing(t *testing.T) {
 	first := requestOf(smallRequestSpans, 0)
-	p := startPipeline(t, memjournal.Limits{
+	p := startPipeline(t, journaltest.Limits{
 		MaxBytes:   footprintOf(t, first),
 		MaxBatches: roomyBatches,
 	})
@@ -36,7 +36,7 @@ func TestExhaustedCreditIsRetryableAndChangesNothing(t *testing.T) {
 func TestRequestLargerThanTheRemainingCreditIsRejectedWhole(t *testing.T) {
 	small := requestOf(smallRequestSpans, 0)
 	large := requestOf(largeRequestSpans, smallRequestSpans)
-	p := startPipeline(t, memjournal.Limits{
+	p := startPipeline(t, journaltest.Limits{
 		MaxBytes:   footprintOf(t, small) + footprintOf(t, large) - 1,
 		MaxBatches: roomyBatches,
 	})
@@ -53,7 +53,7 @@ func TestRequestLargerThanTheRemainingCreditIsRejectedWhole(t *testing.T) {
 }
 
 func TestRequestLargerThanTheJournalIsPermanent(t *testing.T) {
-	p := startPipeline(t, memjournal.Limits{
+	p := startPipeline(t, journaltest.Limits{
 		MaxBytes:   tinyJournalBytes,
 		MaxBatches: roomyBatches,
 	})
@@ -64,13 +64,13 @@ func TestRequestLargerThanTheJournalIsPermanent(t *testing.T) {
 	if diff := cmp.Diff(want, rejectionOf(err)); diff != "" {
 		t.Errorf("rejection (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff(memjournal.Stats{}, p.Journal.Stats()); diff != "" {
+	if diff := cmp.Diff(journaltest.Stats{}, p.Journal.Stats()); diff != "" {
 		t.Errorf("journal after a permanent rejection (-want +got):\n%s", diff)
 	}
 }
 
 func TestClosedJournalAnswersUnavailable(t *testing.T) {
-	p := startPipeline(t, memjournal.Limits{
+	p := startPipeline(t, journaltest.Limits{
 		MaxBytes:   roomyBytes,
 		MaxBatches: roomyBatches,
 	})
@@ -85,7 +85,7 @@ func TestClosedJournalAnswersUnavailable(t *testing.T) {
 }
 
 func TestLargestRequestFitsTheJournalLowerBound(t *testing.T) {
-	p := startPipeline(t, memjournal.Limits{
+	p := startPipeline(t, journaltest.Limits{
 		MaxBytes:   journalLowerBound,
 		MaxBatches: journalBatchesUsed,
 	})
@@ -101,7 +101,7 @@ func TestLargestRequestFitsTheJournalLowerBound(t *testing.T) {
 }
 
 func TestQueuedBatchDoesNotPinTheRequest(t *testing.T) {
-	p := startPipeline(t, memjournal.Limits{
+	p := startPipeline(t, journaltest.Limits{
 		MaxBytes:   roomyBytes,
 		MaxBatches: roomyBatches,
 	})

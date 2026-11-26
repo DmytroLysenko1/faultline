@@ -26,8 +26,8 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation"
 	faultlinev1 "github.com/DmytroLysenko1/faultline/internal/gen/proto/faultline/v1"
 	"github.com/DmytroLysenko1/faultline/internal/gen/proto/faultline/v1/faultlinev1connect"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/journaltest"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memgraph"
-	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/graphservice"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
@@ -56,7 +56,7 @@ func (fixedClock) Now() time.Time {
 }
 
 type system struct {
-	journal  *memjournal.Journal
+	journal  *journaltest.Memory
 	otlp     *grpc.Server
 	serving  sync.WaitGroup
 	pipeline sync.WaitGroup
@@ -68,13 +68,13 @@ type system struct {
 
 func start(t *testing.T) *system {
 	t.Helper()
-	journal, err := memjournal.New(memjournal.Limits{
+	journal, err := journaltest.NewMemory(journaltest.Limits{
 		MaxBytes:   journalBytes,
 		MaxBatches: journalBatches,
 		IdleAfter:  journalIdleAfter,
 	}, fixedClock{})
 	if err != nil {
-		t.Fatalf("memjournal.New: %v", err)
+		t.Fatalf("journaltest.NewMemory: %v", err)
 	}
 	built := &system{
 		journal: journal,

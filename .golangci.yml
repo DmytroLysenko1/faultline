@@ -185,7 +185,7 @@ linters:
           files:
             - "**/internal/application/**"
             - "**/internal/interfaces/otlp/**"
-            - "**/internal/infrastructure/memjournal/**"
+            - "**/internal/infrastructure/journaltest/**"
             - "**/internal/infrastructure/memgraph/**"
             - "**/internal/infrastructure/natsjs/**"
           deny:
@@ -256,8 +256,6 @@ linters:
             - pkg: github.com/DmytroLysenko1/faultline/internal/application/processing/processingtest
               desc: test harnesses stay in tests
             - pkg: github.com/DmytroLysenko1/faultline/internal/infrastructure/journaltest
-              desc: test harnesses stay in tests
-            - pkg: github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal
               desc: test harnesses stay in tests
             - pkg: github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest
               desc: test harnesses stay in tests
@@ -353,7 +351,7 @@ linters:
           msg: only topology.Builder keeps the expire → match → apply → record order (I1, I3, I10)
         - pattern: ^batch\.(New|NewOwning|Heartbeat)$
           pkg: ^github\.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch$
-          msg: only the journals (memjournal, natsjs/feed) stamp ReceivedAt and make heartbeats — journal order is ReceivedAt order
+          msg: only the journals (journaltest, natsjs/feed) stamp ReceivedAt and make heartbeats — journal order is ReceivedAt order
         - pattern: ^checkpoint\.Err[A-Za-z]+$
           pkg: ^github\.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/checkpoint$
           msg: branch on processing.* — the checkpoint store translates its errors at its exit (docs/design/step-03-journal-and-reliable-ingest.md, slice natsjs/checkpoint)
@@ -389,10 +387,10 @@ linters:
         linters:
           - forbidigo
         text: only topology.Builder keeps the expire
-      - path: (internal/infrastructure/memjournal/|internal/infrastructure/natsjs/feed/|internal/domain/telemetry/batch/|/[a-z]+test/|_test\.go$)
+      - path: (internal/infrastructure/journaltest/|internal/infrastructure/natsjs/feed/|internal/domain/telemetry/batch/|/[a-z]+test/|_test\.go$)
         linters:
           - forbidigo
-        text: only the journals \(memjournal, natsjs/feed\) stamp ReceivedAt
+        text: only the journals \(journaltest, natsjs/feed\) stamp ReceivedAt
       - path-except: internal/(domain|application)/
         linters:
           - forbidigo

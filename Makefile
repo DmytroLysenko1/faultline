@@ -117,7 +117,7 @@ else
 endif
 
 PROBE_PACKAGES := ./internal/interfaces/otlp/decodelimit/...
-BUDGET_PACKAGES := ./internal/domain/topology/... ./internal/infrastructure/memjournal/... \
+BUDGET_PACKAGES := ./internal/domain/topology/... ./internal/infrastructure/journaltest/... \
 	./internal/interfaces/connectapi/... ./internal/infrastructure/selftrace/...
 DRAIN_PACKAGES := ./test/pipeline/...
 
@@ -130,7 +130,7 @@ test-probes: ## Heap and time probes without -race: decode limit, token parse al
 	go test -count=1 -run 'TestLargestAllowedGraph' ./cmd/faultctl/
 
 STRESS_PACKAGES := ./internal/application/ingest/... ./internal/application/processing/... \
-	./internal/infrastructure/memjournal/... ./internal/infrastructure/memgraph/... ./test/pipeline/...
+	./internal/infrastructure/journaltest/... ./internal/infrastructure/memgraph/... ./test/pipeline/...
 STRESS_COUNT := 200
 STREAM_STRESS_COUNT := 2
 STREAM_STRESS_TIMEOUT := 20m

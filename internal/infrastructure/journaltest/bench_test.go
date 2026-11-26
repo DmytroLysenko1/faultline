@@ -1,22 +1,22 @@
-package memjournal_test
+package journaltest_test
 
 import (
 	"testing"
 
-	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/journaltest"
 )
 
 const benchSpans = 512
 
 func BenchmarkAppendReceiveRelease512(b *testing.B) {
 	spans := spansOf(b, 0, benchSpans)
-	journal, err := memjournal.New(memjournal.Limits{
+	journal, err := journaltest.NewMemory(journaltest.Limits{
 		MaxBytes:   roomyBytes,
 		MaxBatches: roomyBatches,
 		IdleAfter:  quietJournal,
 	}, wallClock{})
 	if err != nil {
-		b.Fatalf("memjournal.New: %v", err)
+		b.Fatalf("journaltest.NewMemory: %v", err)
 	}
 	b.ReportAllocs()
 	for b.Loop() {

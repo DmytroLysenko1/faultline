@@ -1,4 +1,4 @@
-package memjournal
+package journaltest
 
 import (
 	"context"
@@ -33,7 +33,7 @@ type Clock interface {
 	Now() time.Time
 }
 
-type Journal struct {
+type Memory struct {
 	limits    Limits
 	source    Clock
 	lock      sync.Mutex
@@ -45,14 +45,14 @@ type Journal struct {
 	appended  uint64
 }
 
-func New(limits Limits, source Clock) (*Journal, error) {
+func NewMemory(limits Limits, source Clock) (*Memory, error) {
 	if source == nil {
-		panic("memjournal: New needs a clock")
+		panic("journaltest: NewMemory needs a clock")
 	}
 	if !limits.valid() {
 		return nil, fmt.Errorf("%w: %+v", ErrInvalidLimits, limits)
 	}
-	return &Journal{
+	return &Memory{
 		limits: limits,
 		source: source,
 		idle: batch.IdleRule{
@@ -62,7 +62,7 @@ func New(limits Limits, source Clock) (*Journal, error) {
 	}, nil
 }
 
-func (j *Journal) Append(ctx context.Context, spans []span.Span) error {
+func (j *Memory) Append(ctx context.Context, spans []span.Span) error {
 	next, err := j.measure(spans)
 	if err != nil {
 		return err
@@ -78,7 +78,7 @@ func (j *Journal) Append(ctx context.Context, spans []span.Span) error {
 	return j.enqueueLocked(&next)
 }
 
-func (j *Journal) Close() {
+func (j *Memory) Close() {
 	j.lock.Lock()
 	defer j.lock.Unlock()
 	if j.closed {
@@ -88,13 +88,13 @@ func (j *Journal) Close() {
 	close(j.queue)
 }
 
-func (j *Journal) Stats() Stats {
+func (j *Memory) Stats() Stats {
 	j.lock.Lock()
 	defer j.lock.Unlock()
 	return j.held
 }
 
-func (j *Journal) measure(spans []span.Span) (entry, error) {
+func (j *Memory) measure(spans []span.Span) (entry, error) {
 	unstamped, err := batch.NewOwning(spans)
 	if err != nil {
 		return entry{}, fmt.Errorf("append: %w", err)
@@ -109,7 +109,7 @@ func (j *Journal) measure(spans []span.Span) (entry, error) {
 	return measured, nil
 }
 
-func (j *Journal) enqueueLocked(next *entry) error {
+func (j *Memory) enqueueLocked(next *entry) error {
 	if err := j.roomLocked(next); err != nil {
 		return err
 	}
@@ -121,7 +121,7 @@ func (j *Journal) enqueueLocked(next *entry) error {
 	return nil
 }
 
-func (j *Journal) roomLocked(next *entry) error {
+func (j *Memory) roomLocked(next *entry) error {
 	if held, capacity := j.held.Bytes, j.limits.MaxBytes; held+next.size > capacity {
 		return fmt.Errorf("append %d bytes, %d of %d held: %w", next.size, held, capacity, ingest.ErrOverloaded)
 	}
@@ -131,7 +131,7 @@ func (j *Journal) roomLocked(next *entry) error {
 	return nil
 }
 
-func (j *Journal) pulseIfIdle() {
+func (j *Memory) pulseIfIdle() {
 	j.lock.Lock()
 	defer j.lock.Unlock()
 	if j.closed || !j.roomForHeartbeatLocked() {
@@ -143,15 +143,15 @@ func (j *Journal) pulseIfIdle() {
 	}
 }
 
-func (j *Journal) freeSlotsLocked() int {
+func (j *Memory) freeSlotsLocked() int {
 	return cap(j.queue) - len(j.queue)
 }
 
-func (j *Journal) roomForHeartbeatLocked() bool {
+func (j *Memory) roomForHeartbeatLocked() bool {
 	return j.freeSlotsLocked() > 1
 }
 
-func (j *Journal) pushLocked(next *entry) {
+func (j *Memory) pushLocked(next *entry) {
 	j.appended++
 	next.sequence = j.appended
 	j.queue <- *next
@@ -159,7 +159,7 @@ func (j *Journal) pushLocked(next *entry) {
 	j.held = j.held.with(next)
 }
 
-func (j *Journal) stampLocked() time.Time {
+func (j *Memory) stampLocked() time.Time {
 	j.monotonic.Advance(j.source.Now())
 	return j.monotonic.Now()
 }

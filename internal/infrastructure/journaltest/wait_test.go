@@ -1,4 +1,4 @@
-package memjournal_test
+package journaltest_test
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/processing"
-	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/journaltest"
 )
 
 const (
@@ -32,9 +32,21 @@ func TestReceiveWaitsAtMostMaxWait(t *testing.T) {
 		Args time.Duration
 		Want waited
 	}{
-		{Name: "empty journal returns nothing after the wait", Args: longWait, Want: waited{Elapsed: longWait}},
-		{Name: "zero wait polls", Args: noWait},
-		{Name: "negative wait polls", Args: -time.Second},
+		{
+			Name: "empty journal returns nothing after the wait",
+			Args: longWait,
+			Want: waited{
+				Elapsed: longWait,
+			},
+		},
+		{
+			Name: "zero wait polls",
+			Args: noWait,
+		},
+		{
+			Name: "negative wait polls",
+			Args: -time.Second,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
@@ -44,7 +56,10 @@ func TestReceiveWaitsAtMostMaxWait(t *testing.T) {
 
 				views := receiveViews(t, journal, tt.Args)
 
-				if diff := cmp.Diff(tt.Want, waited{Views: views, Elapsed: time.Since(start)}); diff != "" {
+				if diff := cmp.Diff(tt.Want, waited{
+					Views:   views,
+					Elapsed: time.Since(start),
+				}); diff != "" {
 					t.Errorf("receive (-want +got):\n%s", diff)
 				}
 			})
@@ -66,8 +81,14 @@ func TestReceiveReturnsABatchAsSoonAsItArrives(t *testing.T) {
 		views := receiveViews(t, journal, longWait)
 		writer.Wait()
 
-		want := waited{Views: []view{dataView(t, start.Add(arrivalDelay), arriving)}, Elapsed: arrivalDelay}
-		if diff := cmp.Diff(want, waited{Views: views, Elapsed: time.Since(start)}); diff != "" {
+		want := waited{
+			Views:   []view{dataView(t, start.Add(arrivalDelay), arriving)},
+			Elapsed: arrivalDelay,
+		}
+		if diff := cmp.Diff(want, waited{
+			Views:   views,
+			Elapsed: time.Since(start),
+		}); diff != "" {
 			t.Errorf("receive (-want +got):\n%s", diff)
 		}
 	})
@@ -116,13 +137,16 @@ func (c *steppedClock) Now() time.Time {
 
 func TestReceivedAtNeverStepsBackWithTheClock(t *testing.T) {
 	at := func(seconds int64) time.Time { return time.Unix(seconds, 0) }
-	journal, err := memjournal.New(memjournal.Limits{
+	stepped := &steppedClock{
+		readings: []time.Time{at(100), at(90), at(120)},
+	}
+	journal, err := journaltest.NewMemory(journaltest.Limits{
 		MaxBytes:   roomyBytes,
 		MaxBatches: roomyBatches,
 		IdleAfter:  quietJournal,
-	}, &steppedClock{readings: []time.Time{at(100), at(90), at(120)}})
+	}, stepped)
 	if err != nil {
-		t.Fatalf("memjournal.New: %v", err)
+		t.Fatalf("journaltest.NewMemory: %v", err)
 	}
 	for first := range 3 {
 		if err := journal.Append(t.Context(), spansOf(t, first, smallBatch)); err != nil {
@@ -143,7 +167,7 @@ func TestReceivedAtNeverStepsBackWithTheClock(t *testing.T) {
 }
 
 func TestReceivedAtFollowsJournalOrderUnderConcurrentWriters(t *testing.T) {
-	journal := newJournal(t, memjournal.Limits{
+	journal := newJournal(t, journaltest.Limits{
 		MaxBytes:   roomyBytes * roomyBytes,
 		MaxBatches: writtenBatches,
 	})

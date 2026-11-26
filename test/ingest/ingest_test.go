@@ -22,7 +22,7 @@ import (
 
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation"
-	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/journaltest"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/otlptest"
 )
@@ -51,16 +51,16 @@ func (fixedClock) Now() time.Time {
 }
 
 type pipeline struct {
-	Journal *memjournal.Journal
+	Journal *journaltest.Memory
 	Client  ptraceotlp.GRPCClient
 }
 
-func startPipeline(t *testing.T, limits memjournal.Limits) pipeline {
+func startPipeline(t *testing.T, limits journaltest.Limits) pipeline {
 	t.Helper()
 	limits.IdleAfter = cmp.Or(limits.IdleAfter, journalIdleAfter)
-	journal, err := memjournal.New(limits, fixedClock{})
+	journal, err := journaltest.NewMemory(limits, fixedClock{})
 	if err != nil {
-		t.Fatalf("memjournal.New: %v", err)
+		t.Fatalf("journaltest.NewMemory: %v", err)
 	}
 	settings := otlp.DefaultOptions(slog.New(slog.DiscardHandler), fixedClock{})
 	server := otlp.NewServer(ingest.NewAcceptBatch(journal, operation.NewNormalizer(nil)), settings)
@@ -117,7 +117,7 @@ func ptraceotlpRequest(traces ptrace.Traces) ptraceotlp.ExportRequest {
 
 func footprintOf(t *testing.T, request ptraceotlp.ExportRequest) int64 {
 	t.Helper()
-	probe := startPipeline(t, memjournal.Limits{
+	probe := startPipeline(t, journaltest.Limits{
 		MaxBytes:   roomyBytes,
 		MaxBatches: roomyBatches,
 	})

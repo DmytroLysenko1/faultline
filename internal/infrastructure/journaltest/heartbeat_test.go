@@ -1,4 +1,4 @@
-package memjournal_test
+package journaltest_test
 
 import (
 	"errors"
@@ -12,7 +12,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/ids"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
-	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/journaltest"
 )
 
 const (
@@ -25,9 +25,9 @@ const (
 	appendSpacing = 500 * time.Millisecond
 )
 
-func idleJournal(t *testing.T, maxBatches int) *memjournal.Journal {
+func idleJournal(t *testing.T, maxBatches int) *journaltest.Memory {
 	t.Helper()
-	return newJournal(t, memjournal.Limits{
+	return newJournal(t, journaltest.Limits{
 		MaxBytes:   roomyBytes,
 		MaxBatches: maxBatches,
 		IdleAfter:  idleAfter,
@@ -67,14 +67,21 @@ func viewsOf(deliveries []processing.Delivery) []view {
 
 func dataView(t *testing.T, receivedAt time.Time, spans []span.Span) view {
 	t.Helper()
-	return view{ReceivedAt: receivedAt, Spans: len(spans), Bytes: footprintOf(t, spans)}
+	return view{
+		ReceivedAt: receivedAt,
+		Spans:      len(spans),
+		Bytes:      footprintOf(t, spans),
+	}
 }
 
 func pulseView(receivedAt time.Time) view {
-	return view{Heartbeat: true, ReceivedAt: receivedAt}
+	return view{
+		Heartbeat:  true,
+		ReceivedAt: receivedAt,
+	}
 }
 
-func receiveViews(t *testing.T, journal *memjournal.Journal, maxWait time.Duration) []view {
+func receiveViews(t *testing.T, journal *journaltest.Memory, maxWait time.Duration) []view {
 	t.Helper()
 	deliveries, err := journal.Receive(t.Context(), receiveAll, maxWait)
 	if err != nil {
@@ -97,8 +104,16 @@ func TestReceiveDeliversOneHeartbeatOnceTheCandidateStalls(t *testing.T) {
 		Args      time.Duration
 		WantPulse time.Duration
 	}{
-		{Name: "stalled before the call", Args: idleAfter, WantPulse: idleAfter},
-		{Name: "stalls during the wait", Args: idleAfter - appendSpacing, WantPulse: idleAfter - appendSpacing + shortWait},
+		{
+			Name:      "stalled before the call",
+			Args:      idleAfter,
+			WantPulse: idleAfter,
+		},
+		{
+			Name:      "stalls during the wait",
+			Args:      idleAfter - appendSpacing,
+			WantPulse: idleAfter - appendSpacing + shortWait,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
@@ -112,7 +127,7 @@ func TestReceiveDeliversOneHeartbeatOnceTheCandidateStalls(t *testing.T) {
 				got := receiveViews(t, journal, shortWait)
 
 				assertViews(t, []view{pulseView(start.Add(tt.WantPulse))}, got)
-				assertStats(t, journal, memjournal.Stats{})
+				assertStats(t, journal, journaltest.Stats{})
 			})
 		})
 	}
@@ -172,8 +187,15 @@ func TestAppendPrependsAHeartbeatOnlyToABatchThatDoesNotRaiseTheCandidate(t *tes
 		Args      time.Duration
 		WantPulse bool
 	}{
-		{Name: "older events keep the candidate and get a heartbeat first", Args: -catchUpAge, WantPulse: true},
-		{Name: "fresh events raise the candidate and get no heartbeat", Args: idleAfter - time.Second},
+		{
+			Name:      "older events keep the candidate and get a heartbeat first",
+			Args:      -catchUpAge,
+			WantPulse: true,
+		},
+		{
+			Name: "fresh events raise the candidate and get no heartbeat",
+			Args: idleAfter - time.Second,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
@@ -227,8 +249,15 @@ func TestHeartbeatYieldsTheLastQueueSlotToData(t *testing.T) {
 		Args      int
 		WantPulse bool
 	}{
-		{Name: "one free slot goes to the data batch", Args: tightQueue},
-		{Name: "two free slots fit the heartbeat and the batch", Args: roomForPulse, WantPulse: true},
+		{
+			Name: "one free slot goes to the data batch",
+			Args: tightQueue,
+		},
+		{
+			Name:      "two free slots fit the heartbeat and the batch",
+			Args:      roomForPulse,
+			WantPulse: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {

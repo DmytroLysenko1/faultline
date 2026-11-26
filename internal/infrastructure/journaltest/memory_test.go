@@ -1,4 +1,4 @@
-package memjournal_test
+package journaltest_test
 
 import (
 	"context"
@@ -19,7 +19,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/kind"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
-	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/journaltest"
 )
 
 const (
@@ -48,21 +48,21 @@ func (wallClock) Now() time.Time {
 	return time.Now()
 }
 
-func newJournal(t *testing.T, limits memjournal.Limits) *memjournal.Journal {
+func newJournal(t *testing.T, limits journaltest.Limits) *journaltest.Memory {
 	t.Helper()
 	if limits.IdleAfter == 0 {
 		limits.IdleAfter = quietJournal
 	}
-	journal, err := memjournal.New(limits, wallClock{})
+	journal, err := journaltest.NewMemory(limits, wallClock{})
 	if err != nil {
-		t.Fatalf("memjournal.New(%+v): %v", limits, err)
+		t.Fatalf("journaltest.NewMemory(%+v): %v", limits, err)
 	}
 	return journal
 }
 
-func roomyJournal(t *testing.T) *memjournal.Journal {
+func roomyJournal(t *testing.T) *journaltest.Memory {
 	t.Helper()
-	return newJournal(t, memjournal.Limits{
+	return newJournal(t, journaltest.Limits{
 		MaxBytes:   roomyBytes,
 		MaxBatches: roomyBatches,
 	})
@@ -86,7 +86,7 @@ func footprintOf(t *testing.T, spans []span.Span) int64 {
 	return measured.Footprint()
 }
 
-func mustAppend(t *testing.T, journal *memjournal.Journal, appended ...[]span.Span) {
+func mustAppend(t *testing.T, journal *journaltest.Memory, appended ...[]span.Span) {
 	t.Helper()
 	for _, next := range appended {
 		if err := journal.Append(t.Context(), slices.Clone(next)); err != nil {
@@ -95,7 +95,7 @@ func mustAppend(t *testing.T, journal *memjournal.Journal, appended ...[]span.Sp
 	}
 }
 
-func mustReceive(t *testing.T, journal *memjournal.Journal, limit int) []processing.Delivery {
+func mustReceive(t *testing.T, journal *journaltest.Memory, limit int) []processing.Delivery {
 	t.Helper()
 	deliveries, err := journal.Receive(t.Context(), limit, noWait)
 	if err != nil {
@@ -118,9 +118,9 @@ func releaseAll(deliveries []processing.Delivery) {
 	}
 }
 
-func statsOf(t *testing.T, batches ...[]span.Span) memjournal.Stats {
+func statsOf(t *testing.T, batches ...[]span.Span) journaltest.Stats {
 	t.Helper()
-	var stats memjournal.Stats
+	var stats journaltest.Stats
 	for _, counted := range batches {
 		stats.Bytes += footprintOf(t, counted)
 		stats.Batches++
@@ -129,7 +129,7 @@ func statsOf(t *testing.T, batches ...[]span.Span) memjournal.Stats {
 	return stats
 }
 
-func assertStats(t *testing.T, journal *memjournal.Journal, want memjournal.Stats) {
+func assertStats(t *testing.T, journal *journaltest.Memory, want journaltest.Stats) {
 	t.Helper()
 	if diff := cmp.Diff(want, journal.Stats()); diff != "" {
 		t.Errorf("stats (-want +got):\n%s", diff)
@@ -137,33 +137,44 @@ func assertStats(t *testing.T, journal *memjournal.Journal, want memjournal.Stat
 }
 
 func TestNewRejectsNonPositiveLimits(t *testing.T) {
-	valid := memjournal.Limits{MaxBytes: 1, MaxBatches: 1, IdleAfter: time.Second}
-	with := func(edit func(*memjournal.Limits)) memjournal.Limits {
+	valid := journaltest.Limits{
+		MaxBytes:   1,
+		MaxBatches: 1,
+		IdleAfter:  time.Second,
+	}
+	with := func(edit func(*journaltest.Limits)) journaltest.Limits {
 		limits := valid
 		edit(&limits)
 		return limits
 	}
 	tests := []struct {
 		Name    string
-		Args    memjournal.Limits
+		Args    journaltest.Limits
 		WantErr error
 	}{
-		{Name: "valid limits", Args: valid},
-		{Name: "zero bytes", Args: with(func(l *memjournal.Limits) { l.MaxBytes = 0 }), WantErr: memjournal.ErrInvalidLimits},
-		{Name: "negative bytes", Args: with(func(l *memjournal.Limits) { l.MaxBytes = -1 }),
-			WantErr: memjournal.ErrInvalidLimits},
-		{Name: "zero batches", Args: with(func(l *memjournal.Limits) { l.MaxBatches = 0 }),
-			WantErr: memjournal.ErrInvalidLimits},
-		{Name: "negative batches", Args: with(func(l *memjournal.Limits) { l.MaxBatches = -1 }),
-			WantErr: memjournal.ErrInvalidLimits},
-		{Name: "zero idle period", Args: with(func(l *memjournal.Limits) { l.IdleAfter = 0 }),
-			WantErr: memjournal.ErrInvalidLimits},
-		{Name: "negative idle period", Args: with(func(l *memjournal.Limits) { l.IdleAfter = -time.Second }),
-			WantErr: memjournal.ErrInvalidLimits},
+		{
+			Name: "valid limits",
+			Args: valid,
+		},
+		{
+			Name:    "zero bytes",
+			Args:    with(func(l *journaltest.Limits) { l.MaxBytes = 0 }),
+			WantErr: journaltest.ErrInvalidLimits,
+		},
+		{Name: "negative bytes", Args: with(func(l *journaltest.Limits) { l.MaxBytes = -1 }),
+			WantErr: journaltest.ErrInvalidLimits},
+		{Name: "zero batches", Args: with(func(l *journaltest.Limits) { l.MaxBatches = 0 }),
+			WantErr: journaltest.ErrInvalidLimits},
+		{Name: "negative batches", Args: with(func(l *journaltest.Limits) { l.MaxBatches = -1 }),
+			WantErr: journaltest.ErrInvalidLimits},
+		{Name: "zero idle period", Args: with(func(l *journaltest.Limits) { l.IdleAfter = 0 }),
+			WantErr: journaltest.ErrInvalidLimits},
+		{Name: "negative idle period", Args: with(func(l *journaltest.Limits) { l.IdleAfter = -time.Second }),
+			WantErr: journaltest.ErrInvalidLimits},
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
-			if _, err := memjournal.New(tt.Args, wallClock{}); !errors.Is(err, tt.WantErr) {
+			if _, err := journaltest.NewMemory(tt.Args, wallClock{}); !errors.Is(err, tt.WantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.WantErr)
 			}
 		})
@@ -176,7 +187,11 @@ func TestNewWithoutAClockPanics(t *testing.T) {
 			t.Errorf("New(limits, nil) did not panic, want a wiring panic")
 		}
 	}()
-	journal, err := memjournal.New(memjournal.Limits{MaxBytes: 1, MaxBatches: 1, IdleAfter: time.Second}, nil)
+	journal, err := journaltest.NewMemory(journaltest.Limits{
+		MaxBytes:   1,
+		MaxBatches: 1,
+		IdleAfter:  time.Second,
+	}, nil)
 	t.Errorf("New(limits, nil) = %v, %v; want a wiring panic", journal, err)
 }
 
@@ -231,8 +246,8 @@ func TestReceiveRejectsNonPositiveMax(t *testing.T) {
 			0,
 			-1,
 		} {
-			if _, err := journal.Receive(t.Context(), limit, noWait); !errors.Is(err, memjournal.ErrInvalidMax) {
-				t.Errorf("Receive(%d) err = %v, want %v", limit, err, memjournal.ErrInvalidMax)
+			if _, err := journal.Receive(t.Context(), limit, noWait); !errors.Is(err, journaltest.ErrInvalidMax) {
+				t.Errorf("Receive(%d) err = %v, want %v", limit, err, journaltest.ErrInvalidMax)
 			}
 		}
 		assertStats(t, journal, statsOf(t, queued...))
@@ -241,7 +256,7 @@ func TestReceiveRejectsNonPositiveMax(t *testing.T) {
 
 func TestAppendBatchAtExactCapacityIsAccepted(t *testing.T) {
 	exact := spansOf(t, 0, largeBatch)
-	journal := newJournal(t, memjournal.Limits{
+	journal := newJournal(t, journaltest.Limits{
 		MaxBytes:   footprintOf(t, exact),
 		MaxBatches: 1,
 	})
@@ -251,20 +266,20 @@ func TestAppendBatchAtExactCapacityIsAccepted(t *testing.T) {
 
 func TestAppendBatchLargerThanFullCapacityIsTooLarge(t *testing.T) {
 	oversized := spansOf(t, 0, largeBatch)
-	journal := newJournal(t, memjournal.Limits{
+	journal := newJournal(t, journaltest.Limits{
 		MaxBytes:   footprintOf(t, oversized) - 1,
 		MaxBatches: roomyBatches,
 	})
 	if err := journal.Append(t.Context(), slices.Clone(oversized)); !errors.Is(err, ingest.ErrBatchTooLarge) {
 		t.Fatalf("err = %v, want %v", err, ingest.ErrBatchTooLarge)
 	}
-	assertStats(t, journal, memjournal.Stats{})
+	assertStats(t, journal, journaltest.Stats{})
 }
 
 func TestByteCreditReturnsOnlyAfterRelease(t *testing.T) {
 	first := spansOf(t, 0, largeBatch)
 	second := spansOf(t, largeBatch, largeBatch)
-	journal := newJournal(t, memjournal.Limits{
+	journal := newJournal(t, journaltest.Limits{
 		MaxBytes:   footprintOf(t, first) + footprintOf(t, second) - 1,
 		MaxBatches: roomyBatches,
 	})
@@ -285,7 +300,7 @@ func TestByteCreditReturnsOnlyAfterRelease(t *testing.T) {
 func TestFullQueueRejectsAndReturnsTheByteCredit(t *testing.T) {
 	queued := spansOf(t, 0, smallBatch)
 	rejected := spansOf(t, 1, largeBatch)
-	journal := newJournal(t, memjournal.Limits{
+	journal := newJournal(t, journaltest.Limits{
 		MaxBytes:   footprintOf(t, queued) + footprintOf(t, rejected),
 		MaxBatches: 1,
 	})
@@ -304,7 +319,7 @@ func TestFullQueueRejectsAndReturnsTheByteCredit(t *testing.T) {
 
 func TestRepeatedReleaseDoesNotReturnCreditTwice(t *testing.T) {
 	sized := spansOf(t, 0, largeBatch)
-	journal := newJournal(t, memjournal.Limits{
+	journal := newJournal(t, journaltest.Limits{
 		MaxBytes:   footprintOf(t, sized),
 		MaxBatches: roomyBatches,
 	})
@@ -312,7 +327,7 @@ func TestRepeatedReleaseDoesNotReturnCreditTwice(t *testing.T) {
 	deliveries := mustReceive(t, journal, receiveAll)
 	releaseAll(deliveries)
 	releaseAll(deliveries)
-	assertStats(t, journal, memjournal.Stats{})
+	assertStats(t, journal, journaltest.Stats{})
 	mustAppend(t, journal, sized)
 	if err := journal.Append(t.Context(), slices.Clone(sized)); !errors.Is(err, ingest.ErrOverloaded) {
 		t.Fatalf("second release doubled the credit: err = %v, want %v", err, ingest.ErrOverloaded)
@@ -330,12 +345,12 @@ func TestStatsCountUnreleasedBatchesUntilRelease(t *testing.T) {
 	deliveries[0].Release()
 	assertStats(t, journal, statsOf(t, large))
 	deliveries[1].Release()
-	assertStats(t, journal, memjournal.Stats{})
+	assertStats(t, journal, journaltest.Stats{})
 }
 
 func TestAppendWithCanceledContextKeepsTheByteCredit(t *testing.T) {
 	appended := spansOf(t, 0, largeBatch)
-	journal := newJournal(t, memjournal.Limits{
+	journal := newJournal(t, journaltest.Limits{
 		MaxBytes:   footprintOf(t, appended),
 		MaxBatches: roomyBatches,
 	})
@@ -344,7 +359,7 @@ func TestAppendWithCanceledContextKeepsTheByteCredit(t *testing.T) {
 	if err := journal.Append(ctx, slices.Clone(appended)); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want %v", err, context.Canceled)
 	}
-	assertStats(t, journal, memjournal.Stats{})
+	assertStats(t, journal, journaltest.Stats{})
 	if err := journal.Append(t.Context(), slices.Clone(appended)); err != nil {
 		t.Fatalf("append after a canceled one: %v, the canceled append kept its byte credit", err)
 	}
@@ -358,27 +373,27 @@ type appendCondition struct {
 	NoCredit  bool
 }
 
-func limitsUnder(t *testing.T, appended []span.Span, condition appendCondition) memjournal.Limits {
+func limitsUnder(t *testing.T, appended []span.Span, condition appendCondition) journaltest.Limits {
 	switch {
 	case condition.Oversized:
-		return memjournal.Limits{
+		return journaltest.Limits{
 			MaxBytes:   footprintOf(t, appended) - 1,
 			MaxBatches: roomyBatches,
 		}
 	case condition.NoCredit:
-		return memjournal.Limits{
+		return journaltest.Limits{
 			MaxBytes:   footprintOf(t, appended),
 			MaxBatches: roomyBatches,
 		}
 	default:
-		return memjournal.Limits{
+		return journaltest.Limits{
 			MaxBytes:   footprintOf(t, appended) * roomyBatches,
 			MaxBatches: 1,
 		}
 	}
 }
 
-func journalUnder(t *testing.T, appended []span.Span, condition appendCondition) *memjournal.Journal {
+func journalUnder(t *testing.T, appended []span.Span, condition appendCondition) *journaltest.Memory {
 	t.Helper()
 	journal := newJournal(t, limitsUnder(t, appended, condition))
 	if condition.FullQueue || condition.NoCredit {
@@ -474,15 +489,14 @@ func TestClosedJournalRejectsAppendsAndDrainsTheRest(t *testing.T) {
 	}
 	rest := mustReceive(t, journal, receiveAll)
 	releaseAll(rest)
-	if diff := cmp.Diff([][]span.Span{
-		queued,
-	}, spansOfDeliveries(rest)); diff != "" {
+	wantRest := [][]span.Span{queued}
+	if diff := cmp.Diff(wantRest, spansOfDeliveries(rest)); diff != "" {
 		t.Errorf("drained batches (-want +got):\n%s", diff)
 	}
 	if _, err := journal.Receive(t.Context(), receiveAll, waitForever); !errors.Is(err, processing.ErrFeedClosed) {
 		t.Fatalf("receive from closed empty journal: err = %v, want %v", err, processing.ErrFeedClosed)
 	}
-	assertStats(t, journal, memjournal.Stats{})
+	assertStats(t, journal, journaltest.Stats{})
 }
 
 type receiveResult struct {
@@ -490,7 +504,7 @@ type receiveResult struct {
 	Err        error
 }
 
-func receiveAsync(ctx context.Context, journal *memjournal.Journal) <-chan receiveResult {
+func receiveAsync(ctx context.Context, journal *journaltest.Memory) <-chan receiveResult {
 	results := make(chan receiveResult, 1)
 	go func() {
 		deliveries, err := journal.Receive(ctx, receiveAll, waitForever)
@@ -517,9 +531,8 @@ func TestReceiveWaitsForTheFirstBatch(t *testing.T) {
 			t.Fatalf("Receive: %v", got.Err)
 		}
 		releaseAll(got.Deliveries)
-		if diff := cmp.Diff([][]span.Span{
-			appended,
-		}, spansOfDeliveries(got.Deliveries)); diff != "" {
+		wantBatches := [][]span.Span{appended}
+		if diff := cmp.Diff(wantBatches, spansOfDeliveries(got.Deliveries)); diff != "" {
 			t.Errorf("received batches (-want +got):\n%s", diff)
 		}
 	})
@@ -528,19 +541,19 @@ func TestReceiveWaitsForTheFirstBatch(t *testing.T) {
 func TestBlockedReceiveEnds(t *testing.T) {
 	tests := []struct {
 		Name    string
-		Args    func(journal *memjournal.Journal, cancel context.CancelFunc)
+		Args    func(journal *journaltest.Memory, cancel context.CancelFunc)
 		WantErr error
 	}{
 		{
 			Name: "on context cancel",
-			Args: func(_ *memjournal.Journal, cancel context.CancelFunc) {
+			Args: func(_ *journaltest.Memory, cancel context.CancelFunc) {
 				cancel()
 			},
 			WantErr: context.Canceled,
 		},
 		{
 			Name: "on close with ErrFeedClosed",
-			Args: func(journal *memjournal.Journal, _ context.CancelFunc) {
+			Args: func(journal *journaltest.Memory, _ context.CancelFunc) {
 				journal.Close()
 			},
 			WantErr: processing.ErrFeedClosed,
@@ -568,7 +581,7 @@ type writerTally struct {
 	SawClosure atomic.Int64
 }
 
-func appendUntilClosed(t *testing.T, journal *memjournal.Journal, appended []span.Span, tally *writerTally,
+func appendUntilClosed(t *testing.T, journal *journaltest.Memory, appended []span.Span, tally *writerTally,
 	started func(),
 ) {
 	t.Helper()
@@ -589,7 +602,7 @@ func appendUntilClosed(t *testing.T, journal *memjournal.Journal, appended []spa
 	}
 }
 
-func startWriters(t *testing.T, journal *memjournal.Journal, tally *writerTally, started func()) <-chan struct{} {
+func startWriters(t *testing.T, journal *journaltest.Memory, tally *writerTally, started func()) <-chan struct{} {
 	t.Helper()
 	appended := spansOf(t, 0, smallBatch)
 	var writers sync.WaitGroup
@@ -606,7 +619,7 @@ func startWriters(t *testing.T, journal *memjournal.Journal, tally *writerTally,
 	return done
 }
 
-func drainUntilClosed(t *testing.T, journal *memjournal.Journal) int64 {
+func drainUntilClosed(t *testing.T, journal *journaltest.Memory) int64 {
 	t.Helper()
 	var received int64
 	for {
@@ -643,13 +656,12 @@ func TestCloseDuringAppendsLosesNoAcceptedBatch(t *testing.T) {
 	<-writersDone
 	consumer.Wait()
 	if got := tally.SawClosure.Load(); got != concurrentWriters {
-		t.Fatalf("%d of %d writers were still appending when Close landed, the race was not exercised", got,
-			concurrentWriters)
+		t.Fatalf("%d of %d writers were still appending when Close landed, the race was not exercised", got, concurrentWriters)
 	}
 	if got, want := received.Load(), tally.Accepted.Load(); got != want {
 		t.Errorf("received %d batches, want every accepted one: %d", got, want)
 	}
-	assertStats(t, journal, memjournal.Stats{})
+	assertStats(t, journal, journaltest.Stats{})
 }
 
 func TestReleaseConcurrentWithAppendKeepsStatsExact(t *testing.T) {
@@ -666,5 +678,5 @@ func TestReleaseConcurrentWithAppendKeepsStatsExact(t *testing.T) {
 		releaseAll(mustReceive(t, journal, receiveAll))
 	}
 	releasers.Wait()
-	assertStats(t, journal, memjournal.Stats{})
+	assertStats(t, journal, journaltest.Stats{})
 }

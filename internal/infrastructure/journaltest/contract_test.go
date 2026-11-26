@@ -1,18 +1,20 @@
-package memjournal_test
+package journaltest_test
 
 import (
 	"testing"
 
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/journaltest"
-	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
 )
 
 const contractBatches = 64
 
-func TestMemjournalKeepsTheFeedContract(t *testing.T) {
+func TestMemoryKeepsTheFeedContract(t *testing.T) {
 	journaltest.RunFeedContract(t, func(t *testing.T, credit int64) *journaltest.Journal {
-		journal := newJournal(t, memjournal.Limits{MaxBytes: credit, MaxBatches: contractBatches})
+		journal := newJournal(t, journaltest.Limits{
+			MaxBytes:   credit,
+			MaxBatches: contractBatches,
+		})
 		return &journaltest.Journal{
 			Feed: journal,
 			Append: func(t *testing.T, spans []span.Span) {
@@ -22,7 +24,7 @@ func TestMemjournalKeepsTheFeedContract(t *testing.T) {
 				}
 			},
 			Close:    func(*testing.T) { journal.Close() },
-			LimitErr: memjournal.ErrInvalidMax,
+			LimitErr: journaltest.ErrInvalidMax,
 		}
 	})
 }

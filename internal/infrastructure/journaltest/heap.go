@@ -1,4 +1,4 @@
-package memjournal
+package journaltest
 
 import "unsafe"
 

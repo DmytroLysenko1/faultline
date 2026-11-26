@@ -1,27 +1,27 @@
 //go:build !race
 
-package memjournal_test
+package journaltest_test
 
 import (
 	"testing"
 	"time"
 
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/telemetrytest"
-	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/journaltest"
 )
 
 const largestQueue = 1_000_000
 
 func TestWorstCaseHeapCoversTheQueueAllocatedUpFront(t *testing.T) {
-	limits := memjournal.Limits{
+	limits := journaltest.Limits{
 		MaxBytes:   1,
 		MaxBatches: largestQueue,
 		IdleAfter:  time.Minute,
 	}
 	grown := telemetrytest.HeapGrowth(func() any {
-		journal, err := memjournal.New(limits, wallClock{})
+		journal, err := journaltest.NewMemory(limits, wallClock{})
 		if err != nil {
-			t.Fatalf("memjournal.New: %v", err)
+			t.Fatalf("journaltest.NewMemory: %v", err)
 		}
 		return journal
 	})

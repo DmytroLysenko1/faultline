@@ -1,4 +1,4 @@
-package memjournal_test
+package journaltest_test
 
 import (
 	"slices"
@@ -11,7 +11,7 @@ import (
 
 	"github.com/DmytroLysenko1/faultline/internal/application/processing"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/span"
-	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/journaltest"
 )
 
 const appendsEach = 200
@@ -51,9 +51,19 @@ func TestPositionsCountEveryRecordInJournalOrder(t *testing.T) {
 		defer releaseAll(deliveries)
 
 		want := []positioned{
-			{Sequence: 1, ReceivedAt: start},
-			{Sequence: 2, Heartbeat: true, ReceivedAt: start.Add(idleAfter)},
-			{Sequence: 3, ReceivedAt: start.Add(idleAfter)},
+			{
+				Sequence:   1,
+				ReceivedAt: start,
+			},
+			{
+				Sequence:   2,
+				Heartbeat:  true,
+				ReceivedAt: start.Add(idleAfter),
+			},
+			{
+				Sequence:   3,
+				ReceivedAt: start.Add(idleAfter),
+			},
 		}
 		if diff := cmp.Diff(want, positionsOf(deliveries)); diff != "" {
 			t.Errorf("positions (-want +got):\n%s", diff)
@@ -62,7 +72,10 @@ func TestPositionsCountEveryRecordInJournalOrder(t *testing.T) {
 }
 
 func TestConcurrentAppendsGetConsecutivePositionsInReceivedAtOrder(t *testing.T) {
-	journal := newJournal(t, memjournal.Limits{MaxBytes: roomyBytes, MaxBatches: concurrentWriters * appendsEach})
+	journal := newJournal(t, journaltest.Limits{
+		MaxBytes:   roomyBytes,
+		MaxBatches: concurrentWriters * appendsEach,
+	})
 	batches := make([][]span.Span, 0, concurrentWriters*appendsEach)
 	for index := range concurrentWriters * appendsEach {
 		batches = append(batches, spansOf(t, index, smallBatch))

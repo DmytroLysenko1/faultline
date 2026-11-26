@@ -13,8 +13,8 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
 	"github.com/DmytroLysenko1/faultline/internal/application/processing/processingtest"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/journaltest"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memgraph"
-	"github.com/DmytroLysenko1/faultline/internal/infrastructure/memjournal"
 )
 
 const (
@@ -47,15 +47,15 @@ func largestRequests(t *testing.T) []batch.Batch {
 	return batches
 }
 
-func fullJournal(t *testing.T, batches []batch.Batch) *memjournal.Journal {
+func fullJournal(t *testing.T, batches []batch.Batch) *journaltest.Memory {
 	t.Helper()
-	journal, err := memjournal.New(memjournal.Limits{
+	journal, err := journaltest.NewMemory(journaltest.Limits{
 		MaxBytes:   journalMaxBytes,
 		MaxBatches: journalMaxBatches,
 		IdleAfter:  journalIdleAfter,
 	}, systemClock{})
 	if err != nil {
-		t.Fatalf("memjournal.New: %v", err)
+		t.Fatalf("journaltest.NewMemory: %v", err)
 	}
 	for index, appended := range batches {
 		if err := journal.Append(t.Context(), slices.Clone(appended.Spans)); err != nil {
@@ -100,7 +100,7 @@ func TestDrainFullJournal(t *testing.T) {
 			if elapsed > drainBudget {
 				t.Errorf("drain took %v, budget %v", elapsed, drainBudget)
 			}
-			if diff := cmp.Diff(memjournal.Stats{}, journal.Stats()); diff != "" {
+			if diff := cmp.Diff(journaltest.Stats{}, journal.Stats()); diff != "" {
 				t.Errorf("journal after drain (-want +got):\n%s", diff)
 			}
 		})

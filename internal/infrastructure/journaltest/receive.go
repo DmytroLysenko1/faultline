@@ -1,4 +1,4 @@
-package memjournal
+package journaltest
 
 import (
 	"context"
@@ -15,7 +15,7 @@ type delivery struct {
 	release func()
 }
 
-func (j *Journal) Receive(ctx context.Context, limit int, maxWait time.Duration) ([]processing.Delivery, error) {
+func (j *Memory) Receive(ctx context.Context, limit int, maxWait time.Duration) ([]processing.Delivery, error) {
 	if limit < 1 {
 		return nil, ErrInvalidMax
 	}
@@ -33,7 +33,7 @@ func (j *Journal) Receive(ctx context.Context, limit int, maxWait time.Duration)
 	return j.collect(&first, limit), nil
 }
 
-func (j *Journal) await(ctx context.Context, maxWait time.Duration) (entry, bool, error) {
+func (j *Memory) await(ctx context.Context, maxWait time.Duration) (entry, bool, error) {
 	first, found, err := j.poll()
 	if found || err != nil || maxWait <= 0 {
 		return first, found, err
@@ -41,7 +41,7 @@ func (j *Journal) await(ctx context.Context, maxWait time.Duration) (entry, bool
 	return j.wait(ctx, maxWait)
 }
 
-func (j *Journal) wait(ctx context.Context, maxWait time.Duration) (entry, bool, error) {
+func (j *Memory) wait(ctx context.Context, maxWait time.Duration) (entry, bool, error) {
 	timer := time.NewTimer(maxWait)
 	defer timer.Stop()
 	select {
@@ -55,7 +55,7 @@ func (j *Journal) wait(ctx context.Context, maxWait time.Duration) (entry, bool,
 	}
 }
 
-func (j *Journal) poll() (entry, bool, error) {
+func (j *Memory) poll() (entry, bool, error) {
 	select {
 	case first, open := <-j.queue:
 		return first, open, closedFeed(open)
@@ -71,7 +71,7 @@ func closedFeed(open bool) error {
 	return processing.ErrFeedClosed
 }
 
-func (j *Journal) collect(first *entry, limit int) []processing.Delivery {
+func (j *Memory) collect(first *entry, limit int) []processing.Delivery {
 	deliveries := make([]processing.Delivery, 0, min(limit, len(j.queue)+1))
 	deliveries = append(deliveries, j.deliver(first))
 	for len(deliveries) < limit {
@@ -84,7 +84,7 @@ func (j *Journal) collect(first *entry, limit int) []processing.Delivery {
 	return deliveries
 }
 
-func (j *Journal) ready() (entry, bool) {
+func (j *Memory) ready() (entry, bool) {
 	select {
 	case next, open := <-j.queue:
 		return next, open
@@ -93,15 +93,17 @@ func (j *Journal) ready() (entry, bool) {
 	}
 }
 
-func (j *Journal) deliver(delivered *entry) *delivery {
-	created := &delivery{entry: *delivered}
+func (j *Memory) deliver(delivered *entry) *delivery {
+	created := &delivery{
+		entry: *delivered,
+	}
 	created.release = sync.OnceFunc(func() {
 		j.release(&created.entry)
 	})
 	return created
 }
 
-func (j *Journal) release(released *entry) {
+func (j *Memory) release(released *entry) {
 	j.lock.Lock()
 	defer j.lock.Unlock()
 	j.held = j.held.without(released)
