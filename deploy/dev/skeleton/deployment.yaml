@@ -6,14 +6,21 @@ spec:
   replicas: 1
   strategy:
     type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: faultline
   template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: faultline
     spec:
       automountServiceAccountToken: false
-      terminationGracePeriodSeconds: 15
+      terminationGracePeriodSeconds: 25
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
+        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -27,6 +34,14 @@ spec:
               value: 0.0.0.0:8080
             - name: GOMEMLIMIT
               value: 1600MiB
+            - name: NATS_URL
+              value: nats://nats:4222
+            - name: CHECKPOINT_DIR
+              value: /spool
+            - name: PARTITIONS
+              value: "1"
+            - name: STREAM_MAX_BYTES
+              value: 2GiB
           ports:
             - name: otlp-grpc
               containerPort: 4317
@@ -34,9 +49,15 @@ spec:
               containerPort: 8080
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: http
             periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
           resources:
             requests:
               cpu: 250m
@@ -50,3 +71,10 @@ spec:
             capabilities:
               drop:
                 - ALL
+          volumeMounts:
+            - name: spool
+              mountPath: /spool
+      volumes:
+        - name: spool
+          emptyDir:
+            sizeLimit: 512Mi

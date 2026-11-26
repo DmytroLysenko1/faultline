@@ -3,10 +3,14 @@ kind: Kustomization
 namespace: faultline
 labels:
   - pairs:
-      app.kubernetes.io/name: faultline
       app.kubernetes.io/part-of: faultline
     includeSelectors: true
 resources:
   - namespace.yaml
+  - nats.yaml
   - deployment.yaml
   - service.yaml
+configMapGenerator:
+  - name: nats-config
+    files:
+      - nats.conf

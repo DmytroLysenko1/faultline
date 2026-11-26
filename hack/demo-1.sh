@@ -49,8 +49,9 @@ deploy_faultline() {
 	log "building image faultline:dev and loading it into $cluster"
 	make --no-print-directory image kind-load
 	kubectl --context "$context" apply -k deploy/dev/skeleton
+	kubectl --context "$context" -n faultline rollout status deployment/nats --timeout=2m
 	kubectl --context "$context" -n faultline rollout restart deployment/faultline
-	kubectl --context "$context" -n faultline rollout status deployment/faultline --timeout=2m
+	kubectl --context "$context" -n faultline rollout status deployment/faultline --timeout=3m
 }
 
 port_free() {
@@ -69,16 +70,16 @@ ensure_forward() {
 	fi
 }
 
-wait_healthy() {
+wait_ready() {
 	local attempt
 	for attempt in $(seq 30); do
-		if curl -fsS "$server/healthz" >/dev/null 2>&1; then
+		if curl -fsS "$server/readyz" >/dev/null 2>&1; then
 			return
 		fi
 		ensure_forward
 		sleep 1
 	done
-	fail "faultline did not answer /healthz through $server after $attempt s"
+	fail "faultline was not ready on /readyz through $server after $attempt s"
 }
 
 export_graph() {
@@ -155,7 +156,7 @@ main() {
 	install_demo deploy/dev/otel-demo-faultline-values.yaml
 	wait_demo_ready
 	start_forward
-	wait_healthy
+	wait_ready
 	poll_required
 	wait_stats
 	check_restarts

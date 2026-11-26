@@ -4,6 +4,8 @@ metadata:
   name: faultline
 spec:
   type: ClusterIP
+  selector:
+    app.kubernetes.io/name: faultline
   ports:
     - name: otlp-grpc
       port: 4317
@@ -12,4 +14,3 @@ spec:
     - name: http
       port: 8080
       targetPort: http
-

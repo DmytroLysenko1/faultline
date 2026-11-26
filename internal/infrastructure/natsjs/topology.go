@@ -35,7 +35,7 @@ const (
 	deadLetterSubjects      = "dlq.>"
 	deadLetterFormat        = "dlq.p%d"
 	deadLetterMaxAge        = 7 * 24 * time.Hour
-	deadLetterMaxBytes      = 1 << 30
+	DeadLetterMaxBytes      = 1 << 30
 	deadLetterMinDuplicates = 5 * time.Minute
 
 	metaVersion    = "config_version"
@@ -123,7 +123,7 @@ func (t Topology) deadLetterConfig() jetstream.StreamConfig {
 		Replicas:    t.Replicas,
 		MaxAge:      deadLetterMaxAge,
 		MaxMsgSize:  record.MaxRecordBytes + HeaderBudget,
-		MaxBytes:    deadLetterMaxBytes,
+		MaxBytes:    DeadLetterMaxBytes,
 		Duplicates:  max(t.DuplicateWindow, deadLetterMinDuplicates),
 		Compression: jetstream.NoCompression,
 		AllowDirect: false,

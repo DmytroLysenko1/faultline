@@ -179,7 +179,7 @@ func hostOf(raw string) string {
 func payloadsFit(links []*Link) error {
 	for index, link := range links {
 		if maxPayload := link.NATS.MaxPayload(); !payloadFits(maxPayload) {
-			return fmt.Errorf("%w: %s max_payload %d, need %d", ErrPayloadLimit, roles[index], maxPayload, payloadNeed())
+			return fmt.Errorf("%w: %s max_payload %d, need %d", ErrPayloadLimit, roles[index], maxPayload, PayloadNeed())
 		}
 	}
 	return nil
@@ -449,9 +449,9 @@ func loggerOf(options *ConnOptions) *slog.Logger {
 }
 
 func payloadFits(maxPayload int64) bool {
-	return maxPayload >= payloadNeed()
+	return maxPayload >= PayloadNeed()
 }
 
-func payloadNeed() int64 {
+func PayloadNeed() int64 {
 	return record.MaxRecordBytes + HeaderBudget
 }
