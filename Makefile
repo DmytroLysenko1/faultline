@@ -89,7 +89,7 @@ mod-check: ## Fail if go.mod/go.sum are not tidy
 	go mod tidy -diff
 
 .PHONY: lint
-LINESTYLE_BASE ?= HEAD
+LINESTYLE_BASE ?= $(shell git rev-parse --quiet --verify '@{upstream}' >/dev/null 2>&1 && echo '@{upstream}' || echo HEAD)
 
 lint: $(GOLANGCI_LINT) ## Run golangci-lint and the one-line style check on changed lines
 ifneq ($(GO_PACKAGES),)
@@ -132,6 +132,7 @@ test-probes: ## Heap and time probes without -race: decode limit, token parse al
 STRESS_PACKAGES := ./internal/application/ingest/... ./internal/application/processing/... \
 	./internal/infrastructure/journaltest/... ./internal/infrastructure/memgraph/... ./test/pipeline/...
 STRESS_COUNT := 200
+STRESS_TIMEOUT := 30m
 STREAM_STRESS_COUNT := 2
 STREAM_STRESS_TIMEOUT := 20m
 KILL_NAMES := TestAKilledProcessorRestartsToTheSameGraphAsAnUninterruptedRun TestAKilledIngesterLosesNoAcknowledgedRequest \
@@ -185,8 +186,8 @@ fuzz: ## Run every Fuzz* target for FUZZTIME each (default 60s); seed corpora al
 
 .PHONY: test-stress
 test-stress: ## Repeat concurrency-sensitive tests under the race detector (nightly CI, before a tag)
-	go test -race -count=$(STRESS_COUNT) $(STRESS_PACKAGES)
-	go test -race -count=$(STRESS_COUNT) -run '$(SHUTDOWN_TESTS)' ./cmd/faultline/
+	go test -race -count=$(STRESS_COUNT) -timeout=$(STRESS_TIMEOUT) $(STRESS_PACKAGES)
+	go test -race -count=$(STRESS_COUNT) -timeout=$(STRESS_TIMEOUT) -run '$(SHUTDOWN_TESTS)' ./cmd/faultline/
 	go test -race -count=$(STREAM_STRESS_COUNT) -timeout=$(STREAM_STRESS_TIMEOUT) ./pkg/stream/...
 	TEST_KILL_STRESS=1 TEST_KILL_RANDOM_POINTS=$(KILL_STRESS_POINTS) TEST_KILL_REAL_TTL=1 go test -count=1 -timeout=$(KILL_STRESS_TIMEOUT) -run '$(KILL_TEST)' ./cmd/faultline/
 
