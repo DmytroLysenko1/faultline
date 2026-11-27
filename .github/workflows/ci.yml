@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify:
+  static:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -32,12 +32,56 @@ jobs:
           path: bin
           key: tools-${{ runner.os }}-${{ hashFiles('Makefile') }}
 
-      - name: Verify
-        run: make verify LINESTYLE_BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
-
-      - name: Image
-        run: docker build -f deploy/dev/Dockerfile .
+      - name: Static checks
+        run: make verify-static LINESTYLE_BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
 
       - name: API compatibility
         if: github.event_name == 'pull_request'
         run: make proto-breaking
+
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Cache pinned tools
+        uses: actions/cache@v4
+        with:
+          path: bin
+          key: tools-${{ runner.os }}-${{ hashFiles('Makefile') }}
+
+      - name: Tests
+        run: make verify-tests
+
+  probes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Cache pinned tools
+        uses: actions/cache@v4
+        with:
+          path: bin
+          key: tools-${{ runner.os }}-${{ hashFiles('Makefile') }}
+
+      - name: Probes
+        run: make verify-probes
+
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Image
+        run: docker build -f deploy/dev/Dockerfile .

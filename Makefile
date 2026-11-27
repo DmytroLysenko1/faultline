@@ -66,7 +66,20 @@ endif
 ##@ Verification
 
 .PHONY: verify
-verify: mod-check lint test-race test-probes cover-check vuln proto-lint gen-check core-diff-check shutdown-tests-check ## Everything CI runs
+verify: verify-static verify-tests verify-probes ## Everything CI runs
+
+.PHONY: verify-static
+verify-static: mod-check lint vuln proto-lint gen-check core-diff-check shutdown-tests-check ci-verify-check ## Static checks, one CI job
+
+.PHONY: verify-tests
+verify-tests: test-race cover-check ## Race tests and coverage thresholds, one CI job
+
+.PHONY: verify-probes
+verify-probes: test-probes ## Heap and time probes, one CI job
+
+.PHONY: ci-verify-check
+ci-verify-check: ## Fail when a prerequisite of verify is not run by exactly one job of ci.yml
+	./hack/ci-verify-check.sh Makefile .github/workflows/ci.yml
 
 .PHONY: shutdown-tests-check
 shutdown-tests-check: ## Fail when the SHUTDOWN_TESTS pattern has a space or selects no test for a listed name
