@@ -36,7 +36,7 @@ func ingesterRole() roleRecipe[ingesterSetup] {
 	}
 }
 
-func loadIngester(current process) (ingesterSetup, error) {
+func loadIngester(current *process) (ingesterSetup, error) {
 	base, baseErr := loadBase(current)
 	publish, publishErr := loadPublish(current.Lookup)
 	if err := errors.Join(baseErr, publishErr); err != nil {
@@ -49,7 +49,7 @@ func loadIngester(current process) (ingesterSetup, error) {
 	}, nil
 }
 
-func loadBase(current process) (roleBase, error) {
+func loadBase(current *process) (roleBase, error) {
 	cfg, rules, cfgErr := loadRoleConfig(current.Lookup)
 	nats, natsErr := loadNATS(current.Lookup, current.Hostname)
 	streams, streamsErr := loadStreams(current.Lookup)
@@ -107,12 +107,12 @@ func ingesterStack(setup *ingesterSetup, life *lifecycle, logger *slog.Logger) *
 }
 
 type roleRecipe[S any] struct {
-	Load  func(current process) (S, error)
+	Load  func(current *process) (S, error)
 	Level func(setup *S) slog.Level
 	Build func(setup *S, life *lifecycle, logger *slog.Logger) *stack
 }
 
-func (r roleRecipe[S]) run(current process) int {
+func (r roleRecipe[S]) run(current *process) int {
 	role, life, err := prepareRole(current, r)
 	if err != nil {
 		return fail(current.Stderr, err)
@@ -120,7 +120,7 @@ func (r roleRecipe[S]) run(current process) int {
 	return launchStack(context.Background(), signalNotify, role, life)
 }
 
-func prepareRole[S any](current process, recipe roleRecipe[S]) (*stack, *lifecycle, error) {
+func prepareRole[S any](current *process, recipe roleRecipe[S]) (*stack, *lifecycle, error) {
 	setup, err := recipe.Load(current)
 	if err != nil {
 		return nil, nil, err
@@ -145,7 +145,7 @@ func withDefaults(lookup lookupFunc, defaults map[string]string) lookupFunc {
 	}
 }
 
-func enforceRoleBudget(current process, role *stack, logger *slog.Logger) error {
+func enforceRoleBudget(current *process, role *stack, logger *slog.Logger) error {
 	memory, err := enforceMemoryBudget(current, role.contributions())
 	if err != nil {
 		return err

@@ -146,7 +146,7 @@ func TestTheAllCommandRefusesToStartWithoutNATS(t *testing.T) {
 			tt.args[envMemoryLimit] = "1MiB"
 			tt.args[envCheckpointDir] = t.TempDir()
 
-			code := realMain(process{
+			code := realMain(&process{
 				Args:           []string{commandAll},
 				Lookup:         environment(tt.args),
 				ReadCgroup:     func() ([]byte, error) { return nil, os.ErrNotExist },

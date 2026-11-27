@@ -6,11 +6,12 @@ import (
 )
 
 func main() {
-	os.Exit(realMain(process{
+	os.Exit(realMain(&process{
 		Args:           os.Args[1:],
 		Lookup:         os.LookupEnv,
 		ReadCgroup:     readCgroupMemoryMax,
 		SetMemoryLimit: debug.SetMemoryLimit,
+		Stdout:         os.Stdout,
 		Stderr:         os.Stderr,
 		Hostname:       os.Hostname,
 	}))

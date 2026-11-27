@@ -55,7 +55,7 @@ func startWith(t *testing.T, values map[string]string) (int, []map[string]any) {
 	values[envCheckpointDir] = t.TempDir()
 	var stderr bytes.Buffer
 	limits := &recordedLimit{}
-	current := process{
+	current := &process{
 		Args: []string{
 			commandAll,
 		},
@@ -65,7 +65,7 @@ func startWith(t *testing.T, values map[string]string) (int, []map[string]any) {
 		Stderr:         &stderr,
 		Hostname:       podHostname,
 	}
-	assertTheHTTPLayerRefusesTheBusyPort(t, current)
+	assertTheHTTPLayerRefusesTheBusyPort(t, *current)
 	code := realMain(current)
 	if diff := cmp.Diff([]int64{tinyLimitBytes}, limits.set); diff != "" {
 		t.Errorf("memory limit set (-want +got):\n%s", diff)
@@ -77,7 +77,7 @@ func assertTheHTTPLayerRefusesTheBusyPort(t *testing.T, current process) {
 	t.Helper()
 	current.SetMemoryLimit = (&recordedLimit{}).setLimit
 	current.Stderr = io.Discard
-	role, _, err := prepareRole(current, allRole())
+	role, _, err := prepareRole(&current, allRole())
 	if err != nil {
 		t.Fatalf("prepareRole: %v", err)
 	}

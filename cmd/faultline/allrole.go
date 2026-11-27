@@ -41,7 +41,7 @@ func allDefaults(lookup lookupFunc) lookupFunc {
 	})
 }
 
-func loadAll(current process) (allSetup, error) {
+func loadAll(current *process) (allSetup, error) {
 	base, baseErr := loadBase(current)
 	publish, publishErr := loadPublish(current.Lookup)
 	graph, partition, processingErr := loadProcessing(current.Lookup, allDefaults(current.Lookup), &base)

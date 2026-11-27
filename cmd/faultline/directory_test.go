@@ -3,78 +3,22 @@ package main
 import (
 	"errors"
 	"fmt"
-	"runtime"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/DmytroLysenko1/faultline/internal/domain/credential"
-	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/record"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/tokens"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
-	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/otlptest"
 )
 
-const (
-	heldSnapshots   = 2
-	subjectTemplate = "$KV." + tokens.Bucket + ".%012d"
-	idAlphabet      = "abcdefghijklmnopqrstuvwxyz234567"
-)
+const pinnedSnapshotBytes = 864 << 10
 
-func fullSnapshot(t *testing.T, seed int) credential.Grants {
-	t.Helper()
-	grants := credential.Grants{}
-	tenant := strings.Repeat("t", record.MaxTenantBytes)
-	token, err := credential.Parse(otlptest.Token)
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	for index := range tokens.MaxGrants {
-		id := credential.ID(idOf(seed*tokens.MaxGrants + index))
-		grant, err := credential.NewGrant(id, tenant, token.Digest(), time.Now())
-		if err != nil {
-			t.Fatalf("NewGrant: %v", err)
-		}
-		grants[id] = grant
-	}
-	return grants
-}
-
-func idOf(number int) string {
-	id := make([]byte, credential.IDLength)
-	for position := range id {
-		id[position] = idAlphabet[number%len(idAlphabet)]
-		number /= len(idAlphabet)
-	}
-	return string(id)
-}
-
-func rereadSubjects() map[string]uint64 {
-	subjects := make(map[string]uint64, tokens.MaxGrants)
-	for index := range tokens.MaxGrants {
-		subjects[fmt.Sprintf(subjectTemplate, index)] = 1
-	}
-	return subjects
-}
-
-func TestTheDirectoryContributionHoldsTwoFullSnapshotsAndTheHeaderLists(t *testing.T) {
-	before := otlptest.HeapInUse()
-	snapshots := make([]credential.Grants, 0, heldSnapshots)
-	for seed := range heldSnapshots {
-		snapshots = append(snapshots, fullSnapshot(t, seed))
-	}
-	subjects := rereadSubjects()
-	held := otlptest.HeapInUse() - before
-	runtime.KeepAlive(snapshots)
-	runtime.KeepAlive(subjects)
+func TestTheDirectoryContributionCoversThePinnedSnapshotsAndTheHeaderLists(t *testing.T) {
 	headerLists := int64(otlp.MaxConnections * otlp.MaxConcurrentStreams * otlp.MaxHeaderListBytes)
-	if need := held + headerLists; need > directoryHeap {
-		t.Errorf("two full snapshots, a reread and the header lists hold %s, the contribution is %s",
+	if need := pinnedSnapshotBytes + headerLists; need > directoryHeap {
+		t.Errorf("the snapshots pinned in natsjs/tokens and the header lists need %s, the contribution is %s",
 			inMiB(need), inMiB(directoryHeap))
 	}
-	t.Logf("held %s + header lists %s of %s", inMiB(held), inMiB(headerLists), inMiB(directoryHeap))
 }
 
 func TestTheDirectoryReportsNoAuthGroupBeforeItStarts(t *testing.T) {

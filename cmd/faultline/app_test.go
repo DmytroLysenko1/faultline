@@ -66,7 +66,7 @@ func TestRealMain(t *testing.T) {
 			},
 			Want: outcome{
 				Code:   exitConfig,
-				Stderr: "usage: faultline all | ingester | processor\n",
+				Stderr: "usage: faultline all | ingester | processor | tokens init|issue|revoke|list\n",
 			},
 		},
 		{
@@ -79,7 +79,7 @@ func TestRealMain(t *testing.T) {
 			},
 			Want: outcome{
 				Code:   exitConfig,
-				Stderr: "usage: faultline all | ingester | processor\n",
+				Stderr: "usage: faultline all | ingester | processor | tokens init|issue|revoke|list\n",
 			},
 		},
 		{
@@ -93,7 +93,7 @@ func TestRealMain(t *testing.T) {
 			},
 			Want: outcome{
 				Code:   exitConfig,
-				Stderr: "usage: faultline all | ingester | processor\n",
+				Stderr: "usage: faultline all | ingester | processor | tokens init|issue|revoke|list\n",
 			},
 		},
 		{
@@ -168,7 +168,7 @@ func TestRealMain(t *testing.T) {
 			if tt.Want.Code == exitConfig {
 				assertAllRefusedBeforeItsStack(t, current)
 			}
-			code := realMain(current)
+			code := realMain(&current)
 			got := outcome{
 				Code:   code,
 				Limits: limits.set,

@@ -1,7 +1,8 @@
 package main
 
 type command struct {
-	run func(current process) int
+	run       func(current *process) int
+	arguments bool
 }
 
 func commands() map[string]command {
@@ -15,18 +16,25 @@ func commands() map[string]command {
 		commandProcessor: {
 			run: processorRole().run,
 		},
+		commandTokens: {
+			run:       tokensCommand,
+			arguments: true,
+		},
 	}
 }
 
 func commandOf(args []string) (command, bool) {
-	if len(args) != 1 {
+	if len(args) == 0 {
 		return command{}, false
 	}
 	selected, found := commands()[args[0]]
-	return selected, found
+	if !found || selected.arguments != (len(args) > 1) {
+		return command{}, false
+	}
+	return selected, true
 }
 
-func realMain(current process) int {
+func realMain(current *process) int {
 	selected, found := commandOf(current.Args)
 	if !found {
 		return fail(current.Stderr, errUsage)

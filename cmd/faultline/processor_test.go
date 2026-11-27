@@ -98,8 +98,8 @@ func processorEnvironment(t *testing.T, extra map[string]string) map[string]stri
 	return values
 }
 
-func processOf(values map[string]string) process {
-	return process{
+func processOf(values map[string]string) *process {
+	return &process{
 		Lookup:   environment(values),
 		Hostname: podHostname,
 	}
@@ -222,7 +222,7 @@ func TestTheProcessorCommandRefusesItsConfigWithCodeTwo(t *testing.T) {
 			if dir, set := values[envCheckpointDir]; set {
 				values[envCheckpointDir] = checkpointDirFor(t, dir)
 			}
-			_, loadErr := loadProcessor(process{
+			_, loadErr := loadProcessor(&process{
 				Lookup:   environment(values),
 				Hostname: podHostname,
 			})
@@ -230,7 +230,7 @@ func TestTheProcessorCommandRefusesItsConfigWithCodeTwo(t *testing.T) {
 				t.Fatalf("loadProcessor accepted the config, want an error containing %q", tt.want)
 			}
 			var stderr bytes.Buffer
-			code := realMain(process{
+			code := realMain(&process{
 				Args:           []string{commandProcessor},
 				Lookup:         environment(values),
 				ReadCgroup:     func() ([]byte, error) { return nil, os.ErrNotExist },
@@ -247,7 +247,7 @@ func TestTheProcessorCommandRefusesItsConfigWithCodeTwo(t *testing.T) {
 }
 
 func TestTheProcessorFitsItsMemoryBudgetAtDefaults(t *testing.T) {
-	setup, err := loadProcessor(process{
+	setup, err := loadProcessor(&process{
 		Lookup:   environment(processorEnvironment(t, nil)),
 		Hostname: podHostname,
 	})

@@ -172,10 +172,13 @@ func (u *connUnit) dial(ctx context.Context) (*natsjs.Conn, error) {
 }
 
 func (u *connUnit) attempt(ctx context.Context) (*natsjs.Conn, error) {
-	budget := connectionsPerDial * u.options.ConnectTimeout * time.Duration(len(u.options.URLs))
-	attemptCtx, cancel := context.WithTimeout(ctx, budget)
+	attemptCtx, cancel := context.WithTimeout(ctx, dialBudget(u.options))
 	defer cancel()
 	return natsjs.Dial(attemptCtx, u.options)
+}
+
+func dialBudget(options *natsjs.ConnOptions) time.Duration {
+	return connectionsPerDial * options.ConnectTimeout * time.Duration(len(options.URLs))
 }
 
 func (u *connUnit) awaitRetry(ctx context.Context, wait *dialWait, err error) error {

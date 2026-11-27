@@ -118,7 +118,7 @@ func closeQuietly(t *testing.T, conn net.Conn) {
 }
 
 func TestEveryRoleFitsItsMemoryBudgetAtDefaults(t *testing.T) {
-	current := process{
+	current := &process{
 		Lookup: environment(map[string]string{
 			envNATSURL: testNATSURL,
 		}),
@@ -187,7 +187,7 @@ func TestTheIngesterCommandRefusesItsConfigWithCodeTwo(t *testing.T) {
 			var stderr bytes.Buffer
 			limits := &recordedLimit{}
 
-			code := realMain(process{
+			code := realMain(&process{
 				Args:           []string{commandIngester},
 				Lookup:         environment(tt.args),
 				ReadCgroup:     func() ([]byte, error) { return nil, os.ErrNotExist },
@@ -262,7 +262,7 @@ func TestTheRulesHashIsTheCRC32COfTheFileBytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read rules: %v", err)
 	}
-	setup, err := loadIngester(process{
+	setup, err := loadIngester(&process{
 		Lookup: environment(map[string]string{
 			envNATSURL:        testNATSURL,
 			envRouteRulesFile: path,
@@ -289,7 +289,7 @@ func TestTheIngesterSetsItsMemoryLimitBeforeItsBudget(t *testing.T) {
 	logs := &logBuffer{}
 	limits := &recordedLimit{}
 
-	_, _, err := prepareRole(process{
+	_, _, err := prepareRole(&process{
 		Lookup: environment(map[string]string{
 			envNATSURL: testNATSURL,
 		}),
@@ -331,7 +331,7 @@ func TestTheIngesterRefusesRouteRulesItCannotRead(t *testing.T) {
 				}
 			}
 
-			_, err := loadIngester(process{
+			_, err := loadIngester(&process{
 				Lookup: environment(map[string]string{
 					envNATSURL:        testNATSURL,
 					envRouteRulesFile: path,
@@ -346,15 +346,15 @@ func TestTheIngesterRefusesRouteRulesItCannotRead(t *testing.T) {
 	}
 }
 
-func preparedRole[S any](recipe roleRecipe[S]) func(process) error {
-	return func(current process) error {
+func preparedRole[S any](recipe roleRecipe[S]) func(*process) error {
+	return func(current *process) error {
 		_, _, err := prepareRole(current, recipe)
 		return err
 	}
 }
 
 func TestEveryRoleLogsAtItsLogLevel(t *testing.T) {
-	roles := map[string]func(process) error{
+	roles := map[string]func(*process) error{
 		commandIngester:  preparedRole(ingesterRole()),
 		commandProcessor: preparedRole(processorRole()),
 		commandAll:       preparedRole(allRole()),

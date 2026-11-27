@@ -362,7 +362,7 @@ linters:
           msg: digests and secrets compare only through Digest.Equal (constant time, A7)
         - pattern: ^credential\.Reveal$
           pkg: ^github\.com/DmytroLysenko1/faultline/internal/domain/credential$
-          msg: only cmd/faultline/tokens.go reveals an ingest token, once, to its operator (A3)
+          msg: only cmd/faultline/tokenoutput.go reveals an ingest token, once, to its operator (A3)
         - pattern: ^fmt\.Print(|f|ln)$
           msg: no stdout printing — use slog/zap (observability doctrine)
         - pattern: ^log\.(Print|Fatal|Panic)(|f|ln)$
@@ -423,10 +423,10 @@ linters:
         linters:
           - forbidigo
         text: digests and secrets compare only through Digest.Equal
-      - path: (_test\.go$|cmd/faultline/tokens\.go$)
+      - path: (_test\.go$|cmd/faultline/tokenoutput\.go$)
         linters:
           - forbidigo
-        text: only cmd/faultline/tokens.go reveals an ingest token
+        text: only cmd/faultline/tokenoutput.go reveals an ingest token
       - path: (_test\.go$|/[a-z]+test/|^test/|^hack/)
         linters:
           - wrapcheck

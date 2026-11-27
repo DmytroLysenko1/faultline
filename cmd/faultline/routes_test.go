@@ -184,7 +184,7 @@ func TestStartRefusesABrokenRouteRulesFile(t *testing.T) {
 	path := writeRules(t, brokenRules)
 	var stderr strings.Builder
 	limits := &recordedLimit{}
-	code := realMain(process{
+	code := realMain(&process{
 		Args: []string{commandAll},
 		Lookup: environment(map[string]string{
 			envRouteRulesFile: path,

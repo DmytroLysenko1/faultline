@@ -168,7 +168,7 @@ func TestTheIngesterRefusesTheSharedChecksWithCodeTwo(t *testing.T) {
 func assertRefused(t *testing.T, command string, values map[string]string, want string) {
 	t.Helper()
 	var stderr bytes.Buffer
-	code := realMain(process{
+	code := realMain(&process{
 		Args: []string{
 			command,
 		},
@@ -191,7 +191,7 @@ func assertAllRefusedBeforeItsStack(t *testing.T, current process) {
 	}
 	current.SetMemoryLimit = (&recordedLimit{}).setLimit
 	current.Stderr = io.Discard
-	if _, _, err := prepareRole(current, allRole()); err == nil {
+	if _, _, err := prepareRole(&current, allRole()); err == nil {
 		t.Fatalf("all accepted its config and memory budget, realMain would start its stack and dial NATS")
 	}
 }

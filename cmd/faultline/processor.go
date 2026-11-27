@@ -58,7 +58,7 @@ func processorRole() roleRecipe[processorSetup] {
 	}
 }
 
-func loadProcessor(current process) (processorSetup, error) {
+func loadProcessor(current *process) (processorSetup, error) {
 	base, baseErr := loadBase(current)
 	graph, partition, processingErr := loadProcessing(current.Lookup, processorDefaults(current.Lookup), &base)
 	if err := errors.Join(baseErr, processingErr); err != nil {
