@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: stress-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   test-stress:
@@ -24,4 +24,14 @@ jobs:
           go-version-file: go.mod
 
       - name: Race stress
-        run: make test-stress
+        run: |
+          set -o pipefail
+          make test-stress 2>&1 | tee stress.log
+
+      - name: Stress log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stress-log
+          path: stress.log
+          retention-days: 14
