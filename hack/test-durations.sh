@@ -13,7 +13,7 @@ go test -race -count=1 -json ./... |
 		| (map(select(.Test == null) | "\(.Package | ltrimstr($module)) - \(.Elapsed)"))
 		+ (map(select(.Test != null and (.Package | IN($sharded[]))))
 			| group_by([.Package, (.Test | split("/")[0])])
-			| map("\(.[0].Package | ltrimstr($module)) \(.[0].Test | split("/")[0]) \(map(.Elapsed) | max)"))
+			| map("\(.[0].Package | ltrimstr($module)) \(.[0].Test | split("/")[0]) \([(map(select(.Test | contains("/") | not) | .Elapsed) | add), (map(select(.Test | split("/") | length == 2) | .Elapsed) | add // 0)] | max)"))
 		| .[]
 	' |
 	sort >"$output"
