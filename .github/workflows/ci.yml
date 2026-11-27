@@ -39,7 +39,8 @@ jobs:
         if: github.event_name == 'pull_request'
         run: make proto-breaking
 
-  tests:
+  race:
+    name: race ${{ matrix.group }}/${{ strategy.job-total }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
@@ -70,7 +71,7 @@ jobs:
           retention-days: 7
 
   coverage:
-    needs: tests
+    needs: race
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
