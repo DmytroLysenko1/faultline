@@ -54,11 +54,15 @@ weigh() {
 			while ((getline line < durations) > 0) {
 				split(line, field, " ")
 				seconds[field[1] " " field[2]] = field[3]
+				if (field[2] == "-") wall[field[1]] = field[3]
+				else tests[field[1]] += field[3]
 			}
 		}
 		{
 			key = $2 " " $3
-			print $1 "\t" ((key in seconds) ? seconds[key] : fallback)
+			scale = 1
+			if (($3 != "-") && ($2 in wall) && ($2 in tests) && wall[$2] > tests[$2]) scale = wall[$2] / tests[$2]
+			print $1 "\t" ((key in seconds) ? seconds[key] * scale : fallback)
 		}
 	'
 }

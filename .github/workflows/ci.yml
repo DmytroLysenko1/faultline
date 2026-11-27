@@ -69,24 +69,6 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  durations:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-
-      - name: Durations
-        run: make test-durations
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: durations
-          path: hack/test-durations.txt
-
   coverage:
     needs: tests
     runs-on: ubuntu-24.04
