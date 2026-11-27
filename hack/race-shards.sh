@@ -3,8 +3,17 @@ set -euo pipefail
 
 profile="${1:?usage: race-shards.sh <coverage.out>}"
 : "${RACE_SHARDS:=./cmd/faultline:4}"
+: "${RACE_GROUP:=}"
+: "${RACE_GROUPS:=1}"
 : "${TEST_DURATIONS:=hack/test-durations.txt}"
 : "${DEFAULT_SECONDS:=1}"
+
+if [[ -n "$RACE_GROUP" ]]; then
+	if ! [[ "$RACE_GROUP" =~ ^[0-9]+$ && "$RACE_GROUPS" =~ ^[0-9]+$ ]] || ((RACE_GROUP < 1 || RACE_GROUP > RACE_GROUPS)); then
+		echo "race-shards: RACE_GROUP=$RACE_GROUP is not in 1..RACE_GROUPS=$RACE_GROUPS" >&2
+		exit 1
+	fi
+fi
 
 cd "$(git rev-parse --show-toplevel)"
 work="$(mktemp -d)"
@@ -30,23 +39,35 @@ while IFS= read -r package; do
 done < <(go list ./...)
 
 listed() {
-	go test -race -list '.*' "$1" | grep -E '^(Test|Fuzz|Example)' || true
+	local package="$1" output="$2"
+	go test -race -list '.*' "$package" >"$output.raw"
+	grep -E '^(Test|Fuzz|Example)' "$output.raw" >"$output" || true
+	if [[ ! -s "$output" ]]; then
+		echo "race-shards: $package lists no tests" >&2
+		return 1
+	fi
 }
 
-assign() {
-	local package="$1" shards="$2"
-	awk -v package="${package#./}" -v shards="$shards" -v fallback="$DEFAULT_SECONDS" -v durations="$TEST_DURATIONS" '
+weigh() {
+	awk -F'\t' -v fallback="$DEFAULT_SECONDS" -v durations="$TEST_DURATIONS" '
 		BEGIN {
 			while ((getline line < durations) > 0) {
 				split(line, field, " ")
-				if (field[1] == package) seconds[field[2]] = field[3]
+				seconds[field[1] " " field[2]] = field[3]
 			}
 		}
 		{
-			name = $1
-			cost = (name in seconds) ? seconds[name] : fallback
-			order[++count] = name
-			weight[name] = cost
+			key = $2 " " $3
+			print $1 "\t" ((key in seconds) ? seconds[key] : fallback)
+		}
+	'
+}
+
+pack() {
+	awk -F'\t' -v bins="$1" '
+		{
+			order[++count] = $1
+			weight[$1] = $2 + 0
 		}
 		END {
 			for (i = 1; i <= count; i++)
@@ -54,17 +75,74 @@ assign() {
 					if (weight[order[j]] > weight[order[i]]) {
 						swap = order[i]; order[i] = order[j]; order[j] = swap
 					}
-			for (s = 1; s <= shards; s++) load[s] = 0
+			for (b = 1; b <= bins; b++) load[b] = 0
 			for (i = 1; i <= count; i++) {
 				lightest = 1
-				for (s = 2; s <= shards; s++) if (load[s] < load[lightest]) lightest = s
+				for (b = 2; b <= bins; b++) if (load[b] < load[lightest]) lightest = b
 				load[lightest] += weight[order[i]]
 				members[lightest] = members[lightest] (members[lightest] == "" ? "" : "|") order[i]
 			}
-			for (s = 1; s <= shards; s++) if (members[s] != "") print s "\t" load[s] "\t" members[s]
+			for (b = 1; b <= bins; b++) if (members[b] != "") print b "\t" load[b] "\t" members[b]
 		}
 	'
 }
+
+units="$work/units.tsv"
+shards="$work/shards.tsv"
+: >"$units"
+: >"$shards"
+
+for package in "${rest[@]}"; do
+	printf 'rest:%s\t%s\t-\n' "${package#"$module/"}" "${package#"$module/"}"
+done | weigh >>"$units"
+
+listing_pids=()
+for spec in $RACE_SHARDS; do
+	listed "${spec%%:*}" "$work/$(basename "${spec%%:*}").list" &
+	listing_pids+=("$!")
+done
+for pid in "${listing_pids[@]}"; do
+	wait "$pid"
+done
+
+for spec in $RACE_SHARDS; do
+	package="${spec%%:*}"
+	count="${spec##*:}"
+	listing="$work/$(basename "$package").list"
+	total="$(wc -l <"$listing" | tr -d ' ')"
+	assigned=0
+	while IFS=$'\t' read -r index load members; do
+		assigned=$((assigned + $(tr '|' '\n' <<<"$members" | wc -l)))
+		printf 'shard:%s:%s\t%s\n' "${package#./}" "$index" "$load" >>"$units"
+		printf 'shard:%s:%s\t%s\t%s\n' "${package#./}" "$index" "$package" "$members" >>"$shards"
+	done < <(awk -v package="${package#./}" '{ print $1 "\t" package "\t" $1 }' "$listing" | weigh | pack "$count")
+	if ((assigned != total)); then
+		echo "race-shards: $package lists $total tests but the shards hold $assigned" >&2
+		exit 1
+	fi
+done
+
+selected="$work/selected.txt"
+if [[ -z "$RACE_GROUP" ]]; then
+	cut -f1 "$units" >"$selected"
+else
+	pack "$RACE_GROUPS" <"$units" >"$work/groups.tsv"
+	if (($(wc -l <"$work/groups.tsv") != RACE_GROUPS)); then
+		echo "race-shards: $(wc -l <"$work/groups.tsv" | tr -d ' ') of $RACE_GROUPS groups hold units, a group would run nothing" >&2
+		exit 1
+	fi
+	grouped="$(cut -f3 "$work/groups.tsv" | tr '|' '\n' | wc -l | tr -d ' ')"
+	if ((grouped != $(wc -l <"$units"))); then
+		echo "race-shards: $(wc -l <"$units" | tr -d ' ') units but the groups hold $grouped" >&2
+		exit 1
+	fi
+	while IFS=$'\t' read -r index load members; do
+		echo "race-shards: group $index/$RACE_GROUPS ~${load}s"
+		if [[ "$index" == "$RACE_GROUP" ]]; then
+			tr '|' '\n' <<<"$members" >"$selected"
+		fi
+	done <"$work/groups.tsv"
+fi
 
 pids=()
 names=()
@@ -76,26 +154,22 @@ start() {
 	names+=("$name")
 }
 
-if ((${#rest[@]} > 0)); then
-	start rest "${rest[@]}"
-fi
-for spec in $RACE_SHARDS; do
-	package="${spec%%:*}"
-	shards="${spec##*:}"
-	listing="$work/$(basename "$package").list"
-	listed "$package" >"$listing"
-	total="$(wc -l <"$listing" | tr -d ' ')"
-	assigned=0
-	while IFS=$'\t' read -r index load members; do
-		assigned=$((assigned + $(tr '|' '\n' <<<"$members" | wc -l)))
-		echo "race-shards: $package shard $index ~${load}s"
-		start "$(basename "$package")-$index" -run "^(${members})\$" "$package"
-	done < <(assign "$package" "$shards" <"$listing")
-	if ((assigned != total)); then
-		echo "race-shards: $package lists $total tests but the shards hold $assigned" >&2
-		exit 1
+selected_rest=()
+while IFS= read -r unit; do
+	if [[ "$unit" == rest:* ]]; then
+		selected_rest+=("$module/${unit#rest:}")
 	fi
-done
+done <"$selected"
+if ((${#selected_rest[@]} > 0)); then
+	start rest "${selected_rest[@]}"
+fi
+
+while IFS=$'\t' read -r unit package members; do
+	if grep -qxF "$unit" "$selected"; then
+		echo "race-shards: $unit"
+		start "$(basename "$package")-${unit##*:}" -run "^(${members})\$" "$package"
+	fi
+done <"$shards"
 
 failed=()
 for index in "${!pids[@]}"; do
