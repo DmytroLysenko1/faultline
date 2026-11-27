@@ -1,6 +1,7 @@
 package stream_test
 
 import (
+	"fmt"
 	"math/rand/v2"
 	"testing"
 
@@ -9,7 +10,16 @@ import (
 	"github.com/DmytroLysenko1/faultline/pkg/stream"
 )
 
-const scenarios = 10_000
+const (
+	scenarios      = 10_000
+	scenarioChunks = 8
+)
+
+type scenarioChunk struct {
+	name  string
+	count int
+	state []byte
+}
 
 func TestEveryRetiredWindowEqualsTheBatchRecomputation(t *testing.T) {
 	random := rand.New(rand.NewPCG(7, 11))
@@ -104,22 +114,57 @@ func assertLastFinalPanesMatch(t *testing.T, finals []finalPane, want oracle) {
 }
 
 func TestFinalPanesAreAFunctionOfTheJournal(t *testing.T) {
-	random := rand.New(rand.NewPCG(13, 17))
-	for range scenarios {
-		s := generate(random)
-		quiet := runScenario(t, s, false, noFiring)
-		quiet.apply(heartbeat(flushAfter(s.last)))
-		assertPaneLog(t, quiet.recorder)
-		want := quiet.recorder.finals()
-		fireSeed := random.Uint64()
-		for name, got := range map[string][]finalPane{
-			"with FireEarly":             finalsWithFiring(t, s, fireSeed),
-			"replayed in a fresh engine": finalsWithFiring(t, s, fireSeed),
-			"flushed by heartbeats":      finalsFlushedStepByStep(t, s),
-		} {
-			if diff := cmp.Diff(want, got); diff != "" {
-				t.Fatalf("final panes %s differ (-one jump, quiet +%s):\n%s", name, name, diff)
+	for _, chunk := range chunksOf(t, rand.NewPCG(13, 17)) {
+		t.Run(chunk.name, func(t *testing.T) {
+			t.Parallel()
+			source := new(rand.PCG)
+			if err := source.UnmarshalBinary(chunk.state); err != nil {
+				t.Fatalf("restore the generator: %v", err)
 			}
+			random := rand.New(source)
+			for range chunk.count {
+				assertFinalPanesFollowTheJournal(t, generate(random), random.Uint64())
+			}
+		})
+	}
+}
+
+func chunksOf(t *testing.T, source *rand.PCG) []scenarioChunk {
+	t.Helper()
+	random := rand.New(source)
+	per := scenarios / scenarioChunks
+	chunks := make([]scenarioChunk, 0, scenarioChunks)
+	for index := range scenarioChunks {
+		state, err := source.MarshalBinary()
+		if err != nil {
+			t.Fatalf("save the generator: %v", err)
+		}
+		chunks = append(chunks, scenarioChunk{
+			name:  fmt.Sprintf("scenarios %d to %d", index*per, (index+1)*per-1),
+			count: per,
+			state: state,
+		})
+		for range per {
+			generate(random)
+			random.Uint64()
+		}
+	}
+	return chunks
+}
+
+func assertFinalPanesFollowTheJournal(t *testing.T, s scenario, fireSeed uint64) {
+	t.Helper()
+	quiet := runScenario(t, s, false, noFiring)
+	quiet.apply(heartbeat(flushAfter(s.last)))
+	assertPaneLog(t, quiet.recorder)
+	want := quiet.recorder.finals()
+	for name, got := range map[string][]finalPane{
+		"with FireEarly":             finalsWithFiring(t, s, fireSeed),
+		"replayed in a fresh engine": finalsWithFiring(t, s, fireSeed),
+		"flushed by heartbeats":      finalsFlushedStepByStep(t, s),
+	} {
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Fatalf("final panes %s differ (-one jump, quiet +%s):\n%s", name, name, diff)
 		}
 	}
 }

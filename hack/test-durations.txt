@@ -618,7 +618,7 @@ pkg/stream TestEarlyPanesOnlyForChangedWindowsAndNeverAfterFinal 0
 pkg/stream TestEngineWithoutEarlyFiringEmitsNoEarlyPanes 0
 pkg/stream TestEventFromAFastClockIsReassignedToTheBatchAnchor 0
 pkg/stream TestEveryRetiredWindowEqualsTheBatchRecomputation 18.88
-pkg/stream TestFinalPanesAreAFunctionOfTheJournal 119.72
+pkg/stream TestFinalPanesAreAFunctionOfTheJournal 29.3
 pkg/stream TestFirstBatchWithLateEventsInEveryFinalWindowDoesNotAllocate 0
 pkg/stream TestGeneratorReachesEveryPlacementRule 1.28
 pkg/stream TestNewRejectsInvalidOptions 0
