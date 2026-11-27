@@ -108,10 +108,17 @@ else
 	@echo "test: no Go packages yet, skipping"
 endif
 
+.PHONY: test-durations
+test-durations: ## Refresh hack/test-durations.txt, the test times race-shards.sh balances RACE_SHARDS by
+	./hack/test-durations.sh hack/test-durations.txt $(RACE_SHARD_PACKAGES)
+
 .PHONY: test-race
-test-race: ## Run unit tests with the race detector and coverage
+RACE_SHARDS := ./cmd/faultline:4 ./internal/infrastructure/natsjs/feed:3 ./internal/infrastructure/natsjs/checkpoint:3 ./pkg/stream:2
+RACE_SHARD_PACKAGES := $(foreach shard,$(RACE_SHARDS),$(firstword $(subst :, ,$(shard))))
+
+test-race: ## Run unit tests with the race detector and coverage; the slowest packages run in parallel shards (RACE_SHARDS)
 ifneq ($(GO_PACKAGES),)
-	go test -race -covermode=atomic -coverprofile=coverage.out ./...
+	RACE_SHARDS="$(RACE_SHARDS)" ./hack/race-shards.sh coverage.out
 else
 	@echo "test-race: no Go packages yet, skipping"
 endif
