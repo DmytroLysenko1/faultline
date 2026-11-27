@@ -345,6 +345,7 @@ func TestNothingFromARecreatedConsumerIsHandedOutBeforeTheStreamIsChecked(t *tes
 				if took := time.Since(started); took != tt.wantTook {
 					t.Errorf("answered after %s, want %s", took, tt.wantTook)
 				}
+				synctest.Wait()
 				stats := h.feed.Stats()
 				if uint64(len(got)) != tt.wantDelivered || stats.DeliveredBatches != tt.wantDelivered {
 					t.Errorf("%d handed out, %d delivered; want %d", len(got), stats.DeliveredBatches, tt.wantDelivered)
