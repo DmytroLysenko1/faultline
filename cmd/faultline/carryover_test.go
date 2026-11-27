@@ -133,7 +133,7 @@ func TestTheIngesterNamesOperationsWithItsRouteRules(t *testing.T) {
 			current := otlpLayer(&Config{
 				OTLPAddr:   address,
 				RouteRules: rules.Rules,
-			}, openedJournal{
+			}, testIngest(), openedJournal{
 				journal: opened,
 			}, admittingTaps(), testLogger(logs))
 			view := newLayerSupervisor(t, logs, &current)

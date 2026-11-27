@@ -31,7 +31,7 @@ type flusher interface {
 
 type idle struct{}
 
-func (idle) Shutdown(context.Context) error {
+func (idle) Shutdown(_ context.Context) error {
 	return nil
 }
 

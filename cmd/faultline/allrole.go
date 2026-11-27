@@ -18,6 +18,7 @@ const (
 
 type allSetup struct {
 	Config    Config
+	Ingest    ingestConfig
 	NATS      natsConfig
 	Graph     graphConfig
 	Journal   journal.Options
@@ -45,11 +46,13 @@ func loadAll(current *process) (allSetup, error) {
 	base, baseErr := loadBase(current)
 	publish, publishErr := loadPublish(current.Lookup)
 	graph, partition, processingErr := loadProcessing(current.Lookup, allDefaults(current.Lookup), &base)
-	if err := errors.Join(baseErr, publishErr, processingErr); err != nil {
+	ingest, ingestErr := loadIngest(allDefaults(current.Lookup))
+	if err := errors.Join(baseErr, publishErr, processingErr, ingestErr); err != nil {
 		return allSetup{}, err
 	}
 	return allSetup{
 		Config:    base.Config,
+		Ingest:    ingest,
 		NATS:      base.NATS,
 		Graph:     graph,
 		Journal:   journalOptions(&base, &publish),
@@ -77,7 +80,7 @@ func allStack(setup *allSetup, life *lifecycle, logger *slog.Logger) *stack {
 		observedPartition(&setup.Partition, conns, graph, life, logger),
 		guard,
 		publishing,
-		otlpLayer(&setup.Config, journals, taps, logger),
+		otlpLayer(&setup.Config, setup.Ingest, journals, taps, logger),
 	}
 	return role
 }

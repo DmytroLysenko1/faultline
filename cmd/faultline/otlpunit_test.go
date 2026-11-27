@@ -59,7 +59,7 @@ func (s servingOTLP) start(_ context.Context, sup unitSupervisor) error {
 }
 
 func stuckOTLPLayer(logs *logBuffer, server *fakeServer) layer {
-	current := otlpLayer(&Config{}, nil, nil, testLogger(logs))
+	current := otlpLayer(&Config{}, testIngest(), nil, nil, testLogger(logs))
 	unit := current.unit.(*otlpUnit)
 	unit.server = server
 	current.unit = servingOTLP{
@@ -156,7 +156,7 @@ func TestTheOTLPLayerAcceptsOneConnectionBeforeServing(t *testing.T) {
 	address := localAddress(t)
 	current := otlpLayer(&Config{
 		OTLPAddr: address,
-	}, acceptingJournal(t), admittingTaps(), testLogger(logs))
+	}, testIngest(), acceptingJournal(t), admittingTaps(), testLogger(logs))
 	view := newLayerSupervisor(t, logs, &current)
 	if err := current.unit.start(t.Context(), view); err != nil {
 		t.Fatalf("start: %v", err)
@@ -189,7 +189,7 @@ func TestTheOTLPLayerRefusesToStartBeforeTheTokenDirectory(t *testing.T) {
 	address := localAddress(t)
 	current := otlpLayer(&Config{
 		OTLPAddr: address,
-	}, acceptingJournal(t), &directoryUnit{}, testLogger(logs))
+	}, testIngest(), acceptingJournal(t), &directoryUnit{}, testLogger(logs))
 	view := newLayerSupervisor(t, logs, &current)
 
 	err := current.unit.start(t.Context(), view)
@@ -213,7 +213,7 @@ func TestTheOTLPLayerKeepsASignalDuringItsStart(t *testing.T) {
 	logs := &logBuffer{}
 	current := otlpLayer(&Config{
 		OTLPAddr: loopback,
-	}, acceptingJournal(t), admittingTaps(), testLogger(logs))
+	}, testIngest(), acceptingJournal(t), admittingTaps(), testLogger(logs))
 	view := newLayerSupervisor(t, logs, &current)
 	signalled, cancel := context.WithCancelCause(t.Context())
 	cancel(errTestSignal)

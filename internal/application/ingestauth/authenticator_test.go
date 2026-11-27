@@ -98,6 +98,7 @@ func TestAuthenticateTable(t *testing.T) {
 		age   time.Duration
 	}
 	type want struct {
+		Principal ingestauth.Principal
 		Rejection ingestauth.RejectionError
 		Stats     ingestauth.Stats
 	}
@@ -115,7 +116,15 @@ func TestAuthenticateTable(t *testing.T) {
 		{
 			name: "a granted token of the tenant is accepted",
 			args: args{token: shop.raw, age: time.Second},
-			want: want{Stats: ingestauth.Stats{Accepted: 1, Age: time.Second}},
+			want: want{
+				Principal: ingestauth.Principal{
+					TokenID: shop.grant.ID,
+				},
+				Stats: ingestauth.Stats{
+					Accepted: 1,
+					Age:      time.Second,
+				},
+			},
 		},
 		{
 			name:    "garbage is malformed and names no id",
@@ -156,18 +165,30 @@ func TestAuthenticateTable(t *testing.T) {
 		{
 			name: "a directory exactly at the limit is fresh",
 			args: args{token: shop.raw, age: maxStaleness},
-			want: want{Stats: ingestauth.Stats{Accepted: 1, Age: maxStaleness}},
+			want: want{
+				Principal: ingestauth.Principal{
+					TokenID: shop.grant.ID,
+				},
+				Stats: ingestauth.Stats{
+					Accepted: 1,
+					Age:      maxStaleness,
+				},
+			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			authenticator := newAuthenticator(t, grants, tt.args.age)
-			err := authenticator.Authenticate(t.Context(), tt.args.token)
+			principal, err := authenticator.Authenticate(t.Context(), tt.args.token)
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
 			}
 			rejection, _ := errors.AsType[ingestauth.RejectionError](err)
-			got := want{Rejection: rejection, Stats: authenticator.Stats(t.Context())}
+			got := want{
+				Principal: principal,
+				Rejection: rejection,
+				Stats:     authenticator.Stats(t.Context()),
+			}
 			if diff := cmp.Diff(tt.want, got); diff != "" {
 				t.Errorf("mismatch (-want +got):\n%s", diff)
 			}
@@ -179,9 +200,9 @@ func TestUnknownIDAndWrongSecretLookTheSame(t *testing.T) {
 	shop := issue(t, 1, tenant)
 	stranger := issue(t, 2, tenant)
 	authenticator := newAuthenticator(t, grantsOf(shop), time.Second)
-	unknown := authenticator.Authenticate(t.Context(), stranger.raw)
-	mismatch := authenticator.Authenticate(t.Context(), withSecretOf(shop, stranger))
-	foreign := newAuthenticator(t, grantsOf(issue(t, 3, otherTenant)), time.Second).
+	_, unknown := authenticator.Authenticate(t.Context(), stranger.raw)
+	_, mismatch := authenticator.Authenticate(t.Context(), withSecretOf(shop, stranger))
+	_, foreign := newAuthenticator(t, grantsOf(issue(t, 3, otherTenant)), time.Second).
 		Authenticate(t.Context(), credential.Reveal(issue(t, 3, otherTenant).token))
 	got := []string{unknown.Error(), mismatch.Error(), foreign.Error()}
 	rejected := ingestauth.ErrUnauthenticated.Error()
@@ -217,7 +238,7 @@ func TestAStaleDirectoryRejectsEveryoneAsUnavailable(t *testing.T) {
 				t.Fatalf("NewAuthenticator: %v", err)
 			}
 			for _, token := range []string{shop.raw, stranger.raw, "garbage"} {
-				if err := authenticator.Authenticate(t.Context(), token); !errors.Is(err, ingestauth.ErrDirectoryStale) {
+				if _, err := authenticator.Authenticate(t.Context(), token); !errors.Is(err, ingestauth.ErrDirectoryStale) {
 					t.Errorf("Authenticate = %v, want ErrDirectoryStale", err)
 				}
 			}
@@ -235,7 +256,7 @@ func TestAStaleDirectoryRejectsEveryoneAsUnavailable(t *testing.T) {
 func TestANegativeAgeIsStale(t *testing.T) {
 	shop := issue(t, 1, tenant)
 	authenticator := newAuthenticator(t, grantsOf(shop), -time.Nanosecond)
-	if err := authenticator.Authenticate(t.Context(), shop.raw); !errors.Is(err, ingestauth.ErrDirectoryStale) {
+	if _, err := authenticator.Authenticate(t.Context(), shop.raw); !errors.Is(err, ingestauth.ErrDirectoryStale) {
 		t.Fatalf("Authenticate = %v, want ErrDirectoryStale", err)
 	}
 	if authenticator.Fresh(t.Context()) {
@@ -349,7 +370,7 @@ func FuzzAuthenticate(f *testing.F) {
 		f.Fatalf("NewAuthenticator: %v", err)
 	}
 	f.Fuzz(func(t *testing.T, candidate string) {
-		err := authenticator.Authenticate(t.Context(), candidate)
+		_, err := authenticator.Authenticate(t.Context(), candidate)
 		if err == nil {
 			if candidate != raw {
 				t.Fatalf("accepted %q", candidate)

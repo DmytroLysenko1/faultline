@@ -38,9 +38,16 @@ func benchOptions() Options {
 	return DefaultOptions(slog.New(slog.DiscardHandler), benchClock{})
 }
 
+const grantedTokenID = "granted00001"
+
 func answering(outcome error) otlptest.AuthenticatorFunc {
-	return func(context.Context, string) error {
-		return outcome
+	return func(context.Context, string) (ingestauth.Principal, error) {
+		if outcome != nil {
+			return ingestauth.Principal{}, outcome
+		}
+		return ingestauth.Principal{
+			TokenID: grantedTokenID,
+		}, nil
 	}
 }
 
@@ -58,6 +65,8 @@ func TestTheTapNeverRefusesAStreamAndTheHandlerRefusesInstead(t *testing.T) {
 		TokenLeftInCtx  bool
 		CountedAtTheTap TapStats
 		Code            codes.Code
+		Principal       ingestauth.Principal
+		Cancellable     bool
 	}
 	tests := []struct {
 		name string
@@ -71,6 +80,9 @@ func TestTheTapNeverRefusesAStreamAndTheHandlerRefusesInstead(t *testing.T) {
 			},
 			want: want{
 				Code: codes.OK,
+				Principal: ingestauth.Principal{
+					TokenID: grantedTokenID,
+				},
 			},
 		},
 		{
@@ -131,13 +143,18 @@ func TestTheTapNeverRefusesAStreamAndTheHandlerRefusesInstead(t *testing.T) {
 				Header: tt.args.header,
 			})
 			counted := gate.Stats()
+			found, refused := gate.enforce(ctx)
 			got := want{
 				TapRefused:      err != nil,
 				TokenLeftInCtx:  carriesAuthorization(ctx),
 				CountedAtTheTap: counted,
-				Code:            status.Code(gate.enforce(ctx)),
+				Code:            status.Code(refused),
+				Principal:       found.principal,
+				Cancellable:     cancelledByTheVerdict(ctx, found),
 			}
-			if diff := cmp.Diff(tt.want, got); diff != "" {
+			expected := tt.want
+			expected.Cancellable = true
+			if diff := cmp.Diff(expected, got); diff != "" {
 				t.Errorf("mismatch (-want +got):\n%s", diff)
 			}
 		})
@@ -157,7 +174,7 @@ func TestAStreamThatSkippedTheTapIsRefusedAndCountedAsFailed(t *testing.T) {
 		},
 	}
 	got := outcome{
-		Status: status.Convert(gate.enforce(t.Context())),
+		Status: status.Convert(refusalOf(gate.enforce(t.Context()))),
 		Stats:  gate.Stats(),
 	}
 	if diff := cmp.Diff(want, got, cmp.Comparer(func(a, b *status.Status) bool {
@@ -242,10 +259,19 @@ func BenchmarkTap(b *testing.B) {
 		if err != nil {
 			b.Fatalf("handle: %v", err)
 		}
-		if err := gate.enforce(decided); err != nil {
+		if _, err := gate.enforce(decided); err != nil {
 			b.Fatalf("enforce: %v", err)
 		}
 	}
+}
+
+func refusalOf(_ verdict, err error) error {
+	return err
+}
+
+func cancelledByTheVerdict(ctx context.Context, found verdict) bool {
+	found.stop()
+	return errors.Is(ctx.Err(), context.Canceled)
 }
 
 func carriesAuthorization(ctx context.Context) bool {
@@ -261,6 +287,96 @@ func TestAServerWithoutATapRefusesToBeBuilt(t *testing.T) {
 			t.Errorf("NewServer without a tap recovered %v, want %v", recovered, errNoTap)
 		}
 	}()
-	NewServer(nil, nil, benchOptions())
+	NewServer(nil, Guards{}, benchOptions())
 	t.Errorf("NewServer without a tap returned a server")
+}
+
+func TestAServerWithoutAGateRefusesToBeBuilt(t *testing.T) {
+	defer func() {
+		recovered := recover()
+		err, isError := recovered.(error)
+		if !isError || !errors.Is(err, errNoGate) {
+			t.Errorf("NewServer without a gate recovered %v, want %v", recovered, errNoGate)
+		}
+	}()
+	NewServer(nil, Guards{
+		Tap: NewTap(otlptest.Admitting(), benchOptions()),
+	}, benchOptions())
+	t.Errorf("NewServer without a gate returned a server")
+}
+
+func builtWith(t *testing.T, options Options) (err error) {
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			return
+		}
+		failure, isError := recovered.(error)
+		if !isError {
+			t.Fatalf("NewServer panicked with %v, want an error", recovered)
+		}
+		err = failure
+	}()
+	settings := benchOptions()
+	NewServer(nil, Guards{
+		Tap:  NewTap(otlptest.Admitting(), settings),
+		Gate: otlptest.Gate(t, AdmissionLimits(unlimitedRate)),
+	}, options)
+	return nil
+}
+
+func TestAServerWithOptionsThatCannotAdmitRefusesToBeBuilt(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    func(options *Options)
+		wantErr error
+	}{
+		{
+			name: "the defaults",
+			args: func(*Options) {},
+		},
+		{
+			name: "a one nanosecond hold limit",
+			args: func(options *Options) {
+				options.SlotHoldLimit = time.Nanosecond
+			},
+		},
+		{
+			name: "a zero hold limit",
+			args: func(options *Options) {
+				options.SlotHoldLimit = 0
+			},
+			wantErr: errInvalidOptions,
+		},
+		{
+			name: "a negative hold limit",
+			args: func(options *Options) {
+				options.SlotHoldLimit = -time.Second
+			},
+			wantErr: errInvalidOptions,
+		},
+		{
+			name: "no clock",
+			args: func(options *Options) {
+				options.Clock = nil
+			},
+			wantErr: errInvalidOptions,
+		},
+		{
+			name: "no logger",
+			args: func(options *Options) {
+				options.Logger = nil
+			},
+			wantErr: errInvalidOptions,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			options := benchOptions()
+			tt.args(&options)
+			if err := builtWith(t, options); !errors.Is(err, tt.wantErr) {
+				t.Errorf("NewServer = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
 }

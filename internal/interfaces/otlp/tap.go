@@ -27,11 +27,19 @@ var errNoVerdict = errors.New("stream reached the handler without a tap verdict"
 type verdictKey struct{}
 
 type verdict struct {
-	refusal error
+	refusal   error
+	principal ingestauth.Principal
+	cancel    context.CancelCauseFunc
+}
+
+func (v verdict) stop() {
+	if v.cancel != nil {
+		v.cancel(nil)
+	}
 }
 
 type authenticator interface {
-	Authenticate(ctx context.Context, token string) error
+	Authenticate(ctx context.Context, token string) (ingestauth.Principal, error)
 }
 
 type TapStats struct {
@@ -76,35 +84,40 @@ func (t *Tap) handle(ctx context.Context, info *tap.Info) (context.Context, erro
 }
 
 func (t *Tap) decide(ctx context.Context, header metadata.MD) context.Context {
-	refusal := t.authenticate(ctx, header)
-	stripped := metadata.NewIncomingContext(ctx, withoutAuthorization(header))
+	principal, refusal := t.authenticate(ctx, header)
+	held, cancel := context.WithCancelCause(ctx)
+	stripped := metadata.NewIncomingContext(held, withoutAuthorization(header))
 	return context.WithValue(stripped, verdictKey{}, verdict{
-		refusal: refusal,
+		refusal:   refusal,
+		principal: principal,
+		cancel:    cancel,
 	})
 }
 
-func (t *Tap) enforce(ctx context.Context) error {
-	refusal := refusalOf(ctx)
-	if refusal == nil {
-		return nil
+func (t *Tap) enforce(ctx context.Context) (verdict, error) {
+	found := verdictOf(ctx)
+	if found.refusal == nil {
+		return found, nil
 	}
-	outcome := authFailureOf(refusal)
-	outcome.report(t, ctx, refusal)
-	return outcome.status.Err()
+	outcome := authFailureOf(found.refusal)
+	outcome.report(t, ctx, found.refusal)
+	return found, outcome.status.Err()
 }
 
-func refusalOf(ctx context.Context) error {
+func verdictOf(ctx context.Context) verdict {
 	found, decided := ctx.Value(verdictKey{}).(verdict)
 	if !decided {
-		return errNoVerdict
+		return verdict{
+			refusal: errNoVerdict,
+		}
 	}
-	return found.refusal
+	return found
 }
 
-func (t *Tap) authenticate(ctx context.Context, header metadata.MD) error {
+func (t *Tap) authenticate(ctx context.Context, header metadata.MD) (ingestauth.Principal, error) {
 	token, err := bearer.Credential(header.Get(authorizationHeader))
 	if err != nil {
-		return err
+		return ingestauth.Principal{}, err
 	}
 	return t.authenticator.Authenticate(ctx, token)
 }
@@ -134,7 +147,7 @@ func (t *Tap) rejected(ctx context.Context, err error) {
 	t.warnRejected(ctx, rejection.Reason.String(), rejection.TokenID)
 }
 
-func (*Tap) stale(context.Context, error) {}
+func (*Tap) stale(_ context.Context, _ error) {}
 
 func (t *Tap) failure(ctx context.Context, err error) {
 	t.failed.Add(1)

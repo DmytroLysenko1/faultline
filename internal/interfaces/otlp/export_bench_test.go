@@ -87,7 +87,10 @@ func benchServer(b *testing.B, acceptor *ingest.AcceptBatch) ptraceotlp.GRPCClie
 		now: time.Unix(0, 0),
 	}
 	settings := otlp.DefaultOptions(slog.New(slog.DiscardHandler), clock)
-	server := otlp.NewServer(acceptor, otlp.NewTap(otlptest.Admitting(), settings), settings)
+	server := otlp.NewServer(acceptor, otlp.Guards{
+		Tap:  otlp.NewTap(otlptest.Admitting(), settings),
+		Gate: otlptest.Gate(b, otlp.AdmissionLimits(otlp.MaxRequestsPerSecond)),
+	}, settings)
 	served := make(chan error, 1)
 	go func() { served <- server.Serve(listener) }()
 	conn, err := grpc.NewClient(bufconnAddr,

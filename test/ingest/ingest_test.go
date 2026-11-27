@@ -64,7 +64,10 @@ func startPipeline(t *testing.T, limits journaltest.Limits) pipeline {
 	}
 	settings := otlp.DefaultOptions(slog.New(slog.DiscardHandler), fixedClock{})
 	accept := ingest.NewAcceptBatch(journal, operation.NewNormalizer(nil))
-	server := otlp.NewServer(accept, otlp.NewTap(otlptest.Admitting(), settings), settings)
+	server := otlp.NewServer(accept, otlp.Guards{
+		Tap:  otlp.NewTap(otlptest.Admitting(), settings),
+		Gate: otlptest.Gate(t, otlp.AdmissionLimits(otlp.MaxRequestsPerSecond)),
+	}, settings)
 	listener := bufconn.Listen(bufferBytes)
 	var serving sync.WaitGroup
 	serving.Go(func() {

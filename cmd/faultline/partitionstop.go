@@ -113,7 +113,7 @@ func stepFailure(name string, err error) error {
 	return fmt.Errorf("%s: %w", name, err)
 }
 
-func (u *partitionUnit) closeFeed(context.Context) error {
+func (u *partitionUnit) closeFeed(_ context.Context) error {
 	if u.feed != nil {
 		u.feed.Close()
 	}

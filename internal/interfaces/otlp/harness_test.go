@@ -3,6 +3,7 @@ package otlp_test
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/admission"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/otlptest"
 )
 
@@ -104,12 +106,26 @@ type harness struct {
 	Logs   *logBuffer
 	Clock  *fakeClock
 	Tap    *otlp.Tap
+	Gate   *admission.Gate
+}
+
+type setup struct {
+	acceptor      acceptorFunc
+	authenticator otlptest.AuthenticatorFunc
+	gate          *admission.Gate
+	holdLimit     time.Duration
+	credentials   []grpc.DialOption
 }
 
 func options(logs *logBuffer, clock *fakeClock) otlp.Options {
 	return otlp.DefaultOptions(slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	})), clock)
+}
+
+func defaultGate(t *testing.T) *admission.Gate {
+	t.Helper()
+	return otlptest.Gate(t, otlp.AdmissionLimits(otlp.MaxRequestsPerSecond))
 }
 
 func serve(t *testing.T, listener net.Listener, acceptor acceptorFunc, settings otlp.Options) {
@@ -119,7 +135,15 @@ func serve(t *testing.T, listener net.Listener, acceptor acceptorFunc, settings 
 
 func serveTapped(t *testing.T, listener net.Listener, acceptor acceptorFunc, gate *otlp.Tap, settings otlp.Options) {
 	t.Helper()
-	server := otlp.NewServer(acceptor, gate, settings)
+	serveGuarded(t, listener, acceptor, otlp.Guards{
+		Tap:  gate,
+		Gate: defaultGate(t),
+	}, settings)
+}
+
+func serveGuarded(t *testing.T, listener net.Listener, acceptor acceptorFunc, guards otlp.Guards, settings otlp.Options) {
+	t.Helper()
+	server := otlp.NewServer(acceptor, guards, settings)
 	var serving sync.WaitGroup
 	serving.Go(func() {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
@@ -144,23 +168,37 @@ func startGuarded(
 	credentials ...grpc.DialOption,
 ) harness {
 	t.Helper()
+	return startWith(t, setup{
+		acceptor:      acceptor,
+		authenticator: authenticator,
+		credentials:   credentials,
+	})
+}
+
+func startWith(t *testing.T, chosen setup) harness {
+	t.Helper()
 	logs := &logBuffer{}
 	clock := &fakeClock{
 		now: time.Unix(0, 0),
 	}
 	listener := bufconn.Listen(bufferBytes)
 	settings := options(logs, clock)
-	gate := otlp.NewTap(authenticator, settings)
-	serveTapped(t, listener, acceptor, gate, settings)
+	settings.SlotHoldLimit = cmp.Or(chosen.holdLimit, settings.SlotHoldLimit)
+	guards := otlp.Guards{
+		Tap:  otlp.NewTap(chosen.authenticator, settings),
+		Gate: cmp.Or(chosen.gate, defaultGate(t)),
+	}
+	serveGuarded(t, listener, chosen.acceptor, guards, settings)
 	conn := dialWith(t, func(ctx context.Context, _ string) (net.Conn, error) {
 		return listener.DialContext(ctx)
-	}, credentials...)
+	}, chosen.credentials...)
 	return harness{
 		Client: ptraceotlp.NewGRPCClient(conn),
 		Conn:   conn,
 		Logs:   logs,
 		Clock:  clock,
-		Tap:    gate,
+		Tap:    guards.Tap,
+		Gate:   guards.Gate,
 	}
 }
 

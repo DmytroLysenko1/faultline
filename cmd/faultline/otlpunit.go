@@ -11,17 +11,22 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
+	"github.com/DmytroLysenko1/faultline/internal/domain/credential"
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/operation"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/journal"
+	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/tokens"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/admission"
 )
 
 const (
-	layerOTLP       = "otlp"
-	stageOTLPListen = "otlp/listen"
-	stageOTLPTap    = "otlp/tap"
-	otlpStopGrace   = 3500 * time.Millisecond
-	componentOTLP   = "otlp"
+	layerOTLP                = "otlp"
+	stageOTLPListen          = "otlp/listen"
+	stageOTLPTap             = "otlp/tap"
+	stageOTLPAdmission       = "otlp/admission"
+	otlpStopGrace            = 3500 * time.Millisecond
+	admissionEntriesPerGrant = 2
+	componentOTLP            = "otlp"
 )
 
 type ingestServer interface {
@@ -38,8 +43,13 @@ type tapSource interface {
 	tap() (*otlp.Tap, error)
 }
 
+type unmarkedConnections struct{}
+
+func (unmarkedConnections) Authenticated(_ net.Addr, _ credential.ID) {}
+
 type otlpUnit struct {
 	address  string
+	ingest   ingestConfig
 	journals journalSource
 	taps     tapSource
 	rules    *operation.Rules
@@ -47,56 +57,110 @@ type otlpUnit struct {
 	sup      unitSupervisor
 	server   ingestServer
 	accepted atomic.Pointer[ingest.AcceptBatch]
+	admitted atomic.Pointer[admission.Admission]
 }
 
-func otlpLayer(cfg *Config, journals journalSource, taps tapSource, logger *slog.Logger) layer {
+func otlpLayer(
+	cfg *Config,
+	limits ingestConfig,
+	journals journalSource,
+	taps tapSource,
+	logger *slog.Logger,
+) layer {
 	receiver := &otlpUnit{
 		address:  cfg.OTLPAddr,
+		ingest:   limits,
 		journals: journals,
 		taps:     taps,
 		rules:    cfg.RouteRules,
 		logger:   logger,
 	}
 	return layer{
-		name:        layerOTLP,
-		unit:        receiver,
-		statsGroups: receiver.statsGroups,
-		components:  []string{componentOTLP},
-		stopBudget:  otlpStopGrace + exitGrace,
-		contributions: []contribution{
-			{
-				name:  "otlp requests",
-				bytes: otlp.WorstHeapBytes(),
-			},
+		name:          layerOTLP,
+		unit:          receiver,
+		statsGroups:   receiver.statsGroups,
+		components:    []string{componentOTLP},
+		stopBudget:    otlpStopGrace + exitGrace,
+		contributions: otlpContributions(),
+	}
+}
+
+func otlpContributions() []contribution {
+	return []contribution{
+		{
+			name:  "otlp requests",
+			bytes: otlp.WorstHeapBytes(),
+		},
+		{
+			name:  "admission tokens",
+			bytes: admission.EntryHeapBytes * admissionEntriesPerGrant * tokens.MaxGrants,
 		},
 	}
 }
 
 func (u *otlpUnit) start(ctx context.Context, sup unitSupervisor) error {
 	u.sup = sup
-	gate, err := u.taps.tap()
+	guards, err := u.guards()
 	if err != nil {
-		return &stageError{
-			stage: stageOTLPTap,
-			err:   err,
-		}
+		return err
 	}
+	listener, err := u.listen(ctx)
+	if err != nil {
+		return err
+	}
+	u.serve(listener, guards)
+	return nil
+}
+
+func (u *otlpUnit) listen(ctx context.Context) (net.Listener, error) {
 	var config net.ListenConfig
 	listener, err := config.Listen(ctx, network, u.address)
 	if err != nil {
-		return &stageError{
+		return nil, &stageError{
 			stage: stageOTLPListen,
 			err:   fmt.Errorf("listen otlp %s: %w", u.address, err),
 		}
 	}
+	return listener, nil
+}
+
+func (u *otlpUnit) serve(listener net.Listener, guards otlp.Guards) {
 	accept := ingest.NewAcceptBatch(u.journals.opened(), operation.NewNormalizer(u.rules))
-	u.accepted.Store(accept)
-	u.server = otlp.NewServer(accept, gate, otlp.DefaultOptions(u.logger, systemClock{}))
+	u.publishStats(guards.Gate.Admission, accept)
+	u.server = otlp.NewServer(accept, guards, otlp.DefaultOptions(u.logger, systemClock{}))
 	limited := otlp.LimitListener(listener)
-	sup.spawn(componentOTLP, func() error {
+	u.sup.spawn(componentOTLP, func() error {
 		return withoutSentinel(u.server.Serve(limited), grpc.ErrServerStopped)
 	})
-	return nil
+}
+
+func (u *otlpUnit) publishStats(admitted *admission.Admission, accept *ingest.AcceptBatch) {
+	u.admitted.Store(admitted)
+	u.accepted.Store(accept)
+}
+
+func (u *otlpUnit) guards() (otlp.Guards, error) {
+	gate, err := u.taps.tap()
+	if err != nil {
+		return otlp.Guards{}, &stageError{
+			stage: stageOTLPTap,
+			err:   err,
+		}
+	}
+	books, err := admission.New(otlp.AdmissionLimits(u.ingest.RequestsPerSecond), systemClock{})
+	if err != nil {
+		return otlp.Guards{}, &stageError{
+			stage: stageOTLPAdmission,
+			err:   err,
+		}
+	}
+	return otlp.Guards{
+		Tap: gate,
+		Gate: &admission.Gate{
+			Admission: books,
+			Marks:     unmarkedConnections{},
+		},
+	}, nil
 }
 
 func (u *otlpUnit) stop(ctx context.Context) error {
@@ -124,12 +188,15 @@ func (u *otlpUnit) drain(ctx context.Context) error {
 	return graceCtx.Err()
 }
 
-func (u *otlpUnit) statsGroups(context.Context) []slog.Attr {
+func (u *otlpUnit) statsGroups(_ context.Context) []slog.Attr {
 	accept := u.accepted.Load()
 	if accept == nil {
 		return nil
 	}
-	return []slog.Attr{ingestGroup(accept.Stats())}
+	return []slog.Attr{
+		ingestGroup(accept.Stats()),
+		admissionGroup(u.admitted.Load().Stats()),
+	}
 }
 
 func inBackground(stop func()) <-chan struct{} {

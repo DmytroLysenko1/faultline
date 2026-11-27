@@ -138,7 +138,7 @@ func newDirectory(state readState, entries readEntries, options *DirectoryOption
 	return directory, nil
 }
 
-func (d *Directory) Snapshot(context.Context) ingestauth.Snapshot {
+func (d *Directory) Snapshot(_ context.Context) ingestauth.Snapshot {
 	current := d.current.Load()
 	return ingestauth.Snapshot{
 		Grants:    current.grants,

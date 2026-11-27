@@ -14,6 +14,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology/traffic"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/tokens"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/admission"
 	"github.com/DmytroLysenko1/faultline/pkg/stream"
 )
 
@@ -144,6 +145,20 @@ func ingestGroup(stats ingest.Stats) slog.Attr {
 		slog.Int64("rejected_spans", stats.RejectedSpans),
 		slog.Int64("overloaded_responses", stats.OverloadedResponses),
 		slog.Int64("too_large_responses", stats.TooLargeResponses),
+	)
+}
+
+func admissionGroup(stats admission.Stats) slog.Attr {
+	return slog.Group("admission",
+		slog.Int("in_use", stats.InUse),
+		slog.Int("active_tokens", stats.ActiveTokens),
+		slog.Uint64("admitted", stats.Admitted),
+		slog.Group("rejected",
+			slog.Uint64("share", stats.Rejected[admission.ReasonShare]),
+			slog.Uint64("slots", stats.Rejected[admission.ReasonSlots]),
+			slog.Uint64("rate", stats.Rejected[admission.ReasonRate]),
+		),
+		slog.Uint64("too_slow", stats.TooSlow),
 	)
 }
 

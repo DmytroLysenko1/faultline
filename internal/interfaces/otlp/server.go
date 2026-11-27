@@ -9,25 +9,44 @@ import (
 	_ "google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/keepalive"
 
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/admission"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/decodelimit"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/recovery"
 )
 
-var errNoTap = errors.New("otlp server needs a token tap")
+var (
+	errNoTap          = errors.New("otlp server needs a token tap")
+	errNoGate         = errors.New("otlp server needs an admission gate")
+	errInvalidOptions = errors.New("invalid otlp server options")
+)
 
-func NewServer(acceptor spanAcceptor, gate *Tap, options Options) *grpc.Server {
-	if gate == nil {
+type Guards struct {
+	Tap  *Tap
+	Gate *admission.Gate
+}
+
+func NewServer(acceptor spanAcceptor, guards Guards, options Options) *grpc.Server {
+	if guards.Tap == nil {
 		panic(errNoTap)
 	}
+	if guards.Gate == nil {
+		panic(errNoGate)
+	}
+	if err := options.validate(); err != nil {
+		panic(err)
+	}
 	shared := newEvents(options)
-	server := grpc.NewServer(serverOptions(shared, gate, options)...)
+	server := grpc.NewServer(serverOptions(shared, guards.Tap, options)...)
 	receiver := &traceReceiver{
 		acceptor: acceptor,
 		events:   shared,
 	}
 	server.RegisterService(traceServiceDesc(guardedExport{
-		gate:     gate,
-		receiver: receiver,
+		gate:      guards.Tap,
+		admission: guards.Gate,
+		receiver:  receiver,
+		events:    shared,
+		holdLimit: options.SlotHoldLimit,
 	}), receiver)
 	return server
 }
@@ -43,6 +62,8 @@ func serverOptions(shared *events, gate *Tap, options Options) []grpc.ServerOpti
 		grpc.MaxRecvMsgSize(MaxRecvMsgBytes),
 		grpc.MaxHeaderListSize(MaxHeaderListBytes),
 		grpc.MaxConcurrentStreams(MaxConcurrentStreams),
+		grpc.StaticStreamWindowSize(StreamWindowBytes),
+		grpc.StaticConnWindowSize(ConnWindowBytes),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             KeepaliveMinTime,
 			PermitWithoutStream: true,

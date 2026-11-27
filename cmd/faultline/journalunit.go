@@ -63,7 +63,7 @@ func journalContributions() []contribution {
 	return []contribution{
 		{
 			name:  "records before pubAck",
-			bytes: otlp.MaxConnections * otlp.MaxConcurrentStreams * record.MaxRecordBytes,
+			bytes: otlp.RequestSlots * record.MaxRecordBytes,
 		},
 		{
 			name:  "publish buffer",

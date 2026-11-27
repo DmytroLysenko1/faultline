@@ -1,10 +1,12 @@
 package otlp
 
 import (
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/admission"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/decodelimit"
 )
 
@@ -27,6 +29,17 @@ const (
 	LogInterval           = 10 * time.Second
 	MaxErrorMessageBytes  = 1 << 10
 	MaxSpansPerRequest    = MaxDecodedBytes / decodelimit.MinSpanWeight
+
+	RequestSlots             = 10
+	MinTokenShare            = 2
+	ActiveTokenWindow        = 10 * time.Second
+	SlotHoldLimit            = 15 * time.Second
+	ClientRetryGapMax        = 45 * time.Second
+	WaitingTokenWindow       = SlotHoldLimit + ClientRetryGapMax
+	DefaultRequestsPerSecond = 2000
+	MaxRequestsPerSecond     = 100_000
+	StreamWindowBytes        = 64 << 10
+	ConnWindowBytes          = MaxConcurrentStreams * MaxRecvMsgBytes
 )
 
 func MaxBatchFootprint() int64 {
@@ -46,9 +59,20 @@ type Keepalive struct {
 }
 
 type Options struct {
-	Keepalive Keepalive
-	Clock     clock
-	Logger    *slog.Logger
+	Keepalive     Keepalive
+	SlotHoldLimit time.Duration
+	Clock         clock
+	Logger        *slog.Logger
+}
+
+func (o Options) validate() error {
+	if o.SlotHoldLimit <= 0 {
+		return fmt.Errorf("slot hold limit %s: %w", o.SlotHoldLimit, errInvalidOptions)
+	}
+	if o.Clock == nil || o.Logger == nil {
+		return fmt.Errorf("clock or logger missing: %w", errInvalidOptions)
+	}
+	return nil
 }
 
 func DefaultOptions(logger *slog.Logger, clock clock) Options {
@@ -60,11 +84,22 @@ func DefaultOptions(logger *slog.Logger, clock clock) Options {
 			MaxConnectionAge:      MaxConnectionAge,
 			MaxConnectionAgeGrace: MaxConnectionAgeGrace,
 		},
-		Clock:  clock,
-		Logger: logger,
+		SlotHoldLimit: SlotHoldLimit,
+		Clock:         clock,
+		Logger:        logger,
+	}
+}
+
+func AdmissionLimits(requestsPerSecond int) admission.Limits {
+	return admission.Limits{
+		Slots:             RequestSlots,
+		MinShare:          MinTokenShare,
+		ActiveWindow:      ActiveTokenWindow,
+		WaitingWindow:     WaitingTokenWindow,
+		RequestsPerSecond: requestsPerSecond,
 	}
 }
 
 func WorstHeapBytes() int64 {
-	return MaxConnections * MaxConcurrentStreams * MaxRecvMsgBytes * ExportHeapRatio
+	return RequestSlots * MaxRecvMsgBytes * ExportHeapRatio
 }

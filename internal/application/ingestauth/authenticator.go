@@ -50,6 +50,10 @@ func (p Policy) validate() error {
 	return nil
 }
 
+type Principal struct {
+	TokenID credential.ID
+}
+
 type Snapshot struct {
 	Grants    credential.Grants
 	CheckedAt time.Time
@@ -85,21 +89,24 @@ func NewAuthenticator(directory tokenDirectory, clock clock, policy Policy) (*Au
 	}, nil
 }
 
-func (a *Authenticator) Authenticate(ctx context.Context, token string) error {
+func (a *Authenticator) Authenticate(ctx context.Context, token string) (Principal, error) {
 	snapshot := a.directory.Snapshot(ctx)
 	if a.stale(snapshot) {
 		a.staleRejections.Add(1)
-		return ErrDirectoryStale
+		return Principal{}, ErrDirectoryStale
 	}
 	parsed, err := credential.Parse(token)
 	if err != nil {
-		return a.reject(ReasonMalformed, "")
+		return Principal{}, a.reject(ReasonMalformed, "")
 	}
-	if _, err := snapshot.Grants.Admit(parsed, a.policy.Tenant); err != nil {
-		return a.reject(admitReason(err), parsed.ID)
+	grant, err := snapshot.Grants.Admit(parsed, a.policy.Tenant)
+	if err != nil {
+		return Principal{}, a.reject(admitReason(err), parsed.ID)
 	}
 	a.accepted.Add(1)
-	return nil
+	return Principal{
+		TokenID: grant.ID,
+	}, nil
 }
 
 func (a *Authenticator) Stats(ctx context.Context) Stats {

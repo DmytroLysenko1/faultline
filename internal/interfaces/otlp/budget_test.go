@@ -32,7 +32,7 @@ func TestNoAcceptedRequestCarriesMoreThanMaxSpansPerRequest(t *testing.T) {
 }
 
 func TestWorstHeapIsTheInFlightBudget(t *testing.T) {
-	const want = otlp.MaxConnections * otlp.MaxConcurrentStreams * otlp.MaxRecvMsgBytes * otlp.ExportHeapRatio
+	const want = 10 * (4 << 20) * 11
 	if got := otlp.WorstHeapBytes(); got != want {
 		t.Errorf("WorstHeapBytes = %d, want %d", got, want)
 	}

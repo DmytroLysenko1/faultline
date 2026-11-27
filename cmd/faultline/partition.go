@@ -322,7 +322,7 @@ func (u *partitionUnit) startStore(ctx context.Context) error {
 	return err
 }
 
-func (u *partitionUnit) buildPipeline(context.Context) error {
+func (u *partitionUnit) buildPipeline(_ context.Context) error {
 	built, err := processing.NewPipeline(u.feed, u.resumed.Builder, u.graph, u.sink, systemClock{}, partitionCadence(u.config))
 	if err != nil {
 		return fmt.Errorf("build pipeline: %w", err)

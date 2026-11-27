@@ -9,6 +9,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/domain/topology"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/connectapi/graphservice"
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
 	"github.com/DmytroLysenko1/faultline/pkg/stream"
 )
 
@@ -36,6 +37,7 @@ const (
 	envOperationsEach    = "MAX_OPERATIONS_PER_SERVICE"
 	envSketchEntries     = "SKETCH_MAX_ENTRIES"
 	envRouteRulesFile    = "ROUTE_RULES_FILE"
+	envIngestRequestRate = "INGEST_MAX_REQUESTS_PER_SEC"
 	worstResponseAtLimit = "the worst response at the graph limits"
 
 	defaultOTLPAddr         = "127.0.0.1:4317"
@@ -94,6 +96,18 @@ type graphConfig struct {
 	Topology          topology.Limits
 	APIResponseBudget int64
 	IdleAfter         time.Duration
+}
+
+type ingestConfig struct {
+	RequestsPerSecond int
+}
+
+func loadIngest(lookup lookupFunc) (ingestConfig, error) {
+	reader := newEnvReader(lookup)
+	cfg := ingestConfig{
+		RequestsPerSecond: reader.count(envIngestRequestRate, otlp.DefaultRequestsPerSecond, otlp.MaxRequestsPerSecond),
+	}
+	return cfg, errors.Join(reader.errs...)
 }
 
 type removedVariable struct {

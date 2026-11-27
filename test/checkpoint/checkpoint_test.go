@@ -125,7 +125,10 @@ func (s *system) startOTLP(t *testing.T) ptraceotlp.GRPCClient {
 	t.Helper()
 	settings := otlp.DefaultOptions(slog.New(slog.DiscardHandler), fixedClock{})
 	accept := ingest.NewAcceptBatch(s.journal, operation.NewNormalizer(nil))
-	s.otlp = otlp.NewServer(accept, otlp.NewTap(otlptest.Admitting(), settings), settings)
+	s.otlp = otlp.NewServer(accept, otlp.Guards{
+		Tap:  otlp.NewTap(otlptest.Admitting(), settings),
+		Gate: otlptest.Gate(t, otlp.AdmissionLimits(otlp.MaxRequestsPerSecond)),
+	}, settings)
 	listener := bufconn.Listen(bufferBytes)
 	s.serving.Go(func() {
 		if err := s.otlp.Serve(listener); err != nil && !errors.Is(err, grpc.ErrServerStopped) {

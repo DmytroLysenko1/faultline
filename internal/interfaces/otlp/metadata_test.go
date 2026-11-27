@@ -20,6 +20,7 @@ import (
 	"golang.org/x/net/http2/hpack"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
+	"github.com/DmytroLysenko1/faultline/internal/application/ingestauth"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/otlptest"
 )
@@ -294,10 +295,11 @@ func TestHugeMetadataIsRefusedByTheTransport(t *testing.T) {
 				t.Fatalf("listen: %v", err)
 			}
 			settings := options(&logBuffer{}, &fakeClock{})
-			gate := otlp.NewTap(otlptest.AuthenticatorFunc(func(ctx context.Context, token string) error {
+			counted := func(ctx context.Context, token string) (ingestauth.Principal, error) {
 				authentications.Add(1)
 				return otlptest.AdmitToken(ctx, token)
-			}), settings)
+			}
+			gate := otlp.NewTap(otlptest.AuthenticatorFunc(counted), settings)
 			serveTapped(t, listener, func(context.Context, ingest.AcceptCommand) (ingest.AcceptResult, error) {
 				calls.Add(1)
 				return ingest.AcceptResult{}, nil

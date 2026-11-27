@@ -12,6 +12,8 @@ import (
 
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
 	"github.com/DmytroLysenko1/faultline/internal/application/ingestauth"
+	"github.com/DmytroLysenko1/faultline/internal/domain/credential"
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/admission"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/bearer"
 )
 
@@ -22,6 +24,10 @@ const (
 	internalMessage             = "internal error"
 	rejectedMessage             = "ingest token rejected"
 	directoryUnavailableMessage = "ingest token directory unavailable"
+	shareMessage                = "ingest token uses its share of request slots, retry later"
+	slotsMessage                = "ingest request slots are busy, retry later"
+	rateMessage                 = "ingest request rate exceeded, retry later"
+	tooSlowMessage              = "ingest request body was not received in time, retry"
 	reasonMissing               = "missing"
 	reasonHeader                = "header"
 	headerReasons               = 2
@@ -101,7 +107,7 @@ func contextRules() []failureRule {
 	}
 }
 
-func overloadedStatus(error) *status.Status {
+func overloadedStatus(_ error) *status.Status {
 	return retryingStatus(codes.ResourceExhausted, overloadedMessage, RetryDelay)
 }
 
@@ -116,11 +122,11 @@ func retryingStatus(code codes.Code, message string, delay time.Duration) *statu
 	return detailed
 }
 
-func tooLargeStatus(error) *status.Status {
+func tooLargeStatus(_ error) *status.Status {
 	return status.New(codes.InvalidArgument, tooLargeMessage)
 }
 
-func unavailableStatus(error) *status.Status {
+func unavailableStatus(_ error) *status.Status {
 	return status.New(codes.Unavailable, unavailableMessage)
 }
 
@@ -131,7 +137,7 @@ type authFailure struct {
 
 type authRule struct {
 	target error
-	status func(err error) *status.Status
+	status func() *status.Status
 	report tapReporter
 }
 
@@ -139,7 +145,7 @@ func authFailureOf(err error) authFailure {
 	for _, rule := range authRules() {
 		if errors.Is(err, rule.target) {
 			return authFailure{
-				status: rule.status(err),
+				status: rule.status(),
 				report: rule.report,
 			}
 		}
@@ -184,10 +190,79 @@ func rejectionReasons() []string {
 	return reasons
 }
 
-func rejectedStatus(error) *status.Status {
+func rejectedStatus() *status.Status {
 	return status.New(codes.Unauthenticated, rejectedMessage)
 }
 
-func directoryUnavailableStatus(error) *status.Status {
+func directoryUnavailableStatus() *status.Status {
 	return retryingStatus(codes.Unavailable, directoryUnavailableMessage, AuthRetryDelay)
+}
+
+type admissionReporter func(e *events, ctx context.Context, id credential.ID, err error)
+
+type admissionFailure struct {
+	status *status.Status
+	report admissionReporter
+}
+
+type admissionRule struct {
+	target error
+	status func() *status.Status
+	report admissionReporter
+}
+
+func admissionFailureOf(err error) admissionFailure {
+	for _, rule := range admissionRules() {
+		if errors.Is(err, rule.target) {
+			return admissionFailure{
+				status: rule.status(),
+				report: rule.report,
+			}
+		}
+	}
+	return admissionFailure{
+		status: status.New(codes.Internal, internalMessage),
+		report: (*events).admissionFailed,
+	}
+}
+
+func admissionRules() []admissionRule {
+	return []admissionRule{
+		{
+			target: admission.ErrShareExceeded,
+			status: shareStatus,
+			report: (*events).admissionRejected,
+		},
+		{
+			target: admission.ErrSlotsFull,
+			status: slotsStatus,
+			report: (*events).admissionRejected,
+		},
+		{
+			target: admission.ErrRateExceeded,
+			status: rateStatus,
+			report: (*events).admissionRejected,
+		},
+		{
+			target: admission.ErrSlotHeldTooLong,
+			status: tooSlowStatus,
+			report: (*events).bodyTooSlow,
+		},
+	}
+}
+
+func shareStatus() *status.Status {
+	return retryingStatus(codes.ResourceExhausted, shareMessage, RetryDelay)
+}
+
+func slotsStatus() *status.Status {
+	return retryingStatus(codes.ResourceExhausted, slotsMessage, RetryDelay)
+}
+
+func rateStatus() *status.Status {
+	return retryingStatus(codes.ResourceExhausted, rateMessage, RetryDelay)
+}
+
+func tooSlowStatus() *status.Status {
+	return status.New(codes.Canceled, tooSlowMessage)
 }

@@ -293,6 +293,19 @@ linters:
           deny:
             - pkg: math/rand
               desc: ingest token secrets come only from the injected crypto/rand reader (A10)
+        otlp-guards:
+          files:
+            - "**/internal/interfaces/otlp/admission/**"
+            - "!$test"
+          deny:
+            - pkg: google.golang.org/grpc
+              desc: admission is transport-independent — OTLP/gRPC and OTLP/HTTP both call Gate.Enter
+            - pkg: net/http
+              desc: admission is transport-independent — OTLP/gRPC and OTLP/HTTP both call Gate.Enter
+            - pkg: github.com/DmytroLysenko1/faultline/internal/application
+              desc: admission keys on a credential.ID; the authenticator stays behind the tap
+            - pkg: github.com/DmytroLysenko1/faultline/internal/interfaces/otlp$
+              desc: the receiver imports admission, never the reverse
         layer-infrastructure:
           files:
             - "**/internal/infrastructure/**"

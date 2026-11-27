@@ -18,23 +18,25 @@ const (
 
 var Token = credential.Prefix + TokenID + "_" + strings.Repeat(secretFiller, credential.SecretLength)
 
-type AuthenticatorFunc func(ctx context.Context, token string) error
+type AuthenticatorFunc func(ctx context.Context, token string) (ingestauth.Principal, error)
 
-func (f AuthenticatorFunc) Authenticate(ctx context.Context, token string) error {
+func (f AuthenticatorFunc) Authenticate(ctx context.Context, token string) (ingestauth.Principal, error) {
 	return f(ctx, token)
 }
 
-func AdmitToken(_ context.Context, token string) error {
+func AdmitToken(_ context.Context, token string) (ingestauth.Principal, error) {
 	if token == Token {
-		return nil
+		return ingestauth.Principal{
+			TokenID: TokenID,
+		}, nil
 	}
 	parsed, err := credential.Parse(token)
 	if err != nil {
-		return ingestauth.RejectionError{
+		return ingestauth.Principal{}, ingestauth.RejectionError{
 			Reason: ingestauth.ReasonMalformed,
 		}
 	}
-	return ingestauth.RejectionError{
+	return ingestauth.Principal{}, ingestauth.RejectionError{
 		Reason:  ingestauth.ReasonUnknown,
 		TokenID: parsed.ID,
 	}
@@ -48,7 +50,7 @@ type bearerToken struct {
 	token string
 }
 
-func (b bearerToken) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
+func (b bearerToken) GetRequestMetadata(_ context.Context, _ ...string) (map[string]string, error) {
 	return map[string]string{
 		authorizationHeader: "Bearer " + b.token,
 	}, nil

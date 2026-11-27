@@ -23,8 +23,8 @@ import (
 
 const (
 	refusedWithin     = time.Second
-	ingesterBudgetMiB = 510.0
-	allWorstBytes     = 1_383_630_217
+	ingesterBudgetMiB = 510.4375
+	allWorstBytes     = 1_384_088_969
 	budgetMiB         = float64(mib)
 )
 
@@ -41,6 +41,7 @@ func ingesterOn(t *testing.T, urls []string) (*ingesterSetup, string, string) {
 			OTLPAddr:   otlpAddress,
 			RouteRules: rules.Rules,
 		},
+		Ingest:  testIngest(),
 		NATS:    *natsSetup(urls...),
 		Journal: *testJournalOptions(),
 	}
@@ -138,7 +139,7 @@ func TestEveryRoleFitsItsMemoryBudgetAtDefaults(t *testing.T) {
 		t.Errorf("the ingester does not fit the default GOMEMLIMIT: %v", err)
 	}
 	want := "otlp requests 440.0 MiB, records before pubAck 60.0 MiB, publish buffer 8.0 MiB, nats connections 1.0 MiB, " +
-		"token directory 1.0 MiB"
+		"token directory 1.0 MiB, admission tokens 0.4 MiB"
 	assertDiff(t, "breakdown", want, breakdown(parts))
 
 	everything := allContributions(t, map[string]string{})
@@ -179,7 +180,7 @@ func TestTheIngesterCommandRefusesItsConfigWithCodeTwo(t *testing.T) {
 				envNATSURL:     testNATSURL,
 				envMemoryLimit: "512MiB",
 			},
-			want: "worst-case memory exceeds the budget: 510.0 MiB > 85% of GOMEMLIMIT 512.0 MiB",
+			want: "worst-case memory exceeds the budget: 510.4 MiB > 85% of GOMEMLIMIT 512.0 MiB",
 		},
 	}
 	for _, tt := range tests {

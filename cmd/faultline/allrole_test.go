@@ -415,6 +415,10 @@ func TestTheAllRoleFitsTheDefaultMemoryLimit(t *testing.T) {
 			name:  "otlp requests",
 			bytes: 461373440,
 		},
+		{
+			name:  "admission tokens",
+			bytes: 458752,
+		},
 	}
 	if diff := cmp.Diff(want, parts, cmp.AllowUnexported(contribution{})); diff != "" {
 		t.Errorf("all contributions at defaults (-want +got):\n%s", diff)

@@ -67,9 +67,9 @@ var tokenOutcomes = map[string]error{
 	tokenWith(bareTokenID):       ingestauth.ErrUnauthenticated,
 }
 
-func byToken(ctx context.Context, token string) error {
+func byToken(ctx context.Context, token string) (ingestauth.Principal, error) {
 	if outcome, known := tokenOutcomes[token]; known {
-		return outcome
+		return ingestauth.Principal{}, outcome
 	}
 	return otlptest.AdmitToken(ctx, token)
 }

@@ -15,6 +15,7 @@ const commandIngester = "ingester"
 
 type ingesterSetup struct {
 	Config  Config
+	Ingest  ingestConfig
 	NATS    natsConfig
 	Journal journal.Options
 }
@@ -39,11 +40,13 @@ func ingesterRole() roleRecipe[ingesterSetup] {
 func loadIngester(current *process) (ingesterSetup, error) {
 	base, baseErr := loadBase(current)
 	publish, publishErr := loadPublish(current.Lookup)
-	if err := errors.Join(baseErr, publishErr); err != nil {
+	ingest, ingestErr := loadIngest(current.Lookup)
+	if err := errors.Join(baseErr, publishErr, ingestErr); err != nil {
 		return ingesterSetup{}, err
 	}
 	return ingesterSetup{
 		Config:  base.Config,
+		Ingest:  ingest,
 		NATS:    base.NATS,
 		Journal: journalOptions(&base, &publish),
 	}, nil
@@ -101,7 +104,7 @@ func ingesterStack(setup *ingesterSetup, life *lifecycle, logger *slog.Logger) *
 		statsLayer(role.hooks, life.Served, selfalert.Thresholds{}, logger),
 		guard,
 		publishing,
-		otlpLayer(&setup.Config, journals, taps, logger),
+		otlpLayer(&setup.Config, setup.Ingest, journals, taps, logger),
 	}
 	return role
 }

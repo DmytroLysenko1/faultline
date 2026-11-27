@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/ingest"
+	"github.com/DmytroLysenko1/faultline/internal/domain/credential"
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/admission"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/decodelimit"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/throttle"
 )
@@ -24,10 +27,12 @@ type events struct {
 	outages    *throttle.Throttle
 	oversized  *throttle.Throttle
 	failures   *throttle.Throttle
+	admissions [admission.ReasonCount]*throttle.Throttle
+	slowBodies *throttle.Throttle
 }
 
 func newEvents(options Options) *events {
-	return &events{
+	shared := &events{
 		logger:     options.Logger,
 		rejected:   throttle.New(LogInterval, options.Clock),
 		overloads:  throttle.New(LogInterval, options.Clock),
@@ -35,7 +40,61 @@ func newEvents(options Options) *events {
 		outages:    throttle.New(LogInterval, options.Clock),
 		oversized:  throttle.New(LogInterval, options.Clock),
 		failures:   throttle.New(LogInterval, options.Clock),
+		slowBodies: throttle.New(LogInterval, options.Clock),
 	}
+	for reason := range admission.ReasonCount {
+		shared.admissions[reason] = throttle.New(LogInterval, options.Clock)
+	}
+	return shared
+}
+
+func (e *events) admissionRejected(ctx context.Context, _ credential.ID, err error) {
+	rejection, classified := errors.AsType[admission.RejectionError](err)
+	if !classified {
+		e.internal(ctx, err)
+		return
+	}
+	suppressed, admitted := e.admissions[rejection.Reason].Admit(0)
+	if !admitted {
+		return
+	}
+	attributes := rejectionAttributes(ctx, rejection, suppressed.Events)
+	e.logger.LogAttrs(ctx, slog.LevelWarn, "otlp.admission.rejected", withTrace(ctx, attributes...)...)
+}
+
+func rejectionAttributes(ctx context.Context, rejection admission.RejectionError, suppressed int64) []slog.Attr {
+	return slices.Concat([]slog.Attr{
+		slog.String("reason", rejection.Reason.String()),
+		slog.String("token_id", string(rejection.TokenID)),
+		slog.String("peer", peerOf(ctx)),
+		slog.Int64("suppressed_requests", suppressed),
+	}, topHolderAttributes(rejection))
+}
+
+func topHolderAttributes(rejection admission.RejectionError) []slog.Attr {
+	if rejection.TopHolderID == "" {
+		return nil
+	}
+	return []slog.Attr{
+		slog.String("top_holder_id", string(rejection.TopHolderID)),
+		slog.Int("top_holder_held", rejection.TopHolderHeld),
+	}
+}
+
+func (e *events) bodyTooSlow(ctx context.Context, id credential.ID, _ error) {
+	suppressed, admitted := e.slowBodies.Admit(0)
+	if !admitted {
+		return
+	}
+	e.logger.LogAttrs(ctx, slog.LevelWarn, "otlp.export.too_slow", withTrace(ctx,
+		slog.String("token_id", string(id)),
+		slog.String("peer", peerOf(ctx)),
+		slog.Int64("suppressed_requests", suppressed.Events),
+	)...)
+}
+
+func (e *events) admissionFailed(ctx context.Context, _ credential.ID, err error) {
+	e.internal(ctx, err)
 }
 
 func (e *events) accepted(ctx context.Context, result ingest.AcceptResult) {
