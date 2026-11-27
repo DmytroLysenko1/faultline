@@ -66,13 +66,16 @@ endif
 ##@ Verification
 
 .PHONY: verify
-verify: verify-static verify-tests verify-probes ## Everything CI runs
+verify: verify-static verify-tests-group verify-coverage verify-probes ## Everything CI runs
 
 .PHONY: verify-static
 verify-static: mod-check lint vuln proto-lint gen-check core-diff-check shutdown-tests-check ci-verify-check ## Static checks, one CI job
 
 .PHONY: verify-tests
-verify-tests: test-race cover-check ## Race tests and coverage thresholds, one CI job
+verify-tests: verify-tests-group verify-coverage ## Race tests and coverage thresholds on one machine
+
+.PHONY: verify-tests-group
+verify-tests-group: test-race ## Race tests of RACE_GROUP of RACE_GROUPS (all of them without RACE_GROUP), one CI matrix job per group
 
 .PHONY: verify-probes
 verify-probes: test-probes ## Heap and time probes, one CI job
@@ -122,16 +125,19 @@ else
 endif
 
 .PHONY: test-durations
-test-durations: ## Refresh hack/test-durations.txt, the test times race-shards.sh balances RACE_SHARDS by
+test-durations: ## Refresh hack/test-durations.txt, the package and RACE_SHARDS test times race-shards.sh balances shards and groups by
 	./hack/test-durations.sh hack/test-durations.txt $(RACE_SHARD_PACKAGES)
 
 .PHONY: test-race
 RACE_SHARDS := ./cmd/faultline:4 ./internal/infrastructure/natsjs/feed:3 ./internal/infrastructure/natsjs/checkpoint:3 ./pkg/stream:2
 RACE_SHARD_PACKAGES := $(foreach shard,$(RACE_SHARDS),$(firstword $(subst :, ,$(shard))))
+RACE_GROUPS := 3
+RACE_GROUP ?=
+RACE_PROFILE = $(if $(RACE_GROUP),coverage-$(RACE_GROUP).out,coverage.out)
 
 test-race: ## Run unit tests with the race detector and coverage; the slowest packages run in parallel shards (RACE_SHARDS)
 ifneq ($(GO_PACKAGES),)
-	RACE_SHARDS="$(RACE_SHARDS)" ./hack/race-shards.sh coverage.out
+	RACE_SHARDS="$(RACE_SHARDS)" RACE_GROUP="$(RACE_GROUP)" RACE_GROUPS="$(RACE_GROUPS)" ./hack/race-shards.sh $(RACE_PROFILE)
 else
 	@echo "test-race: no Go packages yet, skipping"
 endif
@@ -212,11 +218,20 @@ test-stress: ## Repeat concurrency-sensitive tests under the race detector (nigh
 	TEST_KILL_STRESS=1 TEST_KILL_RANDOM_POINTS=$(KILL_STRESS_POINTS) TEST_KILL_REAL_TTL=1 go test -count=1 -timeout=$(KILL_STRESS_TIMEOUT) -run '$(KILL_TEST)' ./cmd/faultline/
 
 .PHONY: cover-check
-cover-check: test-race ## Enforce per-package coverage thresholds (NFR-MAINT-001)
+cover-check: test-race verify-coverage ## Race tests, then the per-package coverage thresholds (NFR-MAINT-001)
+
+COVER_PARTS ?= coverage-parts
+
+.PHONY: cover-merge
+cover-merge: ## Merge the coverage-N.out profiles of all RACE_GROUPS found under COVER_PARTS into coverage.out
+	./hack/cover-merge.sh $(RACE_GROUPS) $(COVER_PARTS) coverage.out
+
+.PHONY: verify-coverage
+verify-coverage: ## Enforce per-package coverage thresholds on coverage.out (NFR-MAINT-001)
 ifneq ($(GO_PACKAGES),)
 	./hack/cover-check.sh coverage.out
 else
-	@echo "cover-check: no Go packages yet, skipping"
+	@echo "verify-coverage: no Go packages yet, skipping"
 endif
 
 .PHONY: vuln
@@ -296,4 +311,4 @@ btf-check: ## Check that the Linux VM kernel supports eBPF CO-RE (BTF, cgroup v2
 
 .PHONY: clean
 clean: ## Remove build and test artifacts
-	rm -rf $(BIN) dist coverage.out
+	rm -rf $(BIN) dist coverage.out coverage-*.out coverage-parts
