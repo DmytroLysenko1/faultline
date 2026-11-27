@@ -10,6 +10,7 @@ import (
 	"github.com/samber/lo"
 
 	"github.com/DmytroLysenko1/faultline/internal/application/ingestauth"
+	"github.com/DmytroLysenko1/faultline/internal/application/selfalert"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs"
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/tokens"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
@@ -29,7 +30,7 @@ const (
 	tokenMaxStaleness  = 45 * time.Second
 	tokenOpenBudget    = 10 * time.Second
 	directoryStopGrace = 100 * time.Millisecond
-	directoryHeap      = mib
+	directoryHeap      = tokens.SnapshotHeap + otlp.MaxConnections*otlp.MaxConcurrentStreams*otlp.MaxHeaderListBytes
 
 	reasonBucketMissing    = "bucket_missing"
 	reasonBucketLeaderless = "bucket_leaderless"
@@ -56,6 +57,7 @@ type directoryUnit struct {
 	source  connSource
 	tenant  string
 	options tokens.DirectoryOptions
+	clock   wallClock
 	phases  phaseLog
 	logger  *slog.Logger
 	sup     unitSupervisor
@@ -74,6 +76,7 @@ func directoryLayer(source connSource, tenant string, phases phaseLog, logger *s
 			RereadTime:     tokenReread,
 			Logger:         logger,
 		},
+		clock:  systemClock{},
 		phases: phases,
 		logger: logger,
 	}
@@ -83,6 +86,7 @@ func directoryLayer(source connSource, tenant string, phases phaseLog, logger *s
 		components:  []string{componentDirectory},
 		stopBudget:  directoryStopGrace + exitGrace,
 		statsGroups: guard.statsGroups,
+		sample:      guard.sample,
 		contributions: []contribution{
 			{
 				name:  "token directory",
@@ -119,7 +123,7 @@ func (u *directoryUnit) start(ctx context.Context, sup unitSupervisor) error {
 }
 
 func (u *directoryUnit) guard(directory *tokens.Directory) (*tokenGuard, error) {
-	authenticator, err := ingestauth.NewAuthenticator(directory, systemClock{}, ingestauth.Policy{
+	authenticator, err := ingestauth.NewAuthenticator(directory, u.clock, ingestauth.Policy{
 		Tenant:       u.tenant,
 		MaxStaleness: tokenMaxStaleness,
 		CheckHorizon: u.options.Horizon(),
@@ -130,7 +134,7 @@ func (u *directoryUnit) guard(directory *tokens.Directory) (*tokenGuard, error) 
 	return &tokenGuard{
 		directory:     directory,
 		authenticator: authenticator,
-		tap:           otlp.NewTap(authenticator, otlp.DefaultOptions(u.logger, systemClock{})),
+		tap:           otlp.NewTap(authenticator, otlp.DefaultOptions(u.logger, u.clock)),
 	}, nil
 }
 
@@ -158,7 +162,9 @@ func (u *directoryUnit) openOnce(ctx context.Context, conn *natsjs.Conn, wait *s
 func (u *directoryUnit) open(ctx context.Context, conn *natsjs.Conn) (*tokens.Directory, error) {
 	openCtx, cancel := context.WithTimeout(ctx, tokenOpenBudget)
 	defer cancel()
-	return tokens.OpenDirectory(openCtx, conn, &u.options)
+	options := u.options
+	options.Clock = u.clock
+	return tokens.OpenDirectory(openCtx, conn, &options)
 }
 
 func (u *directoryUnit) waits() waitLog {
@@ -198,12 +204,25 @@ func (u *directoryUnit) statsGroups(ctx context.Context) []slog.Attr {
 		return nil
 	}
 	return []slog.Attr{
-		authGroup(
-			guard.tap.Stats(),
-			guard.authenticator.Stats(ctx),
-			new(guard.directory.Stats()),
-		),
+		authGroup(guard.tap.Stats(), guard.authenticator.Stats(ctx), new(guard.directory.Stats())),
 	}
+}
+
+func (u *directoryUnit) sample(ctx context.Context, sample *selfalert.Sample) {
+	guard := u.guarded.Load()
+	if guard == nil {
+		return
+	}
+	fillAuthSample(sample, new(guard.directory.Stats()), guard.authenticator.Fresh(ctx))
+}
+
+func fillAuthSample(sample *selfalert.Sample, stats *tokens.DirectoryStats, fresh bool) {
+	sample.TokensStale = !fresh
+	sample.TokensRegressed = stats.Regressed
+	sample.RevokeBlocked = stats.RevokeBlocked
+	sample.BucketDrift = stats.ConfigDrift
+	sample.EpochChanges = stats.EpochChanges
+	sample.MassRevokes = stats.MassRevokes
 }
 
 func tokenStartHint(err error) string {

@@ -1,6 +1,10 @@
 package selfalert
 
-import "github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
+import (
+	"time"
+
+	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/resource"
+)
 
 type Transition struct {
 	Event      string
@@ -20,10 +24,11 @@ type hysteresis struct {
 	highRun   int
 	clearRun  int
 	escalated float64
+	lastHigh  time.Time
 }
 
-func (h *hysteresis) rise(rule *rule, value float64) bool {
-	h.highRun, h.clearRun = h.highRun+1, 0
+func (h *hysteresis) rise(rule *rule, value float64, now time.Time) bool {
+	h.highRun, h.clearRun, h.lastHigh = h.highRun+1, 0, now
 	if h.raised {
 		return h.escalate(rule, value)
 	}
@@ -46,13 +51,17 @@ func (h *hysteresis) hold() {
 	h.highRun, h.clearRun = 0, 0
 }
 
-func (h *hysteresis) settle(rule *rule) bool {
+func (h *hysteresis) settle(rule *rule, now time.Time) bool {
 	h.highRun, h.clearRun = 0, h.clearRun+1
-	if !h.raised || h.clearRun < rule.clearAfter {
+	if !h.raised || h.clearRun < rule.clearAfter || h.holding(rule, now) {
 		return false
 	}
 	h.raised, h.escalated = false, 0
 	return true
+}
+
+func (h *hysteresis) holding(rule *rule, now time.Time) bool {
+	return rule.holdFor > 0 && now.Sub(h.lastHigh) < rule.holdFor
 }
 
 type Evaluator struct {
@@ -110,9 +119,9 @@ func (e *Evaluator) observe(index int, current *Sample) (Transition, bool) {
 		return transition, false
 	case verdictHigh:
 		transition.Raised = true
-		return transition, state.rise(rule, reading.Value)
+		return transition, state.rise(rule, reading.Value, current.Now)
 	case verdictLow, verdictInsufficient:
-		return transition, state.settle(rule)
+		return transition, state.settle(rule, current.Now)
 	}
 	return transition, false
 }

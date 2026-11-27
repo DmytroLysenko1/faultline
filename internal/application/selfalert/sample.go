@@ -17,6 +17,12 @@ type Sample struct {
 	Owners             []resource.ServiceRef
 	SeriesLimitReached bool
 	DroppedSamples     uint64
+	TokensStale        bool
+	TokensRegressed    bool
+	RevokeBlocked      bool
+	BucketDrift        bool
+	EpochChanges       uint64
+	MassRevokes        uint64
 }
 
 type Thresholds struct {

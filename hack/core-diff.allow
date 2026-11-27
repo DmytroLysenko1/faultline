@@ -44,5 +44,9 @@ internal/domain/credential/token.go 3b-1:tokens
 internal/application/ingestauth/authenticator.go 3b-1:tokens
 internal/application/ingestauth/rejection.go 3b-1:tokens
 internal/application/tokenadmin/admin.go 3b-1:tokens
+internal/application/selfalert/auth.go 3b-1:tokens
+internal/application/selfalert/rules.go 3b-1:tokens
+internal/application/selfalert/sample.go 3b-1:tokens
+internal/application/selfalert/evaluator.go 3b-1:tokens
 internal/domain/topology/graph/heap.go budget:expert26
 internal/domain/topology/heap.go budget:expert26

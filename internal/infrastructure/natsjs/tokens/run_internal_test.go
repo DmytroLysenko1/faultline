@@ -32,7 +32,10 @@ const (
 	epochOffset = time.Hour
 )
 
-var errLostCheck = errors.New("check lost")
+var (
+	errLostCheck   = errors.New("check lost")
+	errParkedCheck = errors.New("check parked")
+)
 
 type world struct {
 	mu             sync.Mutex
@@ -49,6 +52,8 @@ type world struct {
 	rereadOverride *bucketState
 	invalid        uint64
 	onReread       func(w *world)
+	parkAfter      int
+	unpark         chan struct{}
 	stateCalls     []time.Duration
 	readCalls      []time.Duration
 }
@@ -119,7 +124,12 @@ func (w *world) readState(ctx context.Context) (bucketState, configVerdict, erro
 	w.mu.Lock()
 	w.stateCalls = append(w.stateCalls, budgetOf(ctx))
 	delay := w.stateDelay
+	parked := w.parkAfter > 0 && len(w.stateCalls) > w.parkAfter
 	w.mu.Unlock()
+	if parked {
+		<-w.unpark
+		return bucketState{}, configVerdict{}, errParkedCheck
+	}
 	if err := w.answer(ctx, delay, &w.stateFault); err != nil {
 		return bucketState{}, configVerdict{}, err
 	}

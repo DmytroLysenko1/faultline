@@ -3,8 +3,13 @@ package tokens
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"maps"
+	"slices"
 	"sync/atomic"
 	"time"
+
+	"github.com/samber/lo"
 
 	"github.com/DmytroLysenko1/faultline/pkg/retry"
 )
@@ -13,6 +18,8 @@ const (
 	massRevokeFloor   = 16
 	massRevokeDivisor = 2
 	slowRereadDivisor = 2
+	checkLogInterval  = 10 * time.Second
+	reasonUnavailable = "unavailable"
 )
 
 type epoch struct {
@@ -23,24 +30,33 @@ type epoch struct {
 
 type failureCounter struct {
 	target  error
+	reason  string
 	counter func(*counters) *atomic.Uint64
+}
+
+type checkLog struct {
+	next       map[string]time.Time
+	suppressed map[string]uint64
 }
 
 var failureCounters = []failureCounter{
 	{
 		target: ErrNoLeader,
+		reason: "leaderless",
 		counter: func(c *counters) *atomic.Uint64 {
 			return &c.leaderlessChecks
 		},
 	},
 	{
 		target: ErrNoQuorum,
+		reason: "quorumless",
 		counter: func(c *counters) *atomic.Uint64 {
 			return &c.quorumlessChecks
 		},
 	},
 	{
 		target: ErrBucketDrift,
+		reason: "drifted",
 		counter: func(c *counters) *atomic.Uint64 {
 			return &c.driftedChecks
 		},
@@ -51,19 +67,20 @@ func (d *Directory) Run(ctx context.Context) error {
 	if !d.running.CompareAndSwap(false, true) {
 		return ErrAlreadyRunning
 	}
-	for retry.Sleep(ctx, time.Until(d.epoch.next)) == nil {
+	for retry.Sleep(ctx, d.epoch.next.Sub(d.clock.Now())) == nil {
 		d.epoch.next = d.check(ctx)
 	}
 	return nil
 }
 
 func (d *Directory) load(ctx context.Context) error {
-	sent := time.Now()
+	sent := d.clock.Now()
 	entries, err := d.reread(ctx)
 	if err != nil {
 		return err
 	}
 	d.publish(&entries, sent)
+	d.logger.Info("tokens.bucket_epoch", "created", entries.State.Created, "last_sequence", entries.State.LastSeq)
 	d.epoch.next = sent.Add(d.options.ReloadInterval)
 	if entries.Invalid > 0 && entries.Invalid >= uint64(len(entries.Grants)) {
 		d.logger.Error("tokens.mostly_invalid_entries", "invalid", entries.Invalid, "grants", len(entries.Grants))
@@ -78,7 +95,7 @@ func (d *Directory) noteDifferences(verdict *configVerdict) {
 }
 
 func (d *Directory) check(ctx context.Context) time.Time {
-	sent := time.Now()
+	sent := d.clock.Now()
 	d.stats.checks.Add(1)
 	state, err := d.readState(ctx)
 	if err != nil {
@@ -123,9 +140,9 @@ func (d *Directory) readState(ctx context.Context) (bucketState, error) {
 func (d *Directory) reread(ctx context.Context) (bucketEntries, error) {
 	rereadCtx, cancel := context.WithTimeout(ctx, d.options.RereadTime)
 	defer cancel()
-	started := time.Now()
+	started := d.clock.Now()
 	entries, verdict, err := d.entries(rereadCtx)
-	d.timeReread(time.Since(started))
+	d.timeReread(d.clock.Now().Sub(started))
 	if err != nil {
 		return bucketEntries{}, err
 	}
@@ -156,12 +173,26 @@ func (d *Directory) failed(ctx context.Context, err error) {
 		return
 	}
 	d.stats.checkFailures.Add(1)
+	reason := reasonUnavailable
 	for _, rule := range failureCounters {
 		if errors.Is(err, rule.target) {
 			rule.counter(&d.stats).Add(1)
+			reason = rule.reason
 		}
 	}
-	d.logger.Warn("tokens.check_failed", "error", err)
+	d.warnFailed(reason, err)
+}
+
+func (d *Directory) warnFailed(reason string, err error) {
+	now := d.clock.Now()
+	if now.Before(d.checks.next[reason]) {
+		d.checks.suppressed[reason]++
+		return
+	}
+	suppressed := d.checks.suppressed[reason]
+	d.checks.next[reason] = now.Add(checkLogInterval)
+	d.checks.suppressed[reason] = 0
+	d.logger.Warn("tokens.check_failed", "reason", reason, "suppressed", suppressed, "error", err)
 }
 
 func (d *Directory) failedReread(ctx context.Context, err error) {
@@ -205,6 +236,19 @@ func (d *Directory) refresh(sent time.Time) {
 		grants:    d.current.Load().grants,
 		checkedAt: sent,
 	})
+	d.reportRecovery()
+}
+
+func (d *Directory) reportRecovery() {
+	reasons := slices.Sorted(maps.Keys(d.checks.suppressed))
+	suppressed := lo.FilterMap(reasons, func(reason string, _ int) (any, bool) {
+		return slog.Uint64(reason, d.checks.suppressed[reason]), d.checks.suppressed[reason] > 0
+	})
+	if len(suppressed) == 0 {
+		return
+	}
+	clear(d.checks.suppressed)
+	d.logger.Info("tokens.check_recovered", slog.Group("suppressed", suppressed...))
 }
 
 func (d *Directory) publish(entries *bucketEntries, sent time.Time) {
@@ -217,6 +261,7 @@ func (d *Directory) publish(entries *bucketEntries, sent time.Time) {
 	d.stats.rereads.Add(1)
 	d.stats.lastSequence.Store(entries.State.LastSeq)
 	d.stats.invalidEntries.Store(entries.Invalid)
+	d.reportRecovery()
 }
 
 func (d *Directory) reportMassRevoke(entries *bucketEntries) {
@@ -235,7 +280,7 @@ func (d *Directory) reportMassRevoke(entries *bucketEntries) {
 }
 
 func (d *Directory) retryAt() time.Time {
-	return time.Now().Add(d.options.RetryEvery)
+	return d.clock.Now().Add(d.options.RetryEvery)
 }
 
 func massive(vanished, previous int, messages uint64) bool {

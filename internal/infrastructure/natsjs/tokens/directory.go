@@ -14,7 +14,10 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs"
 )
 
-const horizonReloads = 2
+const (
+	horizonReloads = 2
+	SnapshotHeap   = 864 << 10
+)
 
 var ErrAlreadyRunning = errors.New("token directory already running")
 
@@ -22,12 +25,23 @@ type readState func(ctx context.Context) (bucketState, configVerdict, error)
 
 type readEntries func(ctx context.Context) (bucketEntries, configVerdict, error)
 
+type clock interface {
+	Now() time.Time
+}
+
+type systemClock struct{}
+
+func (systemClock) Now() time.Time {
+	return time.Now()
+}
+
 type DirectoryOptions struct {
 	ReloadInterval time.Duration
 	RetryEvery     time.Duration
 	CheckTime      time.Duration
 	RereadTime     time.Duration
 	Logger         *slog.Logger
+	Clock          clock
 }
 
 func (o *DirectoryOptions) validate() error {
@@ -97,10 +111,12 @@ type Directory struct {
 	entries readEntries
 	options DirectoryOptions
 	logger  *slog.Logger
+	clock   clock
 	current atomic.Pointer[snapshot]
 	running atomic.Bool
 	stats   counters
 	epoch   epoch
+	checks  checkLog
 }
 
 func newDirectory(state readState, entries readEntries, options *DirectoryOptions) (*Directory, error) {
@@ -112,6 +128,11 @@ func newDirectory(state readState, entries readEntries, options *DirectoryOption
 		entries: entries,
 		options: *options,
 		logger:  loggerOf(options.Logger),
+		clock:   clockOf(options.Clock),
+		checks: checkLog{
+			next:       map[string]time.Time{},
+			suppressed: map[string]uint64{},
+		},
 	}
 	directory.current.Store(&snapshot{})
 	return directory, nil
@@ -174,6 +195,13 @@ func loggerOf(logger *slog.Logger) *slog.Logger {
 		return slog.New(slog.DiscardHandler)
 	}
 	return logger
+}
+
+func clockOf(given clock) clock {
+	if given == nil {
+		return systemClock{}
+	}
+	return given
 }
 
 func allPositive(periods ...time.Duration) bool {

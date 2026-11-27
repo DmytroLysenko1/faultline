@@ -15,9 +15,8 @@ import (
 )
 
 const (
-	pinnedSnapshotBytes = 864 << 10
-	heldSnapshots       = 2
-	idSymbols           = "abcdefghijklmnopqrstuvwxyz234567"
+	heldSnapshots = 2
+	idSymbols     = "abcdefghijklmnopqrstuvwxyz234567"
 )
 
 func numberedID(number int) string {
@@ -88,8 +87,8 @@ func TestTwoFullSnapshotsAndARereadFitTheirPinnedShare(t *testing.T) {
 			t.Fatalf("a snapshot holds %d grants, want %d", len(snapshot), MaxGrants)
 		}
 	}
-	if held > pinnedSnapshotBytes {
-		t.Errorf("two full snapshots and a reread hold %d bytes, the pinned share is %d", held, pinnedSnapshotBytes)
+	if held > SnapshotHeap {
+		t.Errorf("two full snapshots and a reread hold %d bytes, the pinned share is %d", held, SnapshotHeap)
 	}
-	t.Logf("held %.2f MiB of %.2f MiB", float64(held)/(1<<20), float64(pinnedSnapshotBytes)/(1<<20))
+	t.Logf("held %.2f MiB of %.2f MiB", float64(held)/(1<<20), float64(SnapshotHeap)/(1<<20))
 }

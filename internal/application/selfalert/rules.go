@@ -1,6 +1,9 @@
 package selfalert
 
-import "slices"
+import (
+	"slices"
+	"time"
+)
 
 const (
 	ClockSkewRatioHigh      = "windows.clock_skew_ratio_high"
@@ -9,12 +12,19 @@ const (
 	CardinalityLimitReached = "windows.cardinality_limit_reached"
 	SeriesLimitReached      = "windows.series_limit_reached"
 	SketchBudgetExhausted   = "windows.sketch_budget_exhausted"
+	AuthDirectoryStale      = "auth.token_directory_stale"
+	AuthSequenceRegressed   = "auth.token_sequence_regressed"
+	AuthRevokeBlocked       = "auth.token_revoke_blocked"
+	AuthBucketDrift         = "auth.token_bucket_drift"
+	AuthEpochChanged        = "auth.token_epoch_changed"
+	AuthMassRevoke          = "auth.token_mass_revoke"
 
 	minOffered      = 1_000
 	raiseRatio      = 0.01
 	clearRatio      = 0.005
 	lagRaiseReports = 3
 	clearReports    = 2
+	countHold       = time.Hour
 	oneReport       = 1
 	limitReached    = 1
 )
@@ -40,13 +50,14 @@ type rule struct {
 	event      string
 	raiseAfter int
 	clearAfter int
+	holdFor    time.Duration
 	escalates  bool
 	listOwners bool
 	read       reader
 }
 
 func rules() []rule {
-	return slices.Concat(ratioRules(), stateRules())
+	return slices.Concat(ratioRules(), stateRules(), authRules())
 }
 
 func ratioRules() []rule {
@@ -86,18 +97,12 @@ func stateRules() []rule {
 			listOwners: true,
 			read:       ownersOverLimit,
 		},
-		{
-			event:      SeriesLimitReached,
-			raiseAfter: oneReport,
-			clearAfter: clearReports,
-			read:       seriesLimit,
-		},
-		{
-			event:      SketchBudgetExhausted,
-			raiseAfter: oneReport,
-			clearAfter: clearReports,
-			read:       droppedSamples,
-		},
+		flagRule(SeriesLimitReached, func(sample *Sample) bool {
+			return sample.SeriesLimitReached
+		}),
+		countRule(SketchBudgetExhausted, clearReports, func(sample *Sample) uint64 {
+			return sample.DroppedSamples
+		}),
 	}
 }
 
@@ -147,20 +152,48 @@ func ownersOverLimit(_, current *Sample, _ Thresholds) (Reading, verdict) {
 	}, highWhen(current.OwnersOverLimit > 0)
 }
 
-func seriesLimit(_, current *Sample, _ Thresholds) (Reading, verdict) {
-	if !current.SeriesLimitReached {
-		return Reading{}, verdictLow
+func flagRule(event string, flag func(*Sample) bool) rule {
+	return rule{
+		event:      event,
+		raiseAfter: oneReport,
+		clearAfter: clearReports,
+		read:       flagOf(flag),
 	}
-	return Reading{
-		Value: limitReached,
-	}, verdictHigh
 }
 
-func droppedSamples(previous, current *Sample, _ Thresholds) (Reading, verdict) {
-	dropped := grown(current.DroppedSamples, previous.DroppedSamples)
-	return Reading{
-		Value: float64(dropped),
-	}, highWhen(dropped > 0)
+func countRule(event string, clearAfter int, count func(*Sample) uint64) rule {
+	return rule{
+		event:      event,
+		raiseAfter: oneReport,
+		clearAfter: clearAfter,
+		read:       grownOf(count),
+	}
+}
+
+func heldCountRule(event string, hold time.Duration, count func(*Sample) uint64) rule {
+	held := countRule(event, oneReport, count)
+	held.holdFor = hold
+	return held
+}
+
+func flagOf(flag func(*Sample) bool) reader {
+	return func(_, current *Sample, _ Thresholds) (Reading, verdict) {
+		if !flag(current) {
+			return Reading{}, verdictLow
+		}
+		return Reading{
+			Value: limitReached,
+		}, verdictHigh
+	}
+}
+
+func grownOf(count func(*Sample) uint64) reader {
+	return func(previous, current *Sample, _ Thresholds) (Reading, verdict) {
+		increase := grown(count(current), count(previous))
+		return Reading{
+			Value: float64(increase),
+		}, highWhen(increase > 0)
+	}
 }
 
 func highWhen(high bool) verdict {

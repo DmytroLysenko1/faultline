@@ -359,12 +359,43 @@ func TestAlertsReportTheCurrentStateOfEveryRule(t *testing.T) {
 		SeriesLimitReached: true,
 	})
 	want := []selfalert.Alert{
-		{Event: selfalert.ClockSkewRatioHigh},
-		{Event: selfalert.LateDropRatioHigh},
-		{Event: selfalert.WatermarkLagHigh},
-		{Event: selfalert.CardinalityLimitReached},
-		{Event: selfalert.SeriesLimitReached, Raised: true},
-		{Event: selfalert.SketchBudgetExhausted},
+		{
+			Event: selfalert.ClockSkewRatioHigh,
+		},
+		{
+			Event: selfalert.LateDropRatioHigh,
+		},
+		{
+			Event: selfalert.WatermarkLagHigh,
+		},
+		{
+			Event: selfalert.CardinalityLimitReached,
+		},
+		{
+			Event:  selfalert.SeriesLimitReached,
+			Raised: true,
+		},
+		{
+			Event: selfalert.SketchBudgetExhausted,
+		},
+		{
+			Event: staleAlert,
+		},
+		{
+			Event: regressedAlert,
+		},
+		{
+			Event: blockedAlert,
+		},
+		{
+			Event: driftAlert,
+		},
+		{
+			Event: epochAlert,
+		},
+		{
+			Event: massAlert,
+		},
 	}
 	if diff := cmp.Diff(want, evaluator.Alerts()); diff != "" {
 		t.Errorf("alerts (-want +got):\n%s", diff)
