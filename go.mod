@@ -17,7 +17,7 @@ require (
 	connectrpc.com/grpcreflect v1.3.1
 	github.com/google/go-cmp v0.7.0
 	github.com/nats-io/nats-server/v2 v2.15.3
-	github.com/nats-io/nats.go v1.55.0
+	github.com/nats-io/nats.go v1.56.0
 	github.com/samber/lo v1.53.0
 	go.opentelemetry.io/collector/pdata v1.71.0
 	go.opentelemetry.io/otel v1.47.0
