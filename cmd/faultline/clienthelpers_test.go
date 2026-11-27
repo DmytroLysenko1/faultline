@@ -24,7 +24,7 @@ const (
 	callerSpan      = 1
 	calleeSpan      = 2
 	pollInterval    = 10 * time.Millisecond
-	visibleDeadline = 5 * time.Second
+	visibleDeadline = 20 * time.Second
 	healthPath      = "/healthz"
 )
 
