@@ -1,4 +1,10 @@
 opentelemetry-collector:
+  extraEnvs:
+    - name: INGEST_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: ingest-token
+          key: token
   config:
     exporters:
       otlp_grpc/faultline:
@@ -6,6 +12,8 @@ opentelemetry-collector:
         tls:
           insecure: true
         timeout: 5s
+        headers:
+          authorization: Bearer ${env:INGEST_TOKEN}
         retry_on_failure:
           enabled: true
         sending_queue:

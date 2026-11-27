@@ -20,10 +20,11 @@ Steps, each logged as `demo-1: …`:
 
 1. Build `tmp/bin/faultctl` and `tmp/bin/democheck`.
 2. Create or reuse the single-node cluster from `deploy/kind/kind-config-demo.yaml`. A cluster built from another node image is recreated.
-3. Build `faultline:dev`, load it into kind (the node pulls `NATS_IMAGE` from `versions.env` by digest itself: `kind load` of a multi-platform image fails with the containerd image store), apply `deploy/dev/skeleton`, wait until NATS is ready, then restart faultline and wait until `/readyz` answers 200 (up to 3 minutes: the pod takes the partition lease, restores the checkpoint and creates the streams).
-4. Install OTel Demo (chart version from `versions.env`) with `deploy/dev/otel-demo-values.yaml` and `deploy/dev/otel-demo-faultline-values.yaml`, wait until every Deployment and the collector DaemonSet are ready. The first run pulls about 25 images and takes 10–15 minutes.
-5. Port-forward the faultline API to `127.0.0.1:$DEMO_PORT`, wait for `/readyz`, poll the graph every 10 s for up to 5 minutes until every required edge is there.
-6. Wait for a `pipeline.stats` log record, then run the full check.
+3. Build `faultline:dev`, load it into kind (the node pulls `NATS_IMAGE` from `versions.env` by digest itself: `kind load` of a multi-platform image fails with the containerd image store), apply `deploy/dev/skeleton`, wait until NATS is ready, then restart faultline, run `faultline tokens init` in its pod (retried until the pod runs it; an error of the command itself, `faultline tokens: …`, stops the demo at once) and wait until `/readyz` answers 200 (up to 3 minutes: the pod waits for the token bucket, takes the partition lease, restores the checkpoint and creates the streams).
+4. Issue an ingest token of the tenant `default` into the Secret `otel-demo/ingest-token` (key `token`, the token id in the annotation `ingest-token-id`) and wait until 30 s have passed since the issue, so that faultline accepts it.
+5. Install OTel Demo (chart version from `versions.env`) with `deploy/dev/otel-demo-values.yaml` and `deploy/dev/otel-demo-faultline-values.yaml`, restart the collector DaemonSet (it reads `INGEST_TOKEN` from the Secret only at start), wait until every Deployment and the collector are ready, then revoke every other token of the tenant `default`, keeping the one whose id is in the Secret (a run that stopped half way leaves its token to this cleanup). The first run pulls about 25 images and takes 10–15 minutes.
+6. Port-forward the faultline API to `127.0.0.1:$DEMO_PORT`, wait for `/readyz`, poll the graph every 10 s for up to 5 minutes until every required edge is there.
+7. Wait for a `pipeline.stats` log record, then run the full check.
 
 A passing run ends with:
 
@@ -58,7 +59,7 @@ grpcurl -plaintext -max-msg-sz 201326592 127.0.0.1:18080 faultline.v1.GraphServi
 
 | Output | What it means | What to look at |
 |---|---|---|
-| `missing required edge: A -> B` | A call that happens in every run never paired | the collector reached faultline? `kubectl … -n otel-demo logs daemonset/otel-collector-agent`; `pipeline.stats` counters `expired`, `unpairable` |
+| `missing required edge: A -> B` | A call that happens in every run never paired | the collector reached faultline? `kubectl … -n otel-demo logs daemonset/otel-collector-agent` (`Unauthenticated` there: the Secret holds a revoked or foreign token, see [Tokens](#tokens)); `pipeline.stats` counters `expired`, `unpairable` |
 | `phantom edge: A -> B` | faultline shows a call that is in neither reference list | a pairing bug, or a new edge in a newer demo version: never add it to `optional-edges.txt` without a reason |
 | `node without namespace: svc:/x` | a service lost its `k8s.*` attributes | the collector's `k8s_attributes` pod association (see `otel-demo-values.yaml`) |
 | `no node is in svc:otel-demo/` | the demo runs in another namespace | install OTel Demo into `otel-demo`: the namespace is part of every node id |
@@ -73,7 +74,7 @@ make demo-2
 
 The same steps as `make demo-1`, logged as `demo-2: …`, with two stricter checks (`democheck -red`):
 
-1. The poll in step 5 waits, still for up to 5 minutes, until every required edge also has a **final** window with `requests > 0` and `latency_samples > 0`, and every service that receives a required edge has a final window of its own. With the default 10 s windows and 30 s watermark delay the first finals appear about 40 s after traffic starts.
+1. The poll in step 6 waits, still for up to 5 minutes, until every required edge also has a **final** window with `requests > 0` and `latency_samples > 0`, and every service that receives a required edge has a final window of its own. With the default 10 s windows and 30 s watermark delay the first finals appear about 40 s after traffic starts.
 2. The full check also reads the last `pipeline.stats` line and checks, from that one line:
    - I6 — for each engine (`subjects`, `operations`, `overflow`): `offered = on_time + late_accepted + late_dropped + no_watermark`;
    - I10 — `graph.calls_total + graph.served_total = windows.subjects.offered`;
@@ -127,10 +128,12 @@ The skeleton runs one `faultline all` pod (the image entrypoint) and one NATS po
 | NATS is not up yet | Warn `nats.unreachable{reason=dns\|…}` at once, then Warn `lifecycle.still_waiting{state=connecting}` every 30 s, the first one 30 s after the start; `/readyz` 503 | waits until SIGTERM |
 | another pod holds the partition lease | `/readyz` 503 in `waiting_lease`; the old pod's lease expires within 25 s if it was killed | waits until SIGTERM |
 | the streams are missing or being repaired | Warn `lifecycle.still_waiting{state=waiting_streams}` | waits until SIGTERM |
+| the token bucket is missing, or its group has no leader or no quorum | `/readyz` 503 in `waiting_tokens`, Warn `lifecycle.still_waiting{state=waiting_tokens}`; `faultline tokens init` ends the wait | waits until SIGTERM |
+| the token bucket config lets grants in or hides them (`tokens.ErrBucketDrift`) | Error `lifecycle.start_failed` with the hint to run `faultline tokens init` and, if it reports that the bucket needs recreating, [the runbook](#tokens--recreate-the-bucket) | code 1 |
 | the checkpoint cannot be restored | Error `checkpoint.restore_failed{hint="CHECKPOINT_RECOVERY=discard:p0:…"}` | code 1 |
 | everything is up | Info `lifecycle.state{state=serving}`, `/readyz` 200 | — |
 
-`/healthz` is the liveness probe and answers 200 while the process runs, including while it waits for NATS, the lease or the streams; `/readyz` is the readiness probe and answers 200 only while serving. Never put `/readyz` on a liveness or startup probe: a standby waits for the lease without a limit. If you add a startup probe on `/readyz` anyway, give it at least 80 s, the restore budget at the defaults.
+`/healthz` is the liveness probe and answers 200 while the process runs, including while it waits for NATS, the token bucket, the lease or the streams; `/readyz` is the readiness probe and answers 200 only while serving. Never put `/readyz` on a liveness or startup probe: a standby waits for the lease without a limit. If you add a startup probe on `/readyz` anyway, give it at least 80 s, the restore budget at the defaults.
 
 ### Alerts
 
@@ -155,23 +158,84 @@ SIGTERM stops the layers in reverse: OTLP, journal, the partition (drain, final 
 - The stream keeps up to `STREAM_MAX_BYTES` (2 GiB) and refuses new messages when full. The exporter gets `RESOURCE_EXHAUSTED` with `RetryInfo` and retries. A span whose export got OK is in the stream and is not lost by any restart of the faultline pod.
 - A faultline pod restart restores the graph from the last checkpoint and replays the stream from there.
 - A processor killed by `SIGKILL` at any moment (while it uploads a checkpoint, moves the checkpoint pointer, purges the stream below it, restores, or reads the stream) comes back to the same graph as a run that was never killed: the pointer only moves to a complete object, the stream is purged only below a committed pointer, and the restart reads from the pointer position. A lost answer (the write was done, the process never learned it) is the same as a kill after the write. The next pod waits for the 25 s lease of the killed one. `TestAKilledProcessorRestartsToTheSameGraphAsAnUninterruptedRun` kills the binary at 7 fixed points and 3 random ones — after the k-th record delivered from the stream or the k-th answered checkpoint write (`TEST_KILL_SEED` replays a run); the windows, the waiting halves of calls and the counts are all in the checkpoint it restarts from, and the graph without kills is checked against the records. `make test-stress` runs 10 random points with the real lease TTL, `TestAKilledIngesterLosesNoAcknowledgedRequest` (every export answered OK before a `SIGKILL` of the ingester is in the graph) and `TestALeaseLostWhileServingStopsWithoutRelease` (a processor whose lease was taken exits with code 1 and leaves the new holder's key).
-- NATS keeps JetStream on an `emptyDir`. A container restart keeps it; deleting or recreating the NATS pod (`Recreate`, a node drain) wipes the stream, the checkpoints and the lease. A running `all` cannot renew its lease on the new server: after about 26 s (Warn `lease.suspended` 20 s after the last renewal, the loss when the 25 s lease runs out, then the stop) it logs Error `lease.lost` (a page) and exits with code 1; the pod restarts once and starts with an empty graph. Any edit of `nats.conf` does the same: `configMapGenerator` gives the ConfigMap a new hash, the NATS Deployment rolls, and the new pod starts on an empty volume. Fine for dev; production storage (PVC, three replicas) is step 11.
-- Sizes: `PARTITIONS × (STREAM_MAX_BYTES + 4.4 × worst checkpoint image) + DLQ 1 GiB` = 2 GiB + 837.7 MiB + 1 GiB ≈ 3.8 GiB fits `max_file_store: 5GB`, which fits the 6 Gi volume. The checkpoint spool (`CHECKPOINT_DIR`) needs two worst images plus 64 MiB, 444.8 MiB for `all`; its volume has 512 Mi. `max_payload: 8MB` covers the largest record with its headers. `TestTheSkeletonNATSHoldsWhatTheAllRoleWrites` checks all four against the runtime loaders.
+- NATS keeps JetStream on the claim `nats-store` (6 Gi, `ReadWriteOnce`, the default storage class, `standard` in kind). Deleting or recreating the NATS pod (`Recreate`, an edit of `nats.conf`: `configMapGenerator` gives the ConfigMap a new hash and the NATS Deployment rolls) keeps the stream, the checkpoints, the lease and the token bucket: the new pod mounts the same claim. While NATS is away a running `all` cannot renew its lease: when that lasts past the 25 s lease (Warn `lease.suspended` 20 s after the last renewal) it logs Error `lease.lost` (a page), exits with code 1 and restarts from the last checkpoint. The claim goes away only with the namespace or the cluster (`make demo-down`). Production storage (three replicas) is step 11.
+- Sizes: `PARTITIONS × (STREAM_MAX_BYTES + 4.4 × worst checkpoint image) + DLQ 1 GiB` = 2 GiB + 837.7 MiB + 1 GiB ≈ 3.8 GiB fits `max_file_store: 5GB`, which fits the 6 Gi claim. The checkpoint spool (`CHECKPOINT_DIR`) needs two worst images plus 64 MiB, 444.8 MiB for `all`; its volume has 512 Mi. `max_payload: 8MB` covers the largest record with its headers. `TestTheSkeletonNATSHoldsWhatTheAllRoleWrites` checks all four against the runtime loaders.
 
 ### Memory of `all`
 
-The process refuses to start (code 2) when its worst case does not fit 0.85 × `GOMEMLIMIT` (1 600 MiB → 1 360 MiB). At the defaults `all` needs 1 318.5 MiB: OTLP requests 440.0, pairing, graph and traffic 402.1 (sketch arena 2 Mi entries), API responses 256.0, feed credit, pull and the message held 88.0, records waiting for PubAck 60.0, `Apply` 27.8, snapshots 23.5, publish buffer 8.0, NATS connections 7.0, checkpoint 6.2. Headroom is 41.5 MiB. Self-tracing (`SELF_TRACING_ENDPOINT`) and the token directory of a later step take about 8 MiB of it.
+The process refuses to start (code 2) when its worst case does not fit 0.85 × `GOMEMLIMIT` (1 600 MiB → 1 360 MiB). At the defaults `all` needs 1 319.5 MiB: OTLP requests 440.0, pairing, graph and traffic 402.1 (sketch arena 2 Mi entries), API responses 256.0, feed credit, pull and the message held 88.0, records waiting for PubAck 60.0, `Apply` 27.8, snapshots 23.5, publish buffer 8.0, NATS connections 7.0, checkpoint 6.2, token directory 1.0 (two snapshots of 1 024 grants and the header lists). Headroom is 40.5 MiB. Self-tracing (`SELF_TRACING_ENDPOINT`) takes about 2 MiB of it; the next ingest slices take theirs from the 4.5 MiB above the 36 MiB floor that `TestTheAllHeadroomIsPinned` keeps.
 
 Raising `SKETCH_MAX_ENTRIES` or `PAIRING_MAX_PENDING` needs a larger `GOMEMLIMIT` (and the pod memory limit with it). A subject (a service or an edge) takes arena entries in proportion to its call rate: about 700 at 4 calls/s, 2 082 at 16 calls/s and 3 584 at saturation (64 calls/s and above: 7 live windows of a 512-entry block). The 2 Mi arena holds about 2 900 subjects at 4 calls/s and about 585 at saturation without losing a sample; beyond that the arena collapses buckets and then drops samples (`sketch.dropped_samples` in `pipeline.stats`). The graph limits (10 000 services, 50 000 edges) are not an arena size: at saturation they need about 1.6 GiB of arena. Step 11 sizes the processor arena from the measured entries per subject. The hint printed for a wrong `SKETCH_MAX_ENTRIES` names the processor default 8388608, not the `all` default 2097152 (known).
 
 ### Settings that depend on each other
 
 - The ingester's `STREAM_DUPLICATE_WINDOW` must not be longer than the processor's. The ingester only checks the dedup window of the streams at start and waits in `waiting_streams` until it is long enough; the processor's `EnsureTopology` sets its own window, so a longer one on the ingester is a wait that never ends (visible as `still_waiting{state=waiting_streams}`). `all` uses one value for both.
+- `NATS_TLS_CA_FILE` turns TLS on for every URL, `nats://` ones too (nats.go 1.56): set it only for a server that speaks TLS, otherwise the connection fails.
 - `all` defaults `TOMBSTONE_TTL` to 15 s. Setting `PAIRING_TTL` above 15 s needs `TOMBSTONE_TTL` ≥ `PAIRING_TTL`, otherwise the start fails with code 2.
 
 ### Upgrading from the image before the `all` defaults changed
 
 A checkpoint written by `all` with the earlier defaults (`TOMBSTONE_TTL=1m`, `SKETCH_MAX_ENTRIES=8388608`) does not restore with the new ones: the start logs Error `checkpoint.restore_failed` with a hint. Set the hinted `CHECKPOINT_RECOVERY=discard:p0:…` once, let the pod start with an empty graph, then remove the variable. Going back to the old values is not an option at the default `GOMEMLIMIT`: the 8 Mi arena does not fit the budget.
+
+## Tokens
+
+Every OTLP request needs `authorization: Bearer <ingest token>`. faultline checks it before it reads the body: no token, a wrong one, or a token of another tenant gets `UNAUTHENTICATED`; while the token directory is stale (no fresh check of the bucket for 45 s) every request gets `UNAVAILABLE` and the collector retries. The grants live in the NATS KV bucket `ingest_tokens` (stream `KV_ingest_tokens`) on the claim `nats-store`, so a restart of the NATS pod keeps them.
+
+Run the command in the faultline pod (the binary is `/faultline`, it is not on `PATH`); it reads `NATS_URL`, `TENANT` and `STREAM_REPLICAS` from the pod:
+
+```sh
+kubectl --context kind-faultline-demo -n faultline exec deploy/faultline -- /faultline tokens init
+(
+  set -euo pipefail
+  token="$(kubectl --context kind-faultline-demo -n faultline exec deploy/faultline -- /faultline tokens issue --tenant default --stdout)"
+  printf '%s' "$token" |
+    kubectl --context kind-faultline-demo -n otel-demo create secret generic ingest-token --from-file=token=/dev/stdin --dry-run=client -o yaml |
+    kubectl --context kind-faultline-demo apply --server-side --field-manager=demo-1 --force-conflicts -f -
+)
+kubectl --context kind-faultline-demo -n faultline exec deploy/faultline -- /faultline tokens list
+kubectl --context kind-faultline-demo -n faultline exec deploy/faultline -- /faultline tokens revoke <id>
+```
+
+- `init` creates the bucket or reconciles its config and prints `token bucket ready, grants: N`. Ingesters wait in `waiting_tokens` until it exists, in any order with `init`.
+- `issue [--tenant <tenant>] (--output-file <path> | --stdout)`: `--tenant` wins over `TENANT` (default `default`). The id goes to stderr first (`issuing ingest token <id> for tenant <tenant>`), then the token once to stdout or to a new file with mode 0600. Without `-t` stdout is a pipe, so `issue` with neither flag refuses with code 2; `--stdout` into a file others can read is refused too, but through `kubectl exec` that check runs in the pod and does not see a redirect on your machine: put the token straight into the Secret as above, never into a file or the terminal. `$(…)` drops the line break `issue` ends the token with, and the subshell stops before the Secret when `issue` fails, so a failed issue never writes an empty token over the live one. The field manager is the one of `make demo-1`, which owns `data.token` after its first run; that Secret has no `ingest-token-id`, so the next `make demo-1` revokes this token with the other stale ones. Every ingester accepts the token within 22 s while NATS is reachable.
+- `list` prints `id`, tenant and issue time (RFC 3339), tab-separated; never a secret or a digest.
+- `revoke <id>`: every ingester refuses the token within 22 s while NATS is reachable, within 45 s when it is not (49 s when the ingester is cut off from the KV leader).
+- Exit codes: 0 done, 1 failed (`faultline tokens: <error>` and a hint line on stderr), 2 a wrong command line or environment.
+
+**Rotation.** `issue` a new token, wait at least 30 s, switch the client (update its Secret and restart it: the collector reads `INGEST_TOKEN` only at start), then `revoke` the old one. `make demo-1` does exactly this on every run for the tenant `default` and then revokes all other tokens of that tenant, keeping only the one whose id is in the Secret's annotation `ingest-token-id`; so a run that failed half way, or a revoke that failed, is cleaned up by the next run.
+
+**When `issue` cannot tell what happened** (a write whose outcome is unknown, or a token that could not be shown or revoked), it exits 1 with `the token may be live: run faultline tokens revoke <id>, then faultline tokens list`. That `revoke`, and any second `revoke` of the same id, may itself exit 1 with `unknown or already revoked ingest token id`: the key is already gone (never written, or removed by the compensation), and a revoke cannot tell the two apart. The id missing from `list` is the answer: nothing accepts that token after 22 s.
+
+**The bucket is not backed up.** Never restore it, or the NATS volume, from a backup or a snapshot: a restore brings back revoked tokens. A lost bucket is recreated and every token issued again (below).
+
+**Alerts** (self-alerts in the faultline log):
+
+| Alert | What it means | What to do |
+|---|---|---|
+| `auth.token_directory_stale` | no fresh check of the bucket for 45 s: every request gets `UNAVAILABLE` | Warn `tokens.check_failed{reason=drifted}` in the log: a field that lets grants in or hides them (`Subjects`, `Sources`, `MaxAge`, `MaxMsgs`, `MaxBytes`, …) differs from the reference, run `faultline tokens init`, and if it reports a recreate, [Tokens / recreate the bucket](#tokens--recreate-the-bucket); any other `reason`: NATS and the KV group leader |
+| `auth.token_bucket_drift` | the bucket config differs from the reference in a write-contract field (`NoAck`, `Discard`, `Duplicates`, `RePublish`, `AllowRollup`, …); ingest goes on. Placement fields (`Replicas`, `Storage`, `DenyDelete`, …) raise no alert, only Warn `tokens.bucket_config_differs` at the first load | `faultline tokens init` |
+| `auth.token_revoke_blocked` | the bucket denies purge or is sealed: `revoke` cannot work | [Tokens / recreate the bucket](#tokens--recreate-the-bucket), in a maintenance window |
+| `auth.token_sequence_regressed` | the bucket went back in time within its epoch (a restore): the directory stays stale until the bucket is recreated | [Tokens / recreate the bucket](#tokens--recreate-the-bucket), now |
+| `auth.token_epoch_changed` | the bucket was recreated; held for an hour | if you did not recreate it: [Tokens / recreate the bucket](#tokens--recreate-the-bucket) |
+| `auth.token_mass_revoke` | between two reads more than half of the grants and more than 16 vanished, or at least two vanished and the bucket is left empty (a purge); held for an hour | who purged it; `faultline tokens list` |
+
+**Known limits until the slices 3b-2 and 3b-4.** The tokens protect ingest fully only together with them:
+
+- `MaxConnections = 1`: a client without a token holds the only connection slot until `MaxConnectionAge`, and the collector waits behind it (3b-2).
+- The bearer token travels in plain h2c, and any NATS client of the cluster can write to the bucket (3b-4: TLS and accounts).
+- Warn `otlp.auth.rejected` and Warn `tokens.check_failed` are a sample: one Warn per reason per 10 s for all peers together, with `suppressed_requests` / `suppressed`; `peer` and `token_id` in it are an example, not the list. The counters (`auth` in `pipeline.stats`) are exact.
+- `make demo-1` runs `kubectl exec deploy/faultline` right after `rollout restart`; with `strategy: Recreate` it may still reach the old pod, so the binary of the old image runs `tokens init`. That is harmless while both images share the reference bucket config; an image that changes it needs one more `faultline tokens init` after the rollout.
+- A token shown on stdout ends on a signal even into a stalled pipe or a terminal stopped with Ctrl-S: the token is revoked and the command exits 1. `list` and the notes on stderr have no such limit: into a stalled pipe or a stopped terminal they wait, and only SIGKILL ends them (no grant is at stake).
+
+### Tokens / recreate the bucket
+
+Hints of `faultline` and `faultline tokens` name this section. Follow it on `ErrNeedsRecreate`, `ErrIrreversible`, the alerts `auth.token_sequence_regressed` and `auth.token_epoch_changed` (when you did not recreate the bucket), and whenever the bucket or the NATS volume was restored from a backup:
+
+1. Do not restart the ingesters until `faultline tokens init` in step 4 has run: a stale directory answers `UNAVAILABLE` and the collectors retry, while a new process would take the restored state as the first epoch.
+2. If the cause is only `DenyPurge` or `Sealed` and no token is compromised, ingest works: recreate in a maintenance window.
+3. `faultline tokens list`: save the tenants and the ids.
+4. With the account of `faultline tokens` (only it may delete this stream; in the dev skeleton there are no accounts): `nats stream rm KV_ingest_tokens`, then `faultline tokens init`, `faultline tokens issue` for each tenant, and update the collectors' Secrets. In kind: `kubectl --context kind-faultline-demo -n faultline port-forward svc/nats 4222:4222 &` and `nats -s nats://127.0.0.1:4222 stream rm KV_ingest_tokens -f`; `make demo-1` then issues the demo token again.
+5. Until their Secrets are updated, collectors with the old tokens get `UNAUTHENTICATED` and lose spans: hence the maintenance window.
 
 ## Clean up
 

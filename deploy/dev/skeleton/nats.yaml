@@ -73,8 +73,8 @@ spec:
           configMap:
             name: nats-config
         - name: store
-          emptyDir:
-            sizeLimit: 6Gi
+          persistentVolumeClaim:
+            claimName: nats-store
 ---
 apiVersion: v1
 kind: Service
@@ -91,3 +91,15 @@ spec:
     - name: monitor
       port: 8222
       targetPort: monitor
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nats-store
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 6Gi

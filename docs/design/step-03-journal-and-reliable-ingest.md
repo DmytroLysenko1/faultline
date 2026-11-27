@@ -52,7 +52,7 @@
 | Слот приёма (3b) | `otlp.admission` | Один из слотов «декодируемый запрос в полёте» на экземпляр, общий для gRPC и HTTP | бюджет ожидания подтверждений |
 | Бюджет ожидания подтверждений | `journal.InflightBytes` | Байты закодированных записей, опубликованных и ещё не подтверждённых (`PublishAsync`); отдельно от слотов декодирования (D-27) | слот приёма |
 | Ingest-токен (3b) | `credential.IngestToken` | `flt_<id>_<секрет>`, хранится только SHA-256 секрета | токен API (OIDC, шаг 18) |
-| Справочник токенов (3b) | `natsjs/tokens.Directory` | Снимок KV `ingest_tokens` в памяти; свежесть — последняя успешная проверка `LastSeq` KV | — |
+| Справочник токенов (3b) | `natsjs/tokens.Directory` | Снимок KV `ingest_tokens` в памяти; свежесть — момент отправки проверки, ответ на которую дал лидер группы KV с кворумом, без расхождений конфига, блокирующих чтение, с покрытым кортежем `(LastSeq, FirstSeq, Msgs, Created)` (3b-1) | — |
 
 ---
 
@@ -99,6 +99,7 @@ topology.Builder ──► memgraph ──► connectapi GetGraph
 | `internal/application/processing` | **+** порты `checkpointSink` (Pipeline) и `checkpointSource` (`Restore`), `CheckpointWriter`, `Delivery.Position()` (D-26, обещано шагом 1: «порт расширится методом позиции»), каденс чекпоинта в `Cadence`, `Restore` | `topology` |
 | `internal/application/ingest` | без изменений | как в шаге 2 |
 | `internal/domain/credential`, `internal/application/ingestauth` (3b) | токены и аутентификация | stdlib / `credential` |
+| `internal/application/tokenadmin` (3b-1) | выпуск, отзыв, список: компенсация при сбое показа и неизвестном исходе | `credential` |
 | `internal/infrastructure/idlerule` | правило простоя, общее для `memjournal` и `natsjs/feed` | `batch` |
 | `internal/infrastructure/natsjs/record` | формат записи v1 (заголовок 32 B), `Encode` (заём буфера), `ReadHeader`, `Decode`, `MsgID`, `PartitionOf` | `domain/telemetry/*`; без `nats.go` |
 | `internal/infrastructure/natsjs` | `Dial` (три соединения), `Topology` (P, R, лимиты), `EnsureTopology` / `VerifyTopology`, `classify` | `nats.go`, `jetstream` |
@@ -106,7 +107,8 @@ topology.Builder ──► memgraph ──► connectapi GetGraph
 | `internal/infrastructure/natsjs/feed` | `Feed` (порт `spanFeed` и порт `retention` хранилища): чтение партиции, насос, кредит, `ReceivedAt`, пульс, личность стрима, DLQ; `Commit` → удержание | `natsjs`, `record`, `idlerule`, `processing`, `x/sync/semaphore` |
 | `internal/infrastructure/natsjs/lease` | аренда партиции и эпоха | `natsjs` |
 | `internal/infrastructure/natsjs/checkpoint` | `Store` (порты `checkpointSink` через `Start → *Sink`, `checkpointSource`; свой порт `retention{Created, Commit}`): spool на диск, загрузка кусками в Object Store партиции, сверка и проверка чтением, CAS указателя с эпохой, ограда, список «ждёт решения», `Latest`, проверка личности стрима и диапазона позиции | `natsjs`, `natsjs/record`, `processing`, `topology`, `pkg/checkpoint`, `pkg/retry` |
-| `internal/infrastructure/natsjs/tokens` (3b) | справочник и администрирование токенов | `natsjs`, `credential` |
+| `internal/infrastructure/natsjs/tokens` (3b) | справочник и администрирование токенов | `natsjs`, `credential`, `ingestauth`, `tokenadmin` |
+| `internal/interfaces/otlp/bearer` (3b-1) | разбор `authorization: Bearer …` (причины `missing`, `header`) | stdlib |
 | `internal/interfaces/otlp`, `otlp/otlphttp` (3b) | тап, слоты, OTLP/HTTP | как в шаге 1 + `ingestauth` через порт |
 | `internal/infrastructure/journaltest` | `RunFeedContract`, `RunCheckpointContract` — общие контрактные тесты адаптеров | `processing` |
 | `cmd/faultline` | роли, `tokens` (3b), env, бюджеты ролей, восстановление при старте, шов `drainSource` | всё |
@@ -661,23 +663,26 @@ waitCtx := WithTimeout(ctx, min(publish_timeout (2 s), remaining − publish_res
 
 #### Справочник: проверка `LastSeq` KV, перечитывание только при изменении (D-10)
 
-- KV bucket `ingest_tokens`: ключ — id, значение — JSON `{"tenant":…, "digest":"<hex>", "created_at":…}`; история 1, R = R стрима, `MaxValueSize` 1 KiB, не больше 1 024 **живых** ключей; маркеры удаления чистятся `PurgeDeletes` командой `faultline tokens revoke` (иначе копились бы к лимиту — ревью pstack);
+- **3b-1 (как сделано, пункты ниже до «Ротации» уточняются этим):** KV `ingest_tokens` (стрим `KV_ingest_tokens`), значение — JSON `{"v":1,"tenant":…,"digest":"<hex>","issued_at":…}`; конфиг потока сверяется с эталоном по классам полей: «вводит или прячет гранты» (`Sources`, `MaxMsgs = -1`, `MaxAge`, `Retention` …) блокирует чтение, `DenyPurge`/`Sealed` — необратимо (алерт, отзыв невозможен), прочие — Error + алерт `auth.token_bucket_drift`, приём живёт; отзыв — сырой `STREAM.PURGE` по субъекту без предварительного чтения. Проверка — `STREAM.INFO` у лидера (лидер + кворум по `Active`), значения — сырым `MSG.GET` у лидера последовательно; свежесть — момент отправки проверки с покрытым кортежем `(LastSeq, FirstSeq, Msgs, Created)`. Отзыв и выпуск видны ≤ 22 s (`reload 15 + check 2 + reread 5`), ≤ 45 s при недоступном NATS, ≤ 49 s при разделении; откат бакета в эпохе ⇒ fail-closed (липкий) + алерт `auth.token_sequence_regressed`, смена эпохи ⇒ алерт `auth.token_epoch_changed`. Старт: ингестер ждёт бакет в `waiting_tokens` (бакет создаёт `faultline tokens init`), `ErrBucketDrift` ⇒ exit 1 с подсказкой runbook; `issue` бакет не правит. **Бакет не бэкапится**: восстановление — пересоздание с перевыпуском (runbook «Tokens / recreate the bucket» в `deploy/dev/README.md`). Переменных `AUTH`, `TOKEN_RELOAD_INTERVAL`, `TOKEN_MAX_STALENESS` нет: интервалы — константы.
+- (ред. 2) KV bucket `ingest_tokens`: ключ — id, значение — JSON `{"tenant":…, "digest":"<hex>", "created_at":…}`; история 1, R = R стрима, `MaxValueSize` 1 KiB, не больше 1 024 **живых** ключей; маркеры удаления чистятся `PurgeDeletes` командой `faultline tokens revoke` (иначе копились бы к лимиту — ревью pstack);
 - раз в `token_reload_interval` (15 s) — `Stream.Info` потока KV (один запрос к лидеру KV, без создания консьюмера; ред. 1 создавала эфемерный консьюмер `WatchAll` каждые 15 s, то есть зависела от meta-лидера JetStream и создавала N × 4 консьюмеров в минуту; ревью osmani и pstack). Если `LastSeq` вырос (новый ключ или удаление — тоже сообщение), снимок перечитывается `WatchAll(IgnoreDeletes)` до маркера конца и `Stop`; иначе снимок остаётся;
 - **свежесть** = время последнего успешного `Info`. Старше `token_max_staleness` (45 s) — все запросы получают **`UNAVAILABLE`** (fail-closed, ретраемо), не OK по старому снимку и не `UNAUTHENTICATED`. Отозванный токен перестаёт приниматься не позже 15 s при живом NATS и не позже 45 s при мёртвом — оба ≤ 60 s (FR-SEC-002);
 - **почему не постоянный watcher**: его тихая смерть даёт снимок, «свежий» по последнему событию, но слепой к отзывам. Проверка `LastSeq` делает свежесть измеримой и тестируемой в `synctest`. Доступность: справочнику нужен только лидер группы KV (как стриму — свой лидер); при его потере дольше 45 s приём отказывает, хотя стрим может быть жив — это **честная цена fail-closed**, записана в «Рисках» (ред. 1 утверждала, что цены нет — ревью pstack);
 - снимок `map[id]Grant` в `atomic.Pointer`; порт отдаёт снимок целиком: свежесть — свойство снимка, а не поиска (ревью pocock);
 - старт: справочник обязан загрузиться за `nats_connect_timeout` (10 s), иначе exit 1;
-- KV токенов — единственное состояние NATS, которое нужно бэкапить (потеря = все клиенты `UNAUTHENTICATED`): README «Шаг 3» описывает `nats kv` бэкап и восстановление; стрим спанов транзиентный, бэкап не нужен.
+- ~~KV токенов — единственное состояние NATS, которое нужно бэкапить~~ (3b-1): бакет токенов **не бэкапится** — восстановление снимка вернуло бы отозванные токены; потерянный бакет пересоздаётся с перевыпуском по runbook «Tokens / recreate the bucket».
 
 #### Ротация, тенант, выпуск
 
 - Два действующих токена тенанта — два ключа KV; ротация = выпустить новый, переключить клиента, отозвать старый;
 - **один тенант на установку (D-3)**: `TENANT` (по умолчанию `default`); токен другого тенанта → `UNAUTHENTICATED` (причина `tenant`). Тенант задаёт стрим и subject из конфигурации `cmd`, а не из запроса; порты `spanJournal` и `AcceptBatch` не меняются, тенант **не** идёт через ctx. Путь шага 18 записан сейчас (ревью pocock): хэндлер заново определяет тенант по тем же метаданным запроса через `ingestauth.Authenticate` (≈ 2 µs) и передаёт его параметром порта — отдельный `D-*` шага 18 (≈ 1 день: `Append`, `AcceptBatch`, фейки);
-- выпуск и отзыв — подкоманда серверного бинарника: `faultline tokens issue [--tenant default]` печатает токен **один раз**, `faultline tokens revoke <id>`, `faultline tokens list` (id, тенант, дата — без дайджестов). `credential.Generate` создаёт токен, `tokens.Admin.Register` его сохраняет (`kv.Create`).
+- выпуск и отзыв — подкоманда серверного бинарника (3b-1: `faultline tokens init | issue [--tenant <t>] (--output-file <path> | --stdout) | revoke <id> | list`; `--tenant` перекрывает `TENANT`; id — в stderr до записи токена; без флага и не в терминал — exit 2): `faultline tokens issue [--tenant default]` печатает токен **один раз**, `faultline tokens revoke <id>`, `faultline tokens list` (id, тенант, дата — без дайджестов). `credential.Generate` создаёт токен, `tokens.Admin.Register` его сохраняет (`kv.Create`).
 
 #### Аутентификация до декодирования 4 MiB тела
 
 Унарный интерсептор получает уже декодированный запрос (кодек `decodelimit`, `codec.go:43–63`). Поэтому проверка — в `grpc.InTapHandle(tap)`: выполняется **до создания потока**, получает `Info.Header`, а ошибка со статусом уходит клиенту этим статусом (`go doc google.golang.org/grpc/tap.ServerInHandle`, grpc v1.85.0). Ограничения той же документации: I/O-горутина соединения, не параллельно, блокировать нельзя — `Authenticate` работает только со снимком в памяти (бюджет ≤ 2 µs, 0 аллокаций); требование «не блокировать» записано в контракте порта `authenticator`. Заголовок `authorization` разбирает `ingestauth` целиком (`Bearer ` + токен; все причины — `missing`, `malformed`, `unknown`, `mismatch`, `tenant` — в одном модуле; ревью pocock). Тап в ctx кладёт только слот приёма (неэкспортируемый ключ пакета `otlp`, для его освобождения), значения аутентификации — нет.
+
+**3b-1 (как сделано).** `Bearer` разбирает `interfaces/otlp/bearer` (решение 4 дизайна 3b-1; счётчики заголовка — в `otlp.TapStats`), `ingestauth` получает уже токен. Тап **никогда не отказывает**: отказ из `InTapHandle` в grpc v1.85.0 не зовёт `s.cancel()` и держит таймер клиентского `grpc-timeout` до дедлайна. Тап кладёт вердикт под неэкспортируемый ключ и убирает `authorization` из входящей metadata; отказ отдаёт свой `grpc.ServiceDesc` `TraceService/Export` — `enforce(ctx)` до `decode`, кодек на отказе не вызывается (A2). `MaxHeaderListSize` 16 KiB режет большие метаданные в транспорте. Бюджет — время (≈ 0,6 µs), не аллокации: «0 аллокаций» снято. `MaxConnections = 1` до 3b-2.
 
 Риск: `InTapHandle` помечен **EXPERIMENTAL**. Страховка: `TestAnUnauthenticatedRequestIsRejectedBeforeDecoding` (кодек не вызван) ломается при смене семантики; запасной вариант — проверка в интерсепторе (цена — декодирование неаутентифицированного запроса в пределах слота).
 
@@ -1593,7 +1598,7 @@ func PartitionOf(traceID ids.TraceID, partitions int) uint16
 
 **Шаг 3:** `make verify` зелёный; goleak; E0 проведён, протокол и решения КТ-0 в документе; I13 (FR-ING-003 встроенный R3 + testcontainers); **I14 через рестарт** (kill-тест); I15 (удержание после фиксации, зомби-держатель); I16 (`hack/core-diff-check.sh` — только D-26, D-12); I17, I18 в демо; FMEA 1–12, 14–25, 34–38 — тесты; бюджет памяти по ролям по КТ-0; сквозной замер R3 по целевым числам; `make demo-3`; fresh-context ревью срезов 2, 3, 3c, 4; тег `v0.1.3`.
 
-**Шаг 3b:** FMEA 13, 26–33; FR-SEC-002, FR-ING-005 (HTTP), FR-ING-001 (HTTP трейсов), NFR-SEC-001 (NATS); `make demo-3b`; статусы 9.3, глоссарий, перенос D-25/D-28 в план; тег `v0.1.4`.
+**Шаг 3b:** тег — только при 3b-1 + 3b-2 (решение 6) + 3b-4 (решения 1, 2); FMEA 13, 26–33; FR-SEC-002, FR-ING-005 (HTTP), FR-ING-001 (HTTP трейсов), NFR-SEC-001 (NATS); `make demo-3b`; статусы 9.3, глоссарий, перенос D-25/D-28 в план; тег `v0.1.4`.
 
 ## Зависимости в `go.mod`
 
@@ -1751,7 +1756,7 @@ pocock — approve after MEDIUM (2 HIGH); osmani — approve after MEDIUM (1 HIG
 | `ReceivedAt`, часы, пульс | unit + встроенный R1 | `min` меток: лидер впереди на 10 min — `ReceivedAt` по писателю, `journal.clock_skew`; часы назад — прижатие; пульс только после первой записи с данными и только догнав стрим; пульс не встаёт перед непрочитанной записью; голодание CAS засчитывается только с прочитанными записями |
 | Потребитель | встроенный R1 | рестарт сервера → без пробела; пробел → счётчик (база — первая позиция); одиночная порча → DLQ; 3 на 100 позиций → стоп (окно из `Faultline-Window` последней копии, ошибка засева — удержание); DLQ недоступен → удержание и `dlq_stalled`; неизвестная версия → стоп; сырые байты при стоящем Pipeline ≤ 22 MiB (записи ≈ 100 KiB) |
 | Аренда | встроенный R1 | два процессора: второй не ready и не читает; потеря аренды (ключ удалён руками) → нет пульса и отсечки, выход 1; `kubectl delete pod`-модель: новый ждёт ≤ 15 s |
-| Токены | unit + встроенный R1 + fuzz | формат и границы, `FuzzParseToken`; отзыв ≤ 15 s (synctest); справочник устарел > 45 s → `UNAVAILABLE`; два токена; чужой тенант; отказ до декодирования; маркеры удаления чистятся; токен нигде не напечатан |
+| Токены | unit + встроенный R1 + fuzz | формат и границы, `FuzzParseToken`; отзыв ≤ 22 s (synctest, 3b-1); справочник устарел > 45 s → `UNAVAILABLE`; два токена; чужой тенант; отказ до декодирования; маркеры удаления чистятся; токен нигде не напечатан |
 | Слоты и скорость | unit + встроенный | 11-й запрос → `RESOURCE_EXHAUSTED` до декодирования; каждый RPC, прошедший тап, возвращает слот (успех, ошибка декодирования, отмена, паника); 2 001-й запрос в секунду → `RESOURCE_EXHAUSTED` |
 | Роли и жизненный цикл | e2e `cmd/faultline` со встроенным NATS | `ingester` + `processor`: OTLP-пара → ребро в `GetGraph`; остановка каждой роли ≤ бюджета; `all` + memory = e2e шага 2; ингестер не стартует при объявленной версии процессора меньше своей; goleak |
 | Бюджет памяти | пробы | по ролям; запись в полёте в `ExportHeapRatio`; сырые байты pull; буфер соединения публикации |
@@ -1784,7 +1789,7 @@ pocock — approve after MEDIUM (2 HIGH); osmani — approve after MEDIUM (1 HIG
 | 10 | пробел в последовательности | ничего | учтён, Error-лог, self-alert | I18 | E `TestASequenceGapIsCountedAndAlerted`, `TestRestartDoesNotReportAFalseGap` |
 | 11 | партиция без трафика держит watermark | ничего | пульс держателя аренды каждые 35 s (только догнав стрим) | I9 | E `TestAnIdlePartitionGetsHeartbeatsFromItsProcessor` |
 | 12 | запрос с трейсами нескольких партиций | — (одна партиция) | — | ADR-1 | U `TestOneRequestIsOneRecord` |
-| 13a | отзыв токена | `UNAUTHENTICATED` ≤ 15 s | — | FR-SEC-002 | U (synctest) `TestARevokedTokenIsRejectedWithinTheReloadInterval`; E с настоящим KV |
+| 13a | отзыв токена | `UNAUTHENTICATED` ≤ 22 s (3b-1; ≤ 45 s при недоступном NATS, ≤ 49 s при разделении) | — | FR-SEC-002 | U (synctest) `TestARevokedGrantIsGoneFromTheSnapshotWithin22s`; E с настоящим KV |
 | 13b | ротация (два токена) | оба, затем только новый | — | FR-SEC-002 | U `TestTwoTokensOfATenantWorkDuringRotation` |
 | 13c | справочник не может проверить KV | до 45 s — по снимку; затем `UNAVAILABLE` всем | — | fail-closed | U (synctest) `TestAStaleDirectoryRejectsEveryoneAsUnavailable` |
 | 13d | KV недоступен при старте | — (exit 1 ≤ 10 s) | — | fail fast | E `TestIngesterExitsWhenTheTokenDirectoryCannotLoad` |
@@ -1805,7 +1810,7 @@ pocock — approve after MEDIUM (2 HIGH); osmani — approve after MEDIUM (1 HIG
 | 26 | **поток крошечных запросов** (SDK по 1 спану) | сверх 2 000 запросов/с экземпляра — `RESOURCE_EXHAUSTED` | карта дедупа сервера ограничена | I5 (NATS) | U `TestRequestRateBudgetRejectsBeforeDecoding` |
 | 27 | **N Collector'ов и злой клиент без токена** | 11-й одновременный запрос — `RESOURCE_EXHAUSTED`; соединений до 64 | бюджет памяти прежний (10 слотов) | I5 | E `TestManyClientsShareTheSlotsAndEveryRPCReturnsItsSlot` |
 | 28 | **rolling upgrade: ингестер с v2, живой процессор читает только v1** | — | ингестер не стартует (exit 1) по объявлениям `faultline_control` | I15 | E `TestIngesterRefusesAWriteVersionNoReaderSupports` |
-| 29 | **лидер группы KV токенов потерян > 45 s при живом стриме** | `UNAVAILABLE` всем (цена fail-closed) | — | FR-SEC-002 | E `TestLostKVLeaderMakesTheDirectoryStale` |
+| 29 | **лидер группы KV токенов потерян > 45 s при живом стриме** | `UNAVAILABLE` всем (цена fail-closed); откат бакета в эпохе — липкий fail-closed + алерт, смена эпохи — алерт (3b-1) | — | FR-SEC-002 | E `TestLostKVLeaderMakesTheDirectoryStale` |
 | 30 | **OTLP/HTTP: перегрузка** (стрим полон, слоты, скорость) | `429` + `Retry-After: 1` | ничего не записано | FR-ING-005 | E `TestHTTPOverloadIs429WithRetryAfter` |
 | 31 | **OTLP/HTTP: без токена, тело > 4 MiB, gzip-бомба** | `401` без чтения тела; `413` по `Content-Length` или по ходу чтения распакованного | куча сверх предела не выделяется | I5, FR-SEC-002 | E `TestHTTPRejectsBeforeReadingTheBody`, `TestHTTPGzipBombIsTooLarge`; `FuzzHTTPExport` |
 | 32 | **OTLP/HTTP: NATS недоступен, исход неизвестен** | `503` + `Retry-After: 1`, никогда `200` | — | I13 | E `TestHTTPNeverAnswers200WithoutAPubAck` |
@@ -1884,6 +1889,11 @@ stateDiagram-v2
 | часы лидера или писателя сбиты | `ReceivedAt = max(prev, min(лидер, писатель))` | `journal.clock_skew` |
 | новая версия формата у старого процессора | объявления версий, ингестер не стартует; процессор на неизвестной версии — стоп | `journal.unknown_record_version` |
 | паника на кривом входе декодера | fuzz декодера и парсера токена; `recover` в Pipeline нет (шаг 1) | рестарт k8s, повтор хвоста |
+| удержание соединений клиентом без токена (3b-1: `MaxConnections = 1`) | 3b-2 (решение 6 дизайна 3b-1) | — |
+| запись в бакет токенов клиентом NATS; bearer по h2c | 3b-4: учётки по ролям с `deny` на бакет, TLS 1.3 (решения 1, 2) | — |
+| восстановление бакета из бэкапа (воскрешение отозванных) | бакет не бэкапится; откат в эпохе — липкий fail-closed; runbook пересоздания | алерты `auth.token_sequence_regressed`, `auth.token_epoch_changed` |
+
+Релизный тег шага 3b — только при **3b-1 + 3b-2 (решение 6) + 3b-4 (решения 1, 2)**: по отдельности 3b-1 — заготовка.
 
 ### А.5 Наблюдаемость ред. 2
 
@@ -1946,11 +1956,8 @@ stateDiagram-v2
 | `FEED_MAX_BYTES` | `64MiB` | 48 MiB … 512 MiB |
 | `REPLAY_TAIL` | `2m` | ≥ `PAIRING_TTL + WATERMARK_DELAY + ALLOWED_LATENESS + IDLE_ADVANCE_AFTER`, ≤ 30 min; по байтам всегда ≤ ¼ `MaxBytes` (константа) |
 | `PURGE_INTERVAL` | `10s` | 1 s … 5 min |
-| `AUTH` | `token` | `token`; `none` — только с `JOURNAL=memory` |
-| `TOKEN_RELOAD_INTERVAL` | `15s` | 1 s … 30 s |
-| `TOKEN_MAX_STALENESS` | `45s` | `> TOKEN_RELOAD_INTERVAL` и `≤ 60 s`: отозванный токен принимается не дольше этого значения |
 
-Имена в NATS — константы: стрим `SPANS_<TENANT>` (верхний регистр, `-` → `_`), `DLQ` (`dlq.>`), KV `ingest_tokens`, `leases`, `faultline_control`. Аренда: TTL 15 s, продление 5 s, порог свежести 10 s — константы. Конфигурация сервера NATS (манифесты): `max_payload: 8MB`; `jetstream { sync_interval: always; max_file_store: ≥ 2 × Σ MaxBytes }` в `ha`; `Dial` проверяет `max_payload`, остальное стережёт `test/demo/manifests_test.go`.
+Имена в NATS — константы: стрим `SPANS_P<n>` (партиция; тенант — метка записи, D-3'), `DLQ` (`dlq.>`), KV `ingest_tokens`, `leases`. Аренда: TTL 25 s, продление раз в 2,5 s, держатель считает её потерянной через 20 s без продления — константы `cmd/faultline/partitionopts.go`. Конфигурация сервера NATS (манифесты): `max_payload: 8MB`; `jetstream { sync_interval: always; max_file_store: ≥ 2 × Σ MaxBytes }` в `ha`; `Dial` проверяет `max_payload`, остальное стережёт `test/demo/manifests_test.go`.
 
 ### А.7 Жизненный цикл ролей ред. 2
 
@@ -1994,11 +2001,11 @@ stateDiagram-v2
 #### Демо `make demo-3`
 
 1. Как `make demo-2`, манифест `deploy/dev/step3/`: StatefulSet NATS R1 (`nats:2.15.2-alpine`, `max_payload: 8MB`, PVC 4 GiB = 2 × `MaxBytes`), Deployment `faultline ingester` и `faultline processor` (`replicas: 1`, `strategy: Recreate`), Service ingester 4317, processor 8080.
-2. Job `faultline tokens issue` → Secret `otel-demo/faultline-ingest-token`; overlay Collector: `headers: {authorization: "Bearer ${env:TOKEN}"}`, `send_batch_max_size: 2048`.
+2. `faultline tokens init`, затем `kubectl exec … -- /faultline tokens issue --stdout` без `-t` → Secret `otel-demo/ingest-token` (ключ `token`; 3b-1 делает это в `make demo-1`); overlay Collector: `headers: {authorization: "Bearer ${env:INGEST_TOKEN}"}`, `extraEnvs` из Secret, `send_batch_max_size: 2048`.
 3. `hack/democheck -red -journal`: проверки шага 2 + I17 и I18 по `pipeline.stats` обеих ролей; `journal.published > 0`; `auth.rejected_* = 0`; `feed.poison_skipped = 0`; `feed.sequence_gap_records = 0`; `feed.lag_seconds < 30`.
 4. Отрицательные проверки: `telemetrygen` без токена → `UNAUTHENTICATED`; отозванный токен через 20 s → `UNAUTHENTICATED`.
 5. `kubectl delete pod` процессора → новый под получает аренду ≤ 15 s; `lifecycle.feed_caught_up` ≤ 60 s; все required-рёбра снова с `final`.
-6. `deploy/dev/README.md` — раздел «Шаг 3» (в т. ч. бэкап KV токенов, формула размера NATS, runbook отката формата).
+6. `deploy/dev/README.md` — раздел «Шаг 3» (формула размера NATS, runbook отката формата); токены — раздел «Tokens» и runbook «Tokens / recreate the bucket» (3b-1; бакет не бэкапится).
 
 ### А.9 Go-API ред. 2
 
@@ -2080,7 +2087,7 @@ type StreamSpec struct {
 }
 
 func (s StreamSpec) Validate() error
-func (s StreamSpec) Stream() string  // SPANS_<TENANT>
+func (s StreamSpec) Stream() string  // SPANS_P<n>
 func (s StreamSpec) Subject() string // spans.<tenant>.0
 func (c *Conn) EnsureStreams(ctx context.Context, spec StreamSpec) error // processor: создать, обновить изменяемые поля; ErrStreamDrift
 func (c *Conn) VerifyStreams(ctx context.Context, spec StreamSpec) error // ingester: только сравнить; ErrStreamDrift
@@ -2126,60 +2133,70 @@ func (f *Feed) Stats() Stats // Read, DeliveredBatches, Heartbeats, Poison, Rele
                              // HeartbeatUnconditional, Clamped, ClockSkewMax, PurgedBelow, TailTruncated, ConsumerResets,
                              // Position, StreamLastSeq, LagSeconds, LeaseRenewFailures
 
-// tokens
+// tokens (3b-1, как сделано)
+const Bucket = "ingest_tokens" // стрим KV_ingest_tokens; MaxGrants 1024, MaxValueBytes 1 KiB
+
 type DirectoryOptions struct {
-	ReloadInterval time.Duration
-	Clock          Clock
+	ReloadInterval, RetryEvery, CheckTime, RereadTime time.Duration // 15 s, 2 s, 2 s, 5 s
+	Logger                                            *slog.Logger
+	Clock                                             clock
 }
 
-func OpenDirectory(ctx context.Context, conn *natsjs.Conn, options DirectoryOptions) (*Directory, error)
-func (d *Directory) Run(ctx context.Context) error
-func (d *Directory) Snapshot(ctx context.Context) ingestauth.Directory // порт ingestauth.tokenDirectory
-
-func NewAdmin(conn *natsjs.Conn) *Admin
-func (a *Admin) Register(ctx context.Context, grant credential.Grant) error // kv.Create
-func (a *Admin) Revoke(ctx context.Context, id string) error                // kv.Delete + PurgeDeletes
-func (a *Admin) List(ctx context.Context) ([]credential.Grant, error)
+func CreateBucket(ctx context.Context, conn *natsjs.Conn, replicas int) error    // issue: создать, существующий не править
+func ReconcileBucket(ctx context.Context, conn *natsjs.Conn, replicas int) error // init: реплики только вверх, Placement сохраняется
+func WaitsFor(err error) bool                                                    // ErrBucketMissing, ErrNoLeader, ErrNoQuorum, временные
+func OpenDirectory(ctx context.Context, conn *natsjs.Conn, options *DirectoryOptions) (*Directory, error)
+func (d *Directory) Run(ctx context.Context) error                   // nil на своей отмене
+func (d *Directory) Snapshot(context.Context) ingestauth.Snapshot    // порт ingestauth.tokenDirectory
+func (d *Directory) Stats() DirectoryStats
+func OpenStore(ctx context.Context, conn *natsjs.Conn) (*Store, error) // порт tokenadmin.grantStore
+func (s *Store) Register(ctx context.Context, grant *credential.Grant) error
+func (s *Store) Revoke(ctx context.Context, id credential.ID) (tokenadmin.Revocation, error) // сырой STREAM.PURGE по субъекту
+func (s *Store) List(ctx context.Context) ([]credential.Grant, error)
+// ErrBucketDrift, ErrNeedsRecreate, ErrIrreversible, ErrNoLeader, ErrNoQuorum, ErrTooManyKeys, ErrUnacceptedGrant
 ```
 
 Тесты среза 2 (`test/natsjs`): `TestAppendWaitsForThePubAck`, `TestRetryOfAnAcknowledgedRequestIsADuplicate`, `TestTwoOfThreeReplicasDownGivesRetryableErrorNotOK`, `TestLeaderWithoutReplicasTimesOutUnavailable`, `TestLeaderChangeKeepsAcknowledgedRecords`, `TestAFullStreamRejectsNewRecordsAndKeepsEveryAcknowledgedOne`, `TestPublishDuringDisconnectFailsFastAndNeverLate`, `TestIngesterExitsWhenNATSIsUnreachableAtStart`, `TestConcurrentStartsConvergeOrFailWithADiff`, `TestStopWhileNATSIsDownAnswersEveryHandlerWithoutOK`, `TestHeldRequestDuringPublishStaysWithinTheBudget`, `TestEveryNATSErrorMapsToOneIngestSentinel` (ответы живого R3); unit: `TestNoPathAnswersOKWithoutAPubAck`, `TestTimeoutAfterApplyIsUnavailableAndTheRetryIsADuplicate`, `TestClientCancelDuringPublishIsCancelledNotOK`, `TestHiddenRetriesStayWithinTheRemainingDeadline`, `TestADoomedPublishIsNotStarted`, `TestSlowPubAckBeyondTheSubDeadlineIsUnavailable`, `TestTimeoutsLandInTheTopBucket`.
 
 Тесты среза 3–3b: `journaltest.RunFeedContract` (оба адаптера), `TestAFastLeaderClockDoesNotMoveReceivedAt`, `TestAClockStepBackIsClampedToTheLastReceivedAt`, `TestAHeartbeatIsWrittenOnlyAfterTheFirstDataRecord`, `TestALaggingFeedWritesNoHeartbeat`, `TestAStalledFeedWritesNoHeartbeat`, `TestAHeartbeatNeverLandsBeforeAnUnreadRecord`, `TestStarvationCountsOnlyConflictsInARow`, `TestPurgeNeverPassesTheFirstUnfinishedPosition` (property), `TestPurgeKeepsTheReplayTailBoundedByBytes`, `TestPurgeIsChunked`, `TestARecreatedStreamStopsTheFeedWithoutPurging`, `TestOnlyTheLeaseHolderReadsWritesHeartbeatsAndPurges`, `TestALostLeaseStopsPurgeBeforeAnythingElse`, `TestProcessorRestartReplaysTheTailAndLosesNoUnprocessedRecord`, `TestCorruptRecordGoesToTheDLQAndIsSkipped`, `TestSystemicCorruptionHaltsInsteadOfDraining`, `TestDLQOutageStallsVisibly`, `TestUnknownVersionHaltsTheFeedWithoutSkipping`, `TestASequenceGapIsCountedAndAlerted`, `TestRestartDoesNotReportAFalseGap`, `TestFeedResumesWithoutAGapAfterServerRestart`, `TestAStoppedPipelineBoundsTheRawBytesInTheClient`, `TestASlowProcessorTurnsIntoBackpressureNotLoss`, `TestProcessorStopLeavesUnpublishedRecordsInTheStream`, `TestTailReplayTime`, `TestReleaseIsIdempotentAndReturnsTheCredit`, `TestAWeightAboveTheCreditIsCorrupt`; **КТ-2**: `TestTwoReadsOfOneStreamGiveTheSameFinals`.
 
-**`internal/domain/credential`** (срез 4)
+**`internal/domain/credential`** (3b-1, как сделано)
 
 ```go
 const (
-	Prefix      = "flt_"
-	IDLength    = 12
-	SecretBytes = 32
-	TokenLength = len(Prefix) + IDLength + 1 + 43
+	Prefix       = "flt_"
+	IDLength     = 12
+	SecretBytes  = 32
+	SecretLength = 43
+	TokenLength  = len(Prefix) + IDLength + 1 + SecretLength
 )
 
-var ErrMalformed = errors.New("malformed ingest token")
-
-type Secret [SecretBytes]byte // String, GoString, Format, LogValue → "[redacted]"
-type Digest [sha256.Size]byte
+type ID string
+type Secret struct{ /* String, GoString, Format, LogValue, MarshalText → "[redacted]" */ }
+type Digest struct{ /* SHA-256 секрета; Equal — ConstantTimeCompare */ }
 
 type IngestToken struct {
-	ID     string
+	ID     ID
 	Secret Secret
 }
 
 type Grant struct {
-	ID     string
-	Tenant string
-	Digest Digest
+	ID       ID
+	Tenant   string
+	Digest   Digest
+	IssuedAt time.Time
 }
 
+type Grants map[ID]Grant
+
 func Parse(raw string) (IngestToken, error)
-func Generate(random io.Reader, tenant string) (IngestToken, Grant, error)
-func (t IngestToken) Digest() Digest
-func (t IngestToken) Reveal() string // только для вывода `faultline tokens issue`
-func (g Grant) Admits(token IngestToken) bool
+func ParseID(raw string) (ID, error)
+func Generate(random io.Reader, tenant string, issuedAt time.Time) (IngestToken, Grant, error)
+func Reveal(token IngestToken) string // forbidigo: только cmd/faultline/tokenoutput.go
+func (g Grants) Admit(token IngestToken, tenant string) (Grant, error) // фиктивное сравнение при промахе (A7)
 ```
 
-**`internal/application/ingestauth`** (срез 4)
+**`internal/application/ingestauth`** (3b-1, как сделано)
 
 ```go
 var (
@@ -2187,32 +2204,57 @@ var (
 	ErrDirectoryStale  = errors.New("ingest token directory is stale")
 )
 
-type Reason uint8 // ReasonMissing, ReasonMalformed, ReasonUnknown, ReasonMismatch, ReasonTenant
+type Reason uint8 // ReasonMalformed, ReasonUnknown, ReasonMismatch, ReasonTenant
 
-type Rejection struct{ Reason Reason } // Error() без значения токена; Unwrap → ErrUnauthenticated
+type RejectionError struct {
+	Reason  Reason
+	TokenID credential.ID
+} // Error() без значения токена; Unwrap → ErrUnauthenticated
 
 type Policy struct {
 	Tenant       string
-	MaxStaleness time.Duration
+	MaxStaleness time.Duration // 45 s, ≤ MaxStalenessLimit 60 s
+	CheckHorizon time.Duration
 }
 
-type Directory struct {
-	Grants    map[string]credential.Grant
+type Snapshot struct {
+	Grants    credential.Grants
 	CheckedAt time.Time
 }
 
 type tokenDirectory interface {
-	Snapshot(ctx context.Context) Directory
+	Snapshot(ctx context.Context) Snapshot
 }
 
-type clock interface{ Now() time.Time }
-
 func NewAuthenticator(directory tokenDirectory, clock clock, policy Policy) (*Authenticator, error)
-func (a *Authenticator) Authenticate(ctx context.Context, authorization string) error // не блокирует; *Rejection или ErrDirectoryStale
-func (a *Authenticator) Stats() Stats
+func (a *Authenticator) Authenticate(ctx context.Context, token string) error // не блокирует; RejectionError или ErrDirectoryStale
+func (a *Authenticator) Fresh(ctx context.Context) bool
+func (a *Authenticator) Stats(ctx context.Context) Stats
 ```
 
-`interfaces/otlp`: `Options.Authenticator` — nil только при `AUTH=none` (тап без аутентификации, Warn `config.auth_disabled`); `Options.Admission{Slots int; MaxRequestsPerSecond int}`; тап: слот → скорость → `Authenticate(md["authorization"])` → `authStatus`; слот освобождает `stats.Handler` на `*stats.End`.
+**`internal/application/tokenadmin`** (3b-1)
+
+```go
+type grantStore interface {
+	Register(ctx context.Context, grant *credential.Grant) error
+	Revoke(ctx context.Context, id credential.ID) (Revocation, error)
+	List(ctx context.Context) ([]credential.Grant, error)
+}
+
+type tokenOutput interface {
+	Announce(ctx context.Context, id credential.ID, tenant string) error // id в stderr до записи
+	Show(ctx context.Context, token credential.IngestToken) error
+}
+
+type Revocation uint8 // Revoked, Absent, NothingToRevoke (→ ErrUnknownToken)
+
+func NewAdmin(store grantStore, random io.Reader, clock clock, output tokenOutput, budget Budget) (*Admin, error)
+func (a *Admin) Issue(ctx context.Context, tenant string) (credential.ID, error) // ErrNotShown, ErrLiveTokenNotShown, ErrOutcomeUnknown …
+func (a *Admin) Revoke(ctx context.Context, id credential.ID) (Revocation, error)
+func (a *Admin) List(ctx context.Context) ([]credential.Grant, error)
+```
+
+`interfaces/otlp/bearer`: `Credential(values []string) (string, error)` — `ErrMissing`, `ErrHeader`. `interfaces/otlp` (3b-1): `NewTap(authenticator, options) *Tap`; `NewServer(acceptor, tap *Tap, options) *grpc.Server` (nil-тап — паника); свой `ServiceDesc` `TraceService/Export` с `enforce` до `decode`; `TapStats{Missing, Header, Failed}`. Режима без аутентификации нет (`AUTH` нет). `Options.Admission` (слоты, бюджет запросов/с) — 3b-2.
 
 Тесты среза 4–4b: `TestParseAcceptsOnlyTheExactFormat`, `FuzzParseToken`, `TestGenerateUsesTheInjectedRandomness`, `TestTheSecretPrintsRedactedEverywhere`, `TestAuthenticateTable` (каждая причина, включая отсутствующий и кривой заголовок), `TestARevokedTokenIsRejectedWithinTheReloadInterval`, `TestAStaleDirectoryRejectsEveryoneAsUnavailable`, `TestTwoTokensOfATenantWorkDuringRotation`, `TestRevokePurgesDeleteMarkers`, `TestAnUnauthenticatedRequestIsRejectedBeforeDecoding`, `TestTheTokenNeverAppearsInLogsErrorsOrStats`, `TestIngesterExitsWhenTheTokenDirectoryCannotLoad`, `TestLostKVLeaderMakesTheDirectoryStale`, `TestEveryAdmittedRPCReleasesItsSlot`, `TestManyClientsShareTheSlotsAndEveryRPCReturnsItsSlot`, `TestRequestRateBudgetRejectsBeforeDecoding`, `BenchmarkTap`.
 

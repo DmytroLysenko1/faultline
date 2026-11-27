@@ -24,6 +24,8 @@ const (
 	selfTracingEnv  = "SELF_TRACING_ENDPOINT"
 	memoryLimitEnv  = "GOMEMLIMIT"
 	serviceKind     = "Service"
+	claimKind       = "PersistentVolumeClaim"
+	natsStoreClaim  = "nats-store"
 	roleName        = "faultline"
 	natsName        = "nats"
 	nameLabel       = "app.kubernetes.io/name"
@@ -42,8 +44,14 @@ type document struct {
 		Name string `yaml:"name"`
 	} `yaml:"metadata"`
 	Spec struct {
-		Selector map[string]any `yaml:"selector"`
-		Replicas int            `yaml:"replicas"`
+		Selector    map[string]any `yaml:"selector"`
+		Replicas    int            `yaml:"replicas"`
+		AccessModes []string       `yaml:"accessModes"`
+		Resources   struct {
+			Requests struct {
+				Storage string `yaml:"storage"`
+			} `yaml:"requests"`
+		} `yaml:"resources"`
 		Strategy struct {
 			Type string `yaml:"type"`
 		} `yaml:"strategy"`
@@ -76,6 +84,7 @@ type podSpec struct {
 		VolumeMounts []struct {
 			Name      string `yaml:"name"`
 			MountPath string `yaml:"mountPath"`
+			ReadOnly  bool   `yaml:"readOnly"`
 		} `yaml:"volumeMounts"`
 		Resources struct {
 			Limits struct {
@@ -90,6 +99,9 @@ type podSpec struct {
 			Medium    string `yaml:"medium"`
 			SizeLimit string `yaml:"sizeLimit"`
 		} `yaml:"emptyDir"`
+		PersistentVolumeClaim *struct {
+			ClaimName string `yaml:"claimName"`
+		} `yaml:"persistentVolumeClaim"`
 	} `yaml:"volumes"`
 }
 
@@ -140,9 +152,15 @@ type rollout struct {
 	Strategy string
 }
 
+type claim struct {
+	AccessModes []string
+	Storage     string
+}
+
 type skeleton struct {
 	Deployments map[string]document
 	Selectors   map[string]map[string]any
+	Claims      map[string]claim
 }
 
 func renderSkeleton(t *testing.T) skeleton {
@@ -158,6 +176,7 @@ func renderSkeleton(t *testing.T) skeleton {
 	found := skeleton{
 		Deployments: map[string]document{},
 		Selectors:   map[string]map[string]any{},
+		Claims:      map[string]claim{},
 	}
 	decoder := yaml.NewDecoder(bytes.NewReader(rendered))
 	for {
@@ -179,6 +198,11 @@ func (s *skeleton) add(doc *document) {
 		s.Deployments[doc.Metadata.Name] = *doc
 	case serviceKind:
 		s.Selectors[doc.Metadata.Name] = doc.Spec.Selector
+	case claimKind:
+		s.Claims[doc.Metadata.Name] = claim{
+			AccessModes: doc.Spec.AccessModes,
+			Storage:     doc.Spec.Resources.Requests.Storage,
+		}
 	}
 }
 
@@ -197,6 +221,15 @@ func (s *skeleton) pod(t *testing.T, name string) podSpec {
 
 func (p *podSpec) diskAt(path string) disk {
 	return p.diskNamed(p.volumeAt(path))
+}
+
+func (p *podSpec) writableAt(path string) bool {
+	for _, mount := range p.Containers[0].VolumeMounts {
+		if mount.MountPath == path {
+			return !mount.ReadOnly
+		}
+	}
+	return false
 }
 
 func (p *podSpec) volumeAt(path string) string {
@@ -237,6 +270,16 @@ func selects(selector, labels map[string]any) bool {
 		}
 	}
 	return true
+}
+
+func (p *podSpec) claimAt(path string) string {
+	name := p.volumeAt(path)
+	for _, volume := range p.Volumes {
+		if volume.Name == name && volume.PersistentVolumeClaim != nil {
+			return volume.PersistentVolumeClaim.ClaimName
+		}
+	}
+	return ""
 }
 
 func (p *podSpec) diskNamed(name string) disk {
@@ -392,16 +435,18 @@ func TestSkeletonServicesSelectOnlyTheirOwnPods(t *testing.T) {
 }
 
 type natsShape struct {
-	Image       string
-	ReadyOn     string
-	ReadyPort   string
-	MonitorPort int
-	HTTPPort    int64
-	StoreVolume string
-	Store       disk
+	Image         string
+	ReadyOn       string
+	ReadyPort     string
+	MonitorPort   int
+	HTTPPort      int64
+	StoreVolume   string
+	StoreWritable bool
+	StoreClaim    string
+	Claim         claim
 }
 
-func TestSkeletonNATSServesJetStreamFromItsDiskVolume(t *testing.T) {
+func TestSkeletonNATSServesJetStreamFromItsClaim(t *testing.T) {
 	rendered := renderSkeleton(t)
 	spec := rendered.pod(t, natsName)
 	path := filepath.Join(otlptest.ModuleRoot(t), "deploy", "dev", "skeleton", natsConfigPath)
@@ -418,29 +463,32 @@ func TestSkeletonNATSServesJetStreamFromItsDiskVolume(t *testing.T) {
 	httpPort, _ := settings["http_port"].(int64)
 	container := spec.Containers[0]
 	got := natsShape{
-		Image:       container.Image,
-		ReadyOn:     container.ReadinessProbe.HTTPGet.Path,
-		ReadyPort:   container.ReadinessProbe.HTTPGet.Port,
-		HTTPPort:    httpPort,
-		StoreVolume: spec.volumeAt(storeDir),
-		Store:       spec.diskAt(storeDir),
+		Image:         container.Image,
+		ReadyOn:       container.ReadinessProbe.HTTPGet.Path,
+		ReadyPort:     container.ReadinessProbe.HTTPGet.Port,
+		HTTPPort:      httpPort,
+		StoreVolume:   spec.volumeAt(storeDir),
+		StoreWritable: spec.writableAt(storeDir),
+		StoreClaim:    spec.claimAt(storeDir),
 	}
+	got.Claim = rendered.Claims[got.StoreClaim]
 	for _, port := range container.Ports {
 		if port.Name == got.ReadyPort {
 			got.MonitorPort = port.ContainerPort
 		}
 	}
 	want := natsShape{
-		Image:       pinnedNATSImage(t),
-		ReadyOn:     natsReadiness,
-		ReadyPort:   "monitor",
-		MonitorPort: natsMonitorPort,
-		HTTPPort:    natsMonitorPort,
-		StoreVolume: natsStoreVolume,
-		Store: disk{
-			Mounted:   true,
-			OnDisk:    true,
-			SizeLimit: true,
+		Image:         pinnedVersion(t, natsImagePin),
+		ReadyOn:       natsReadiness,
+		ReadyPort:     "monitor",
+		MonitorPort:   natsMonitorPort,
+		HTTPPort:      natsMonitorPort,
+		StoreVolume:   natsStoreVolume,
+		StoreWritable: true,
+		StoreClaim:    natsStoreClaim,
+		Claim: claim{
+			AccessModes: []string{"ReadWriteOnce"},
+			Storage:     "6Gi",
 		},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
@@ -448,7 +496,7 @@ func TestSkeletonNATSServesJetStreamFromItsDiskVolume(t *testing.T) {
 	}
 }
 
-func pinnedNATSImage(t *testing.T) string {
+func pinnedVersion(t *testing.T, pin string) string {
 	t.Helper()
 	path := filepath.Join(otlptest.ModuleRoot(t), "hack", "versions.env")
 	raw, err := os.ReadFile(path)
@@ -456,10 +504,10 @@ func pinnedNATSImage(t *testing.T) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	for line := range strings.Lines(string(raw)) {
-		if image, found := strings.CutPrefix(strings.TrimSpace(line), natsImagePin); found {
-			return image
+		if value, found := strings.CutPrefix(strings.TrimSpace(line), pin); found {
+			return value
 		}
 	}
-	t.Fatalf("%s has no %s", path, natsImagePin)
+	t.Fatalf("%s has no %s", path, pin)
 	return ""
 }

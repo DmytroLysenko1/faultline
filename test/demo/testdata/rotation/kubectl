@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state="$ROTATION_STATE"
+default_tenant=default
+pod_not_reached_attempts=2
+
+injected() {
+	if [[ ",${ROTATION_FAIL_AT:-}," == *",$1,"* ]]; then
+		echo "stub: injected failure at $1" >&2
+		exit 1
+	fi
+}
+
+secret_token_id() {
+	local token
+	token="$(cut -d' ' -f5 "$state/secret")"
+	printf '%s' "${token#token-of-}"
+}
+
+create() {
+	local token key
+	if [[ "$1" == namespace ]]; then
+		echo "namespace $2"
+		return
+	fi
+	[[ "$1 $2" == "secret generic" && "$4" == --from-file=*=/dev/stdin ]] || {
+		echo "stub: unexpected create $*" >&2
+		exit 3
+	}
+	key="${4#--from-file=}"
+	key="${key%=/dev/stdin}"
+	token="$(cat)"
+	if [[ "${*:5}" != "--dry-run=client -o yaml" ]]; then
+		echo "secret/$3 created"
+		return
+	fi
+	echo "secret $namespace $3 $key $token"
+}
+
+apply() {
+	local manifest
+	manifest="$(cat)"
+	if [[ "$manifest" == secret* ]]; then
+		injected store
+		printf '%s\n' "$manifest" >"$state/secret"
+		echo "apply $*" >>"$state/secret-apply"
+	fi
+	echo "applied"
+}
+
+get_annotation() {
+	local name="$2" want="${5#jsonpath=\{.metadata.annotations.}" field annotation
+	want="${want%\}}"
+	[[ -f "$state/secret" ]] || return 0
+	read -r -a field <"$state/secret"
+	[[ "${field[1]} ${field[2]}" == "$namespace $name" ]] || return 0
+	for annotation in "${field[@]:5}"; do
+		if [[ "${annotation%%=*}" == "$want" ]]; then
+			printf '%s' "${annotation#*=}"
+		fi
+	done
+}
+
+annotate() {
+	[[ "$1 $2 $3" == "--local -f -" ]] || {
+		echo "stub: unexpected annotate $*" >&2
+		exit 3
+	}
+	if [[ "${*:5}" != "-o yaml" ]]; then
+		cat >/dev/null
+		echo "secret/ingest-token annotated"
+		return
+	fi
+	echo "$(cat) $4"
+}
+
+init() {
+	local attempts
+	attempts=$(($(cat "$state/init-attempts" 2>/dev/null || echo 0) + 1))
+	echo "$attempts" >"$state/init-attempts"
+	if [[ ",${ROTATION_FAIL_AT:-}," == *",init_fatal,"* ]]; then
+		echo "faultline tokens: reconcile the token bucket: stub refuses" >&2
+		exit 1
+	fi
+	if [[ ",${ROTATION_FAIL_AT:-}," == *",init_nats_unreachable,"* ]] && ((attempts <= pod_not_reached_attempts)); then
+		echo "faultline tokens: connect to NATS: nats: no servers available for connection" >&2
+		exit 1
+	fi
+	if [[ ",${ROTATION_FAIL_AT:-}," == *",init_unreachable,"* ]] && ((attempts <= pod_not_reached_attempts)); then
+		echo 'error: unable to upgrade connection: container not found ("faultline")' >&2
+		exit 1
+	fi
+	echo "token bucket ready, grants: $(wc -l <"$state/grants" | tr -d ' ')" >&2
+}
+
+issue() {
+	local tenant="$default_tenant" stdout="" id issued
+	while (($#)); do
+		case "$1" in
+		--tenant) tenant="$2" && shift ;;
+		--stdout) stdout=yes ;;
+		*) echo "stub: unexpected issue flag $1" >&2 && exit 3 ;;
+		esac
+		shift
+	done
+	[[ -n "$stdout" ]] || exit 2
+	injected issue
+	issued=$(($(wc -l <"$state/issued" 2>/dev/null || echo 0) + 1))
+	id="id$(printf '%06d' "$issued" | tr 0-9 a2b3c4d5e6)"
+	echo "$id" >>"$state/issued"
+	echo "$id $tenant" >>"$state/grants"
+	echo "issuing ingest token $id for tenant $tenant" >&2
+	echo "token-of-$id"
+}
+
+list() {
+	local id tenant
+	injected list
+	while read -r id tenant; do
+		printf '%s\t%s\t2026-11-27T00:00:00Z\n' "$id" "$tenant"
+	done <"$state/grants"
+}
+
+revoke() {
+	local id="$1"
+	injected revoke
+	if [[ -f "$state/collector" && "$(cat "$state/collector")" == "$id" ]]; then
+		echo "$id" >>"$state/revoked-in-use"
+	fi
+	if ! grep -q "^$id " "$state/grants"; then
+		echo "faultline tokens: unknown or already revoked ingest token id" >&2
+		exit 1
+	fi
+	grep -v "^$id " "$state/grants" >"$state/grants.next" || true
+	mv "$state/grants.next" "$state/grants"
+	echo "revoked $id"
+}
+
+tokens() {
+	[[ "$1 $2 $3 $4" == "deploy/faultline -- /faultline tokens" ]] || {
+		echo "stub: unexpected exec $*" >&2
+		exit 3
+	}
+	shift 4
+	local action="$1"
+	shift
+	case "$action" in
+	init) init ;;
+	issue) issue "$@" ;;
+	list) list ;;
+	revoke) revoke "$@" ;;
+	*) echo "stub: unexpected tokens $action" >&2 && exit 3 ;;
+	esac
+}
+
+rollout() {
+	case "$1 $2" in
+	"restart daemonset/otel-collector-agent")
+		secret_token_id >"$state/collector-next"
+		;;
+	"status daemonset/otel-collector-agent")
+		injected collector
+		if [[ -f "$state/collector-next" ]]; then
+			mv "$state/collector-next" "$state/collector"
+		fi
+		;;
+	esac
+}
+
+if [[ "$1" == --context ]]; then
+	shift 2
+fi
+namespace=""
+if [[ "$1" == -n ]]; then
+	namespace="$2"
+	shift 2
+fi
+command="$1"
+shift
+case "$command" in
+create) create "$@" ;;
+annotate) annotate "$@" ;;
+apply) apply "$@" ;;
+get) get_annotation "$@" ;;
+exec) tokens "$@" ;;
+rollout) rollout "$@" ;;
+wait) injected demo_wait ;;
+*) echo "stub: unexpected kubectl $command $*" >&2 && exit 3 ;;
+esac

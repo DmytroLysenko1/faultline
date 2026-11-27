@@ -23,6 +23,7 @@ const (
 	natsManifest       = "nats.yaml"
 	natsConfigFile     = "nats.conf"
 	manifestKind       = "Deployment"
+	claimKind          = "PersistentVolumeClaim"
 	killSlack          = 2 * time.Second
 	spoolSlack         = 64 * mib
 	spoolImages        = 2
@@ -39,11 +40,19 @@ const (
 var errUnpricedPreStop = errors.New("preStop is neither a sleep action nor an exec of sleep")
 
 type manifest struct {
-	Kind string `yaml:"kind"`
+	Kind     string `yaml:"kind"`
+	Metadata struct {
+		Name string `yaml:"name"`
+	} `yaml:"metadata"`
 	Spec struct {
 		Template struct {
 			Spec manifestPod `yaml:"spec"`
 		} `yaml:"template"`
+		Resources struct {
+			Requests struct {
+				Storage string `yaml:"storage"`
+			} `yaml:"requests"`
+		} `yaml:"resources"`
 	} `yaml:"spec"`
 }
 
@@ -72,6 +81,9 @@ type manifestPod struct {
 		EmptyDir *struct {
 			SizeLimit string `yaml:"sizeLimit"`
 		} `yaml:"emptyDir"`
+		PersistentVolumeClaim *struct {
+			ClaimName string `yaml:"claimName"`
+		} `yaml:"persistentVolumeClaim"`
 	} `yaml:"volumes"`
 }
 
@@ -94,18 +106,26 @@ func skeletonFile(t *testing.T, name string) []byte {
 	return content
 }
 
-func skeletonPod(t *testing.T, name string) manifestPod {
+func skeletonDocuments(t *testing.T, name string) []manifest {
 	t.Helper()
 	decoder := yaml.NewDecoder(bytes.NewReader(skeletonFile(t, name)))
+	var documents []manifest
 	for {
 		var doc manifest
 		err := decoder.Decode(&doc)
 		if errors.Is(err, io.EOF) {
-			t.Fatalf("no %s in %s", manifestKind, name)
+			return documents
 		}
 		if err != nil {
 			t.Fatalf("decode %s: %v", name, err)
 		}
+		documents = append(documents, doc)
+	}
+}
+
+func skeletonPod(t *testing.T, name string) manifestPod {
+	t.Helper()
+	for _, doc := range skeletonDocuments(t, name) {
 		if doc.Kind != manifestKind {
 			continue
 		}
@@ -114,6 +134,28 @@ func skeletonPod(t *testing.T, name string) manifestPod {
 		}
 		return doc.Spec.Template.Spec
 	}
+	t.Fatalf("no %s in %s", manifestKind, name)
+	return manifestPod{}
+}
+
+func skeletonClaimBytes(t *testing.T, name, claim string) int64 {
+	t.Helper()
+	for _, doc := range skeletonDocuments(t, name) {
+		if doc.Kind == claimKind && doc.Metadata.Name == claim {
+			return quantityBytes(t, doc.Spec.Resources.Requests.Storage)
+		}
+	}
+	t.Fatalf("no %s %q in %s", claimKind, claim, name)
+	return 0
+}
+
+func (p *manifestPod) requiredEnv(t *testing.T, name string) string {
+	t.Helper()
+	value, set := p.env()[name]
+	if !set {
+		t.Fatalf("%s: %s", name, manifestEnvMissing)
+	}
+	return value
 }
 
 func (p *manifestPod) env() map[string]string {
@@ -133,6 +175,17 @@ func (p *manifestPod) volumeLimit(t *testing.T, name string) int64 {
 	}
 	t.Fatalf("no emptyDir volume %q", name)
 	return 0
+}
+
+func (p *manifestPod) claimOf(t *testing.T, name string) string {
+	t.Helper()
+	for _, volume := range p.Volumes {
+		if volume.Name == name && volume.PersistentVolumeClaim != nil {
+			return volume.PersistentVolumeClaim.ClaimName
+		}
+	}
+	t.Fatalf("volume %q is not a %s: a new NATS pod would start on an empty store", name, claimKind)
+	return ""
 }
 
 func (p *manifestPod) mountedAt(t *testing.T, path string) string {
@@ -177,7 +230,10 @@ func preStopBudget(handler *manifestHandler) (time.Duration, error) {
 	if handler.Exec == nil {
 		return 0, errUnpricedPreStop
 	}
-	command := handler.Exec.Command
+	return execSleepBudget(handler.Exec.Command)
+}
+
+func execSleepBudget(command []string) (time.Duration, error) {
 	index := len(command) - 1
 	if index < 1 || command[index-1] != sleepCommand {
 		return 0, errUnpricedPreStop
@@ -266,13 +322,8 @@ func TestStopBudgetOfEveryRoleFitsItsGracePeriod(t *testing.T) {
 func TestTheSkeletonNATSHoldsWhatTheAllRoleWrites(t *testing.T) {
 	pod := skeletonPod(t, roleManifest)
 	nats := skeletonPod(t, natsManifest)
-	if _, set := pod.env()[envNATSURL]; !set {
-		t.Fatalf("%s: %s", envNATSURL, manifestEnvMissing)
-	}
-	spoolDir, set := pod.env()[envCheckpointDir]
-	if !set {
-		t.Fatalf("%s: %s", envCheckpointDir, manifestEnvMissing)
-	}
+	pod.requiredEnv(t, envNATSURL)
+	spoolDir := pod.requiredEnv(t, envCheckpointDir)
 	spoolLimit := pod.volumeLimit(t, pod.mountedAt(t, spoolDir))
 	setup := manifestAll(t, &pod, map[string]string{
 		envCheckpointDir: t.TempDir(),
@@ -296,9 +347,9 @@ func TestTheSkeletonNATSHoldsWhatTheAllRoleWrites(t *testing.T) {
 			have: fileStore,
 		},
 		{
-			name: "max_file_store fits the volume mounted at store_dir",
+			name: "max_file_store fits the claim mounted at store_dir",
 			need: fileStore,
-			have: nats.volumeLimit(t, nats.mountedAt(t, storeDir)),
+			have: skeletonClaimBytes(t, natsManifest, nats.claimOf(t, nats.mountedAt(t, storeDir))),
 		},
 		{
 			name: "max_payload carries the largest record with its headers",

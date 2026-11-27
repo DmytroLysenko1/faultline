@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state="$ROTATION_STATE"
+
+if [[ "$1" != upgrade ]]; then
+	exit 0
+fi
+echo "helm upgrade" >>"$state/events"
+if [[ ",${ROTATION_FAIL_AT:-}," == *",helm,"* ]]; then
+	echo "stub: injected failure at helm" >&2
+	exit 1
+fi
+if [[ ! -f "$state/collector" ]]; then
+	token="$(cut -d' ' -f5 "$state/secret")"
+	printf '%s' "${token#token-of-}" >"$state/collector"
+fi
