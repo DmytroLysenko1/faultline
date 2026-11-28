@@ -128,11 +128,6 @@ func defaultGate(t *testing.T) *admission.Gate {
 	return otlptest.Gate(t, otlp.AdmissionLimits(otlp.MaxRequestsPerSecond))
 }
 
-func serve(t *testing.T, listener net.Listener, acceptor acceptorFunc, settings otlp.Options) {
-	t.Helper()
-	serveTapped(t, listener, acceptor, otlp.NewTap(otlptest.Admitting(), settings), settings)
-}
-
 func serveTapped(t *testing.T, listener net.Listener, acceptor acceptorFunc, gate *otlp.Tap, settings otlp.Options) {
 	t.Helper()
 	serveGuarded(t, listener, acceptor, otlp.Guards{

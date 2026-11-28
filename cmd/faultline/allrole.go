@@ -14,6 +14,7 @@ import (
 const (
 	allSketchEntries = 2 << 20
 	allTombstoneTTL  = 15 * time.Second
+	allConnections   = 4
 )
 
 type allSetup struct {
@@ -37,8 +38,9 @@ func allRole() roleRecipe[allSetup] {
 
 func allDefaults(lookup lookupFunc) lookupFunc {
 	return withDefaults(lookup, map[string]string{
-		envSketchEntries: strconv.Itoa(allSketchEntries),
-		envTombstoneTTL:  allTombstoneTTL.String(),
+		envSketchEntries:   strconv.Itoa(allSketchEntries),
+		envTombstoneTTL:    allTombstoneTTL.String(),
+		envOTLPConnections: strconv.Itoa(allConnections),
 	})
 }
 

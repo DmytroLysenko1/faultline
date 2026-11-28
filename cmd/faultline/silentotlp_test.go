@@ -22,7 +22,7 @@ func TestASilentOTLPConnectionDoesNotFailTheIngesterStop(t *testing.T) {
 	notify, done, life := serveIngester(t, setup, logs)
 	eventually(t, "serving", life.Served)
 	silent := dialRawOTLP(t, otlpAddress)
-	if !answers(t, silent, answerWithin) {
+	if !answers(t, silent) {
 		t.Fatal("the silent connection was not accepted")
 	}
 

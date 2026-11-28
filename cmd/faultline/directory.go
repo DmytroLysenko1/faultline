@@ -30,7 +30,7 @@ const (
 	tokenMaxStaleness  = 45 * time.Second
 	tokenOpenBudget    = 10 * time.Second
 	directoryStopGrace = 100 * time.Millisecond
-	directoryHeap      = tokens.SnapshotHeap + otlp.MaxConnections*otlp.MaxConcurrentStreams*otlp.MaxHeaderListBytes
+	directoryHeap      = tokens.SnapshotHeap
 
 	reasonBucketMissing    = "bucket_missing"
 	reasonBucketLeaderless = "bucket_leaderless"

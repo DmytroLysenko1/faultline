@@ -2,9 +2,7 @@ package otlp
 
 import (
 	"errors"
-	"net"
 
-	"golang.org/x/net/netutil"
 	"google.golang.org/grpc"
 	_ "google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/keepalive"
@@ -49,10 +47,6 @@ func NewServer(acceptor spanAcceptor, guards Guards, options Options) *grpc.Serv
 		holdLimit: options.SlotHoldLimit,
 	}), receiver)
 	return server
-}
-
-func LimitListener(listener net.Listener) net.Listener {
-	return netutil.LimitListener(listener, MaxConnections)
 }
 
 func serverOptions(shared *events, gate *Tap, options Options) []grpc.ServerOption {

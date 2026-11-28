@@ -38,6 +38,7 @@ const (
 	envSketchEntries     = "SKETCH_MAX_ENTRIES"
 	envRouteRulesFile    = "ROUTE_RULES_FILE"
 	envIngestRequestRate = "INGEST_MAX_REQUESTS_PER_SEC"
+	envOTLPConnections   = "OTLP_GRPC_MAX_CONNECTIONS"
 	worstResponseAtLimit = "the worst response at the graph limits"
 
 	defaultOTLPAddr         = "127.0.0.1:4317"
@@ -100,12 +101,14 @@ type graphConfig struct {
 
 type ingestConfig struct {
 	RequestsPerSecond int
+	MaxConnections    int
 }
 
 func loadIngest(lookup lookupFunc) (ingestConfig, error) {
 	reader := newEnvReader(lookup)
 	cfg := ingestConfig{
 		RequestsPerSecond: reader.count(envIngestRequestRate, otlp.DefaultRequestsPerSecond, otlp.MaxRequestsPerSecond),
+		MaxConnections:    reader.count(envOTLPConnections, otlp.DefaultMaxConnections, otlp.MaxMaxConnections),
 	}
 	return cfg, errors.Join(reader.errs...)
 }

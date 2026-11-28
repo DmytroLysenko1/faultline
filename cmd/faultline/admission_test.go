@@ -18,6 +18,7 @@ const ingestRateName = "INGEST_MAX_REQUESTS_PER_SEC"
 func testIngest() ingestConfig {
 	return ingestConfig{
 		RequestsPerSecond: 2000,
+		MaxConnections:    64,
 	}
 }
 
@@ -33,6 +34,7 @@ func TestTheIngestLimitsComeFromTheEnvironment(t *testing.T) {
 			args: map[string]string{},
 			want: ingestConfig{
 				RequestsPerSecond: 2000,
+				MaxConnections:    64,
 			},
 		},
 		{
@@ -42,6 +44,7 @@ func TestTheIngestLimitsComeFromTheEnvironment(t *testing.T) {
 			},
 			want: ingestConfig{
 				RequestsPerSecond: 1,
+				MaxConnections:    64,
 			},
 		},
 		{
@@ -51,6 +54,7 @@ func TestTheIngestLimitsComeFromTheEnvironment(t *testing.T) {
 			},
 			want: ingestConfig{
 				RequestsPerSecond: 100_000,
+				MaxConnections:    64,
 			},
 		},
 		{

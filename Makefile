@@ -165,6 +165,8 @@ KILL_NAMES := TestAKilledProcessorRestartsToTheSameGraphAsAnUninterruptedRun Tes
 	TestALeaseLostWhileServingStopsWithoutRelease
 KILL_STRESS_POINTS := 10
 KILL_STRESS_TIMEOUT := 45m
+CONN_FLOOD_TESTS := ^(TestAConnectionFloodDoesNotDisturbAConnectedClient|TestALegitimateClientReconnectsDuringAConnectionFlood)$$
+CONN_FLOOD_TIMEOUT := 5m
 empty :=
 space := $(empty) $(empty)
 SHUTDOWN_NAMES := TestAServedStackStopsInReverseOnASignal TestRollbackGetsTheFullBudgetAfterASignal \
@@ -215,6 +217,7 @@ test-stress: ## Repeat concurrency-sensitive tests under the race detector (nigh
 	go test -race -count=$(STRESS_COUNT) -timeout=$(STRESS_TIMEOUT) $(STRESS_PACKAGES)
 	go test -race -count=$(STRESS_COUNT) -timeout=$(STRESS_TIMEOUT) -run '$(SHUTDOWN_TESTS)' ./cmd/faultline/
 	go test -race -count=$(STREAM_STRESS_COUNT) -timeout=$(STREAM_STRESS_TIMEOUT) ./pkg/stream/...
+	TEST_CONN_FLOOD=1 go test -count=1 -timeout=$(CONN_FLOOD_TIMEOUT) -run '$(CONN_FLOOD_TESTS)' ./internal/interfaces/otlp/
 	TEST_KILL_STRESS=1 TEST_KILL_RANDOM_POINTS=$(KILL_STRESS_POINTS) TEST_KILL_REAL_TTL=1 go test -count=1 -timeout=$(KILL_STRESS_TIMEOUT) -run '$(KILL_TEST)' ./cmd/faultline/
 
 .PHONY: cover-check

@@ -7,6 +7,7 @@ import (
 
 	"github.com/DmytroLysenko1/faultline/internal/domain/telemetry/batch"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/admission"
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/connlimit"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/decodelimit"
 )
 
@@ -14,7 +15,6 @@ const (
 	MaxRecvMsgBytes       = 4 << 20
 	MaxHeaderListBytes    = 16 << 10
 	MaxConcurrentStreams  = 10
-	MaxConnections        = 1
 	ExportHeapRatio       = 11
 	MaxDecodedBytes       = 32 << 20
 	MaxNestingDepth       = 32
@@ -40,6 +40,13 @@ const (
 	MaxRequestsPerSecond     = 100_000
 	StreamWindowBytes        = 64 << 10
 	ConnWindowBytes          = MaxConcurrentStreams * MaxRecvMsgBytes
+
+	DefaultMaxConnections         = 64
+	MaxMaxConnections             = 1024
+	MarkLifetime                  = MaxConnectionIdle
+	ConnectionHeapBytes           = 80 << 10
+	RefusalHeapBaseBytes          = 12 << 20
+	RefusalHeapPerConnectionBytes = 2 << 20
 )
 
 func MaxBatchFootprint() int64 {
@@ -102,4 +109,16 @@ func AdmissionLimits(requestsPerSecond int) admission.Limits {
 
 func WorstHeapBytes() int64 {
 	return RequestSlots * MaxRecvMsgBytes * ExportHeapRatio
+}
+
+func ConnectionLimits(maxConnections int) connlimit.Limits {
+	return connlimit.Limits{
+		MaxConnections:     maxConnections,
+		MarkLifetime:       MarkLifetime,
+		RefusalLogInterval: LogInterval,
+	}
+}
+
+func ConnectionsHeapBytes(maxConnections int) int64 {
+	return int64(maxConnections)*(ConnectionHeapBytes+RefusalHeapPerConnectionBytes) + RefusalHeapBaseBytes
 }

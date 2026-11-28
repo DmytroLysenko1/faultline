@@ -23,8 +23,8 @@ import (
 
 const (
 	refusedWithin     = time.Second
-	ingesterBudgetMiB = 510.4375
-	allWorstBytes     = 1_384_088_969
+	ingesterBudgetMiB = 655.28125
+	allWorstBytes     = 1_405_224_329
 	budgetMiB         = float64(mib)
 )
 
@@ -138,8 +138,8 @@ func TestEveryRoleFitsItsMemoryBudgetAtDefaults(t *testing.T) {
 	if err := checkParts(parts, defaultMemoryLimit); err != nil {
 		t.Errorf("the ingester does not fit the default GOMEMLIMIT: %v", err)
 	}
-	want := "otlp requests 440.0 MiB, records before pubAck 60.0 MiB, publish buffer 8.0 MiB, nats connections 1.0 MiB, " +
-		"token directory 1.0 MiB, admission tokens 0.4 MiB"
+	want := "otlp requests 440.0 MiB, otlp connections 145.0 MiB, records before pubAck 60.0 MiB, publish buffer 8.0 MiB, " +
+		"nats connections 1.0 MiB, token directory 0.8 MiB, admission tokens 0.4 MiB"
 	assertDiff(t, "breakdown", want, breakdown(parts))
 
 	everything := allContributions(t, map[string]string{})
@@ -180,7 +180,7 @@ func TestTheIngesterCommandRefusesItsConfigWithCodeTwo(t *testing.T) {
 				envNATSURL:     testNATSURL,
 				envMemoryLimit: "512MiB",
 			},
-			want: "worst-case memory exceeds the budget: 510.4 MiB > 85% of GOMEMLIMIT 512.0 MiB",
+			want: "worst-case memory exceeds the budget: 655.3 MiB > 85% of GOMEMLIMIT 512.0 MiB",
 		},
 	}
 	for _, tt := range tests {
@@ -233,7 +233,7 @@ func TestASecondSignalReachesTheSystemThroughTheIngesterWiring(t *testing.T) {
 	lines := bufio.NewScanner(stderr)
 	awaitState(t, lines, stateServing)
 	silent := dialRawOTLP(t, otlpAddress)
-	if !answers(t, silent, answerWithin) {
+	if !answers(t, silent) {
 		t.Fatal("the silent OTLP connection was not accepted")
 	}
 	accepted := time.Now()

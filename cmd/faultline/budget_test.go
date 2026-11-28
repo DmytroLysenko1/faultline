@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	manifestMemoryLimit = 1600 << 20
+	manifestMemoryLimit = 1632 << 20
 	applyProbeSpans     = 148_470
 )
 

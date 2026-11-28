@@ -33,7 +33,7 @@ spec:
             - name: API_ADDR
               value: 0.0.0.0:8080
             - name: GOMEMLIMIT
-              value: 1600MiB
+              value: 1632MiB
             - name: NATS_URL
               value: nats://nats:4222
             - name: CHECKPOINT_DIR

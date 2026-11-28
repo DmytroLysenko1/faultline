@@ -8,8 +8,8 @@ import (
 
 const (
 	allHeadroomFloor      = 36 * mib
-	pinnedAllHeadroom     = 41_974_391
-	pinnedProcessorArena  = -9_143_689
+	pinnedAllHeadroom     = 49_360_271
+	pinnedProcessorArena  = -1_757_809
 	processorArenaEntries = 8 << 20
 )
 

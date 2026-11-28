@@ -416,6 +416,10 @@ func TestTheAllRoleFitsTheDefaultMemoryLimit(t *testing.T) {
 			bytes: 461373440,
 		},
 		{
+			name:  "otlp connections",
+			bytes: 21299200,
+		},
+		{
 			name:  "admission tokens",
 			bytes: 458752,
 		},

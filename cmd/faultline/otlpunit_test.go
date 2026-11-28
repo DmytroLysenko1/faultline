@@ -16,7 +16,6 @@ import (
 )
 
 const (
-	quietWindow  = 300 * time.Millisecond
 	answerWithin = 2 * time.Second
 	prefaceBytes = 1
 )
@@ -151,37 +150,57 @@ func TestTheOTLPLayerReturnsItsServersStopError(t *testing.T) {
 	})
 }
 
-func TestTheOTLPLayerAcceptsOneConnectionBeforeServing(t *testing.T) {
+func TestTheOTLPLayerServesWithinItsConnectionLimit(t *testing.T) {
 	logs := &logBuffer{}
 	address := localAddress(t)
+	limits := testIngest()
+	limits.MaxConnections = 1
 	current := otlpLayer(&Config{
 		OTLPAddr: address,
-	}, testIngest(), acceptingJournal(t), admittingTaps(), testLogger(logs))
+	}, limits, acceptingJournal(t), admittingTaps(), testLogger(logs))
 	view := newLayerSupervisor(t, logs, &current)
 	if err := current.unit.start(t.Context(), view); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	first := dialRawOTLP(t, address)
-	if !answers(t, first, answerWithin) {
+	if !answers(t, first) {
 		t.Fatal("the first connection got no server preface")
 	}
 	second := dialRawOTLP(t, address)
-
-	if answers(t, second, quietWindow) {
-		t.Error("the second connection was served while the first is open")
+	type want struct {
+		SecondServed bool
+		FirstClosed  bool
+		Connections  map[string]any
 	}
-	if err := first.Close(); err != nil {
-		t.Fatalf("close the first: %v", err)
-	}
-	if !answers(t, second, answerWithin) {
-		t.Error("the second connection was not served after the first closed")
-	}
-	if err := second.Close(); err != nil {
-		t.Fatalf("close the second: %v", err)
+	got := want{
+		SecondServed: answers(t, second),
+		FirstClosed:  closedByThePeer(t, first),
+		Connections:  groupNamed(t, current.statsGroups(t.Context()), "connections"),
 	}
 	if err := stopLayer(t, &current, view); err != nil {
 		t.Errorf("stop = %v, want nil", err)
 	}
+	assertDiff(t, "a silent second connection at the limit of one", want{
+		SecondServed: true,
+		FirstClosed:  true,
+		Connections: map[string]any{
+			"open":                    int64(1),
+			"accepted":                uint64(2),
+			"evicted_unauthenticated": uint64(1),
+			"evicted_lapsed":          uint64(0),
+			"evicted_over_share":      uint64(0),
+			"refused":                 uint64(0),
+		},
+	}, got)
+}
+
+func closedByThePeer(t *testing.T, conn net.Conn) bool {
+	t.Helper()
+	if err := conn.SetReadDeadline(time.Now().Add(answerWithin)); err != nil {
+		t.Fatalf("deadline: %v", err)
+	}
+	_, err := io.Copy(io.Discard, conn)
+	return err == nil
 }
 
 func TestTheOTLPLayerRefusesToStartBeforeTheTokenDirectory(t *testing.T) {
@@ -243,9 +262,9 @@ func dialRawOTLP(t *testing.T, address string) net.Conn {
 	return conn
 }
 
-func answers(t *testing.T, conn net.Conn, within time.Duration) bool {
+func answers(t *testing.T, conn net.Conn) bool {
 	t.Helper()
-	if err := conn.SetReadDeadline(time.Now().Add(within)); err != nil {
+	if err := conn.SetReadDeadline(time.Now().Add(answerWithin)); err != nil {
 		t.Fatalf("deadline: %v", err)
 	}
 	read, err := io.ReadAtLeast(conn, make([]byte, prefaceBytes), prefaceBytes)

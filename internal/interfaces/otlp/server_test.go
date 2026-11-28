@@ -199,15 +199,12 @@ func TestDecodeLimitRejectsBeforeTheAcceptor(t *testing.T) {
 
 func startTCP(t *testing.T, acceptor acceptorFunc, keepalive otlp.Keepalive) string {
 	t.Helper()
-	var config net.ListenConfig
-	listener, err := config.Listen(t.Context(), "tcp", loopbackAddress)
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	settings := options(&logBuffer{}, &fakeClock{})
-	settings.Keepalive = keepalive
-	serve(t, otlp.LimitListener(listener), acceptor, settings)
-	return listener.Addr().String()
+	return startLimited(t, limitedSetup{
+		maxConnections: 1,
+		acceptor:       acceptor,
+		keepalive:      &keepalive,
+		clock:          &fakeClock{},
+	}).address
 }
 
 func tcpClient(t *testing.T, address string) *grpc.ClientConn {
@@ -218,11 +215,11 @@ func tcpClient(t *testing.T, address string) *grpc.ClientConn {
 	})
 }
 
-func exportWithin(t *testing.T, conn *grpc.ClientConn) error {
+func exportWithin(t *testing.T, conn *grpc.ClientConn, callOptions ...grpc.CallOption) error {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), connectDeadline)
 	defer cancel()
-	_, err := ptraceotlp.NewGRPCClient(conn).Export(ctx, requestOf(1))
+	_, err := ptraceotlp.NewGRPCClient(conn).Export(ctx, requestOf(1), callOptions...)
 	return err
 }
 
@@ -238,12 +235,12 @@ func TestIdleConnectionReleasesTheOnlySlot(t *testing.T) {
 	if err := exportWithin(t, tcpClient(t, address)); err != nil {
 		t.Fatalf("first client: %v", err)
 	}
-	if err := exportWithin(t, tcpClient(t, address)); err != nil {
+	if err := exportWithin(t, tcpClient(t, address), grpc.WaitForReady(true)); err != nil {
 		t.Errorf("second client was not served after the idle first one: %v", err)
 	}
 }
 
-func TestSecondConnectionWaitsWhileTheOnlySlotIsBusy(t *testing.T) {
+func TestASecondConnectionIsRefusedWhileTheOnlyOneIsFresh(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var calls atomic.Int64
@@ -268,8 +265,8 @@ func TestSecondConnectionWaitsWhileTheOnlySlotIsBusy(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), shortKeepalive)
 	defer cancel()
 	_, err := ptraceotlp.NewGRPCClient(tcpClient(t, address)).Export(ctx, requestOf(1))
-	if status.Code(err) != codes.DeadlineExceeded {
-		t.Errorf("second connection answered %v while the only slot was busy, want it held in the backlog", err)
+	if status.Code(err) != codes.Unavailable {
+		t.Errorf("second connection answered %v next to the only fresh one, want it closed at once", err)
 	}
 	close(release)
 	busy.Wait()
@@ -304,7 +301,7 @@ func TestConnectionWithAStuckStreamIsRotatedByAge(t *testing.T) {
 		}
 	})
 	<-entered
-	if err := exportWithin(t, tcpClient(t, address)); err != nil {
+	if err := exportWithin(t, tcpClient(t, address), grpc.WaitForReady(true)); err != nil {
 		t.Errorf("second client was not served after the stuck connection aged out: %v", err)
 	}
 	stuck.Wait()

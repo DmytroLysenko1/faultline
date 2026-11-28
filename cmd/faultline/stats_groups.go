@@ -15,6 +15,7 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/tokens"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp"
 	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/admission"
+	"github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/connlimit"
 	"github.com/DmytroLysenko1/faultline/pkg/stream"
 )
 
@@ -168,14 +169,14 @@ func authGroup(gate otlp.TapStats, auth ingestauth.Stats, directory *tokens.Dire
 		slog.Uint64("missing", gate.Missing),
 		slog.Uint64("header", gate.Header),
 		slog.Uint64("failed", gate.Failed),
-		rejectedGroup(auth.Rejected),
+		rejectedGroup(auth.Rejected[:]),
 		slog.Uint64("stale_rejections", auth.StaleRejections),
 		slog.Float64("age_seconds", auth.Age.Seconds()),
 		tokensGroup(directory),
 	)
 }
 
-func rejectedGroup(rejected [ingestauth.ReasonCount]uint64) slog.Attr {
+func rejectedGroup(rejected []uint64) slog.Attr {
 	attrs := make([]any, 0, len(rejected))
 	for reason, count := range rejected {
 		attrs = append(attrs, slog.Uint64(ingestauth.Reason(reason).String(), count))
@@ -202,5 +203,16 @@ func tokensGroup(stats *tokens.DirectoryStats) slog.Attr {
 		slog.Bool("regressed", stats.Regressed),
 		slog.Bool("revoke_blocked", stats.RevokeBlocked),
 		slog.Bool("config_drift", stats.ConfigDrift),
+	)
+}
+
+func connectionsGroup(stats connlimit.Stats) slog.Attr {
+	return slog.Group("connections",
+		slog.Int("open", stats.Open),
+		slog.Uint64("accepted", stats.Accepted),
+		slog.Uint64("evicted_unauthenticated", stats.EvictedUnauthenticated),
+		slog.Uint64("evicted_lapsed", stats.EvictedLapsed),
+		slog.Uint64("evicted_over_share", stats.EvictedOverShare),
+		slog.Uint64("refused", stats.Refused),
 	)
 }

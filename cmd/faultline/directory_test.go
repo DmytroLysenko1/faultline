@@ -11,8 +11,8 @@ import (
 	"github.com/DmytroLysenko1/faultline/internal/infrastructure/natsjs/tokens"
 )
 
-func TestTheDirectoryContributesOneMiB(t *testing.T) {
-	assertDiff(t, "the snapshots pinned in natsjs/tokens and the header lists", int64(mib), int64(directoryHeap))
+func TestTheDirectoryContributesTheSnapshotPin(t *testing.T) {
+	assertDiff(t, "the two snapshots pinned in natsjs/tokens", int64(864<<10), int64(directoryHeap))
 }
 
 func TestTheDirectoryReportsNoAuthGroupBeforeItStarts(t *testing.T) {

@@ -76,7 +76,7 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 				cgroup: cgroupFile("2147483648\n"),
 			},
 			Want: memorySetting{
-				Bytes:  1600 << 20,
+				Bytes:  1632 << 20,
 				Source: sourceCgroup,
 			},
 		},
@@ -87,7 +87,7 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 				cgroup: cgroupFile("1073741824\n"),
 			},
 			Want: memorySetting{
-				Bytes:  800 << 20,
+				Bytes:  816 << 20,
 				Source: sourceCgroup,
 			},
 		},
@@ -98,7 +98,7 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 				cgroup: cgroupFile("max\n"),
 			},
 			Want: memorySetting{
-				Bytes:  1600 << 20,
+				Bytes:  1632 << 20,
 				Source: sourceDefault,
 			},
 		},
@@ -109,7 +109,7 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 				cgroup: noCgroup,
 			},
 			Want: memorySetting{
-				Bytes:  1600 << 20,
+				Bytes:  1632 << 20,
 				Source: sourceDefault,
 			},
 		},
@@ -159,7 +159,7 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 				cgroup: cgroupFile("garbage\n"),
 			},
 			Want: memorySetting{
-				Bytes:  1600 << 20,
+				Bytes:  1632 << 20,
 				Source: sourceDefault,
 			},
 		},
@@ -170,7 +170,7 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 				cgroup: cgroupFile("0\n"),
 			},
 			Want: memorySetting{
-				Bytes:  1600 << 20,
+				Bytes:  1632 << 20,
 				Source: sourceDefault,
 			},
 		},
@@ -181,7 +181,7 @@ func TestMemoryLimitPicksItsSource(t *testing.T) {
 				cgroup: cgroupFile("9223372036854771712\n"),
 			},
 			Want: memorySetting{
-				Bytes:  9223372036854771712 / 2048 * 1600,
+				Bytes:  9223372036854771712 / 2048 * 1632,
 				Source: sourceCgroup,
 			},
 		},

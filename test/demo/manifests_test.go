@@ -346,7 +346,7 @@ func TestSkeletonDeploymentIsHardenedAndFitsTheMemoryBudget(t *testing.T) {
 		Env: map[string]string{
 			"OTLP_GRPC_ADDR":   "0.0.0.0:4317",
 			"API_ADDR":         "0.0.0.0:8080",
-			memoryLimitEnv:     "1600MiB",
+			memoryLimitEnv:     "1632MiB",
 			"NATS_URL":         "nats://nats:4222",
 			"CHECKPOINT_DIR":   "/spool",
 			"PARTITIONS":       "1",

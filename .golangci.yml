@@ -306,6 +306,21 @@ linters:
               desc: admission keys on a credential.ID; the authenticator stays behind the tap
             - pkg: github.com/DmytroLysenko1/faultline/internal/interfaces/otlp$
               desc: the receiver imports admission, never the reverse
+        otlp-connections:
+          files:
+            - "**/internal/interfaces/otlp/connlimit/**"
+            - "!$test"
+          deny:
+            - pkg: google.golang.org/grpc
+              desc: connlimit is a net.Listener — OTLP/gRPC and OTLP/HTTP both serve on it
+            - pkg: net/http
+              desc: connlimit is a net.Listener — OTLP/gRPC and OTLP/HTTP both serve on it
+            - pkg: github.com/DmytroLysenko1/faultline/internal/application
+              desc: connlimit keys on a credential.ID; the authenticator stays behind the tap
+            - pkg: github.com/DmytroLysenko1/faultline/internal/interfaces/otlp$
+              desc: the receiver imports connlimit, never the reverse
+            - pkg: github.com/DmytroLysenko1/faultline/internal/interfaces/otlp/admission
+              desc: admission marks connections through its own port; connlimit does not know admission
         layer-infrastructure:
           files:
             - "**/internal/infrastructure/**"
@@ -456,6 +471,10 @@ linters:
           - gosec
           - err113
           - mnd
+      - path: internal/interfaces/otlp/connlimit/
+        linters:
+          - wrapcheck
+        text: 'sig: func \(net\.(Listener\)\.(Accept|Close)|Conn\)\.Close)\('
 
 formatters:
   enable:
